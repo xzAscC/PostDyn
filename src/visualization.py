@@ -1,0 +1,475 @@
+"""
+Visualization module for effective rank analysis results.
+
+Generates publication-quality plots for all five analysis modes:
+1. Cross-model-size bar chart
+2. Training dynamics line plot
+3. Training stages comparison
+4. Post-training methods heatmap
+5. Fixed ratio distribution histogram
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from typing import Optional
+
+import matplotlib
+matplotlib.use('Agg')
+
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+import numpy as np
+import seaborn as sns
+
+from src.config import FIGURES_DIR, COLOR_PALETTES
+
+
+def _setup_style():
+    sns.set_theme(style="whitegrid", font_scale=1.2)
+    plt.rcParams.update({
+        "figure.dpi": 150,
+        "savefig.dpi": 300,
+        "savefig.bbox": "tight",
+        "axes.titlesize": 14,
+        "axes.labelsize": 12,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+        "legend.fontsize": 10,
+        "figure.figsize": (12, 8),
+    })
+
+
+def _save_fig(fig, name: str, formats=("png", "pdf")):
+    os.makedirs(FIGURES_DIR, exist_ok=True)
+    for fmt in formats:
+        path = os.path.join(FIGURES_DIR, f"{name}.{fmt}")
+        fig.savefig(path, format=fmt)
+        print(f"  Saved: {path}")
+    plt.close(fig)
+
+
+def plot_cross_model_size(
+    results_path: Optional[str] = None,
+    data: Optional[dict] = None,
+) -> str:
+    """
+    Bar chart of effective rank ratio vs model scale.
+    """
+    _setup_style()
+    
+    if data is None:
+        if results_path is None:
+            results_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "results", "cross_model_size.json"
+            )
+        with open(results_path) as f:
+            data = json.load(f)
+    
+    models_data = data.get("models", data.get("summary", {}))
+    
+    # Extract data
+    model_names = []
+    mean_ratios = []
+    std_ratios = []
+    mean_entropies = []
+    param_counts = []
+    
+    for name, info in models_data.items():
+        if isinstance(info, dict) and "error" in info:
+            continue
+        if isinstance(info, dict):
+            model_names.append(name)
+            mean_ratios.append(info.get("overall_mean_ratio", 0))
+            std_ratios.append(info.get("overall_std_ratio", 0))
+            mean_entropies.append(info.get("overall_mean_entropy", 0))
+    
+    if not model_names:
+        print("  No data for cross-model-size plot")
+        return ""
+    
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    
+    # Plot 1: Mean ratio
+    x = range(len(model_names))
+    bars = axes[0].bar(x, mean_ratios, yerr=std_ratios, capsize=5,
+                       color=COLOR_PALETTES["training_stages"]["pretrain"], alpha=0.8)
+    axes[0].set_xticks(x)
+    axes[0].set_xticklabels(model_names, rotation=45, ha='right')
+    axes[0].set_ylabel("Effective Rank Ratio (erank/min_dim)")
+    axes[0].set_title("Effective Rank Ratio vs Model Scale")
+    axes[0].set_ylim(0, 1.0)
+    axes[0].axhline(y=np.mean(mean_ratios), color='red', linestyle='--', alpha=0.5,
+                    label=f'Mean: {np.mean(mean_ratios):.3f}')
+    axes[0].legend()
+    
+    # Plot 2: Mean entropy
+    axes[1].bar(x, mean_entropies, color=COLOR_PALETTES["training_stages"]["sft"], alpha=0.8)
+    axes[1].set_xticks(x)
+    axes[1].set_xticklabels(model_names, rotation=45, ha='right')
+    axes[1].set_ylabel("Normalized SVD Entropy")
+    axes[1].set_title("SVD Entropy vs Model Scale")
+    axes[1].set_ylim(0, 1.0)
+    
+    fig.suptitle("Cross-Model-Size Comparison (Pythia)", fontsize=16, y=1.02)
+    fig.tight_layout()
+    _save_fig(fig, "cross_model_size")
+    return "cross_model_size"
+
+
+def plot_training_dynamics(
+    results_path: Optional[str] = None,
+    data: Optional[dict] = None,
+) -> str:
+    """
+    Line plot of effective rank ratio vs training step.
+    """
+    _setup_style()
+    
+    if data is None:
+        if results_path is None:
+            results_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "results", "training_dynamics_pythia-70m.json"
+            )
+        with open(results_path) as f:
+            data = json.load(f)
+    
+    results = data.get("results", {})
+    
+    # Extract data points
+    steps = []
+    mean_ratios = []
+    group_ratios = {"attention_qkv": [], "attention_output": [], "mlp": []}
+    
+    for ckpt in sorted(results.keys(), key=lambda x: int(x.replace("step", "")) if x.startswith("step") else 0):
+        info = results[ckpt]
+        if isinstance(info, dict) and "error" in info:
+            continue
+        
+        step_num = int(ckpt.replace("step", ""))
+        steps.append(step_num)
+        mean_ratios.append(info.get("overall_mean_ratio", 0))
+        
+        gs = info.get("group_stats", {})
+        for group in group_ratios:
+            group_ratios[group].append(gs.get(group, {}).get("mean_ratio", 0))
+    
+    if not steps:
+        print("  No data for training dynamics plot")
+        return ""
+    
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    
+    # Plot 1: Overall mean ratio
+    axes[0].plot(steps, mean_ratios, 'o-', color='#3498db', linewidth=2, markersize=4)
+    axes[0].set_xlabel("Training Step")
+    axes[0].set_ylabel("Mean Effective Rank Ratio")
+    axes[0].set_title("Effective Rank Ratio During Training")
+    axes[0].set_xscale('log')
+    axes[0].set_ylim(0, 1.0)
+    
+    # Add phase annotations if enough data points
+    if len(steps) > 5:
+        axes[0].axvspan(steps[0], steps[min(3, len(steps)-1)], alpha=0.1, color='red', label='Warmup')
+        if len(steps) > 6:
+            mid = len(steps) // 2
+            axes[0].axvspan(steps[3], steps[mid], alpha=0.1, color='green', label='Entropy-seeking')
+            axes[0].axvspan(steps[mid], steps[-1], alpha=0.1, color='blue', label='Compression-seeking')
+        axes[0].legend()
+    
+    # Plot 2: Per group
+    colors = {'attention_qkv': '#e74c3c', 'attention_output': '#3498db', 'mlp': '#2ecc71'}
+    for group, ratios in group_ratios.items():
+        if ratios:
+            axes[1].plot(steps[:len(ratios)], ratios, 'o-', color=colors.get(group, 'gray'),
+                        linewidth=2, markersize=4, label=group)
+    axes[1].set_xlabel("Training Step")
+    axes[1].set_ylabel("Mean Effective Rank Ratio")
+    axes[1].set_title("Effective Rank by Layer Type")
+    axes[1].set_xscale('log')
+    axes[1].set_ylim(0, 1.0)
+    axes[1].legend()
+    
+    model_name = data.get("model", "unknown")
+    fig.suptitle(f"Training Dynamics ({model_name})", fontsize=16, y=1.02)
+    fig.tight_layout()
+    _save_fig(fig, f"training_dynamics_{model_name}")
+    return f"training_dynamics_{model_name}"
+
+
+def plot_training_stages(
+    results_path: Optional[str] = None,
+    data: Optional[dict] = None,
+) -> str:
+    """
+    Grouped bar chart across OLMo-3 training stages.
+    """
+    _setup_style()
+    
+    if data is None:
+        if results_path is None:
+            results_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "results", "training_stages.json"
+            )
+        with open(results_path) as f:
+            data = json.load(f)
+    
+    results = data.get("results", {})
+    
+    stages = []
+    mean_ratios = []
+    for ckpt, info in results.items():
+        if isinstance(info, dict) and "error" in info:
+            continue
+        stages.append(ckpt)
+        mean_ratios.append(info.get("overall_mean_ratio", 0))
+    
+    if not stages:
+        print("  No data for training stages plot")
+        return ""
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    colors = [COLOR_PALETTES["training_stages"].get("pretrain", "#3498db")] * len(stages)
+    for i, s in enumerate(stages):
+        if "stage2" in s:
+            colors[i] = COLOR_PALETTES["training_stages"].get("midtrain", "#2ecc71")
+        elif "stage3" in s:
+            colors[i] = COLOR_PALETTES["training_stages"].get("longcontext", "#9b59b6")
+    
+    ax.bar(range(len(stages)), mean_ratios, color=colors, alpha=0.8)
+    ax.set_xticks(range(len(stages)))
+    ax.set_xticklabels(stages, rotation=45, ha='right')
+    ax.set_ylabel("Mean Effective Rank Ratio")
+    ax.set_title("Effective Rank Across Training Stages (OLMo-3)")
+    ax.set_ylim(0, 1.0)
+    
+    fig.tight_layout()
+    _save_fig(fig, "training_stages")
+    return "training_stages"
+
+
+def plot_post_training_methods(
+    results_path: Optional[str] = None,
+    data: Optional[dict] = None,
+) -> str:
+    """
+    Heatmap / grouped bar comparing post-training pathways.
+    """
+    _setup_style()
+    
+    if data is None:
+        if results_path is None:
+            results_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "results", "post_training_methods.json"
+            )
+        with open(results_path) as f:
+            data = json.load(f)
+    
+    variants = data.get("variants", {})
+    pathway_comparison = data.get("pathway_comparison", {})
+    
+    # Extract pathway-stage matrix
+    pathway_colors = COLOR_PALETTES["pathways"]
+    
+    variant_names = []
+    mean_ratios = []
+    pathway_labels = []
+    
+    for name, info in variants.items():
+        if isinstance(info, dict) and "error" in info:
+            continue
+        variant_names.append(name.replace("olmo3-", ""))
+        mean_ratios.append(info.get("overall_mean_ratio", 0))
+        pathway_labels.append(info.get("pathway", "unknown"))
+    
+    if not variant_names:
+        print("  No data for post-training methods plot")
+        return ""
+    
+    fig, axes = plt.subplots(1, 2, figsize=(18, 6))
+    
+    # Plot 1: All variants
+    bar_colors = [pathway_colors.get(p, "#95a5a6") for p in pathway_labels]
+    axes[0].barh(range(len(variant_names)), mean_ratios, color=bar_colors, alpha=0.8)
+    axes[0].set_yticks(range(len(variant_names)))
+    axes[0].set_yticklabels(variant_names)
+    axes[0].set_xlabel("Mean Effective Rank Ratio")
+    axes[0].set_title("All OLMo-3 Variants")
+    axes[0].set_xlim(0, 1.0)
+    
+    # Add legend for pathways
+    from matplotlib.patches import Patch
+    legend_elements = [Patch(facecolor=c, label=p.capitalize()) for p, c in pathway_colors.items() if p in pathway_labels]
+    axes[0].legend(handles=legend_elements, loc='lower right')
+    
+    # Plot 2: Pathway comparison (mean per pathway)
+    if pathway_comparison:
+        pw_names = list(pathway_comparison.keys())
+        pw_means = []
+        pw_stds = []
+        for pw in pw_names:
+            stages = pathway_comparison[pw]
+            vals = [v for v in stages.values() if isinstance(v, (int, float)) and v > 0]
+            if vals:
+                pw_means.append(np.mean(vals))
+                pw_stds.append(np.std(vals) if len(vals) > 1 else 0)
+            else:
+                pw_means.append(0)
+                pw_stds.append(0)
+        
+        x = range(len(pw_names))
+        axes[1].bar(x, pw_means, yerr=pw_stds, capsize=5,
+                   color=[pathway_colors.get(p, "#95a5a6") for p in pw_names], alpha=0.8)
+        axes[1].set_xticks(x)
+        axes[1].set_xticklabels([p.capitalize() for p in pw_names], rotation=45, ha='right')
+        axes[1].set_ylabel("Mean Effective Rank Ratio")
+        axes[1].set_title("Post-Training Pathways Comparison")
+        axes[1].set_ylim(0, 1.0)
+    
+    fig.suptitle("OLMo-3 Post-Training Methods Analysis", fontsize=16, y=1.02)
+    fig.tight_layout()
+    _save_fig(fig, "post_training_methods")
+    return "post_training_methods"
+
+
+def plot_fixed_ratio_distribution(
+    results_path: Optional[str] = None,
+    data: Optional[dict] = None,
+) -> str:
+    """
+    Histogram + KDE of all observed effective rank ratios.
+    """
+    _setup_style()
+    
+    if data is None:
+        if results_path is None:
+            results_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "results", "fixed_ratio_hypothesis.json"
+            )
+        with open(results_path) as f:
+            data = json.load(f)
+    
+    stats = data.get("overall_stats", {})
+    layer_type_stats = data.get("ratio_by_layer_type", {})
+    hypothesis = data.get("hypothesis_test", {})
+    
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    
+    # Plot 1: Distribution by layer type
+    for lt, ratios in layer_type_stats.items():
+        if isinstance(ratios, dict):
+            # Stats dict, not raw ratios - draw a box
+            axes[0].barh(lt, ratios.get("mean", 0),
+                        xerr=ratios.get("std", 0),
+                        capsize=5, alpha=0.8,
+                        color=COLOR_PALETTES["layer_types"].get(lt, "#95a5a6"))
+    axes[0].set_xlabel("Mean Effective Rank Ratio")
+    axes[0].set_title("Ratio by Layer Type")
+    axes[0].set_xlim(0, 1.0)
+    
+    # Plot 2: Model comparison
+    ratio_by_model = data.get("ratio_by_model", {})
+    if ratio_by_model:
+        pythia_keys = [m for m in ratio_by_model if m.startswith("pythia-")]
+        olmo3_keys = [m for m in ratio_by_model if m.startswith("olmo3-")]
+        other_keys = [m for m in ratio_by_model if not m.startswith("pythia-") and not m.startswith("olmo3-")]
+        ordered_keys = pythia_keys + olmo3_keys + other_keys
+
+        models = ordered_keys
+        ratios = [ratio_by_model[m] for m in models]
+        colors = []
+        for m in models:
+            if m.startswith("pythia-"):
+                colors.append("#3498db")
+            elif m.startswith("olmo3-"):
+                colors.append("#e74c3c")
+            else:
+                colors.append("#95a5a6")
+
+        y_pos = list(range(len(models)))
+        axes[1].barh(y_pos, ratios, color=colors, alpha=0.8)
+
+        if pythia_keys and olmo3_keys:
+            sep_idx = len(pythia_keys) - 0.5
+            axes[1].axhline(y=sep_idx, color='black', linewidth=1.5, linestyle='--', alpha=0.6)
+
+        axes[1].set_yticks(y_pos)
+        axes[1].set_yticklabels(models, fontsize=8)
+        axes[1].set_xlabel("Mean Effective Rank Ratio")
+        axes[1].set_title("Ratio by Model (grouped by architecture)")
+        axes[1].set_xlim(0, 1.0)
+
+        from matplotlib.patches import Patch
+        legend_handles = []
+        if pythia_keys:
+            legend_handles.append(Patch(facecolor="#3498db", alpha=0.8, label="Pythia"))
+        if olmo3_keys:
+            legend_handles.append(Patch(facecolor="#e74c3c", alpha=0.8, label="OLMo-3"))
+        if legend_handles:
+            axes[1].legend(handles=legend_handles, loc="lower right", fontsize=9)
+    
+    # Add hypothesis annotation
+    if hypothesis:
+        text_parts = []
+        per_arch = hypothesis.get("per_architecture", {})
+        if per_arch:
+            for arch_name in ["pythia", "olmo3"]:
+                ad = per_arch.get(arch_name, {})
+                if ad.get("cv") is not None:
+                    text_parts.append(f"{arch_name.title()} CV = {ad['cv']*100:.2f}% (n={ad['num_models']})")
+        arch_gap = hypothesis.get("architecture_gap", {})
+        if arch_gap:
+            text_parts.append(f"Arch gap = {arch_gap['relative_gap_pct']:.1f}%")
+        dynamics_range = hypothesis.get("training_dynamics_range", {})
+        if dynamics_range:
+            text_parts.append(f"Training shift = {dynamics_range['change_pct']:.1f}%")
+        text = "\n".join(text_parts) if text_parts else "See conclusion in JSON"
+        fig.text(0.95, 0.95, text, ha='right', va='top', fontsize=10,
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    fig.suptitle("Fixed Ratio Hypothesis Test", fontsize=16, y=1.02)
+    fig.tight_layout()
+    _save_fig(fig, "fixed_ratio_distribution")
+    return "fixed_ratio_distribution"
+
+
+def generate_all_plots(results_dir: Optional[str] = None):
+    """Generate all plots from saved results."""
+    if results_dir is None:
+        results_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "results"
+        )
+    
+    print("\nGenerating all plots...")
+    
+    plot_files = [
+        ("cross_model_size.json", plot_cross_model_size),
+        ("training_dynamics_pythia-70m.json", plot_training_dynamics),
+        ("training_stages.json", plot_training_stages),
+        ("post_training_methods.json", plot_post_training_methods),
+        ("fixed_ratio_hypothesis.json", plot_fixed_ratio_distribution),
+    ]
+    
+    generated = []
+    for filename, plot_fn in plot_files:
+        path = os.path.join(results_dir, filename)
+        if os.path.exists(path):
+            try:
+                name = plot_fn(results_path=path)
+                if name:
+                    generated.append(name)
+            except Exception as e:
+                print(f"  Error plotting {filename}: {e}")
+        else:
+            print(f"  Skipping {filename}: not found")
+    
+    print(f"\nGenerated {len(generated)} plots in {FIGURES_DIR}")
+    return generated
