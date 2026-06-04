@@ -440,6 +440,91 @@ def plot_fixed_ratio_distribution(
     return "fixed_ratio_distribution"
 
 
+def plot_activation_analysis(
+    results_path: Optional[str] = None,
+    data: Optional[dict] = None,
+) -> str:
+    _setup_style()
+
+    if data is None:
+        if results_path is None:
+            results_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "results", "activation_cross_model.json"
+            )
+        with open(results_path) as f:
+            data = json.load(f)
+
+    models_data = data.get("models", data.get("results", {}))
+    if data.get("layer_results"):
+        models_data = {data.get("model", "single"): data["layer_results"]}
+
+    if not models_data:
+        print("  No data for activation analysis plot")
+        return ""
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+    cmap = plt.cm.viridis
+    model_names = sorted(models_data.keys())
+    colors = [cmap(i / max(len(model_names) - 1, 1)) for i in range(len(model_names))]
+
+    for mi, model_name in enumerate(model_names):
+        layer_data = models_data[model_name]
+        if isinstance(layer_data, dict) and "error" in layer_data:
+            continue
+
+        layer_indices = sorted(layer_data.keys(), key=lambda k: int(k) if str(k).isdigit() else 0)
+        if not layer_indices:
+            continue
+
+        x = [int(k) for k in layer_indices]
+        ratios = [layer_data[k].get("rankme_ratio", 0) for k in layer_indices]
+
+        axes[0].plot(x, ratios, '-o', color=colors[mi], linewidth=2,
+                     markersize=4, label=model_name)
+
+    axes[0].set_xlabel("Layer Index")
+    axes[0].set_ylabel("RankMe Ratio")
+    axes[0].set_title("Per-Layer Activation RankMe Ratio")
+    axes[0].set_ylim(0, 1.0)
+    axes[0].legend(fontsize=8)
+
+    last_layer_ratios = []
+    last_layer_names = []
+    for model_name in model_names:
+        layer_data = models_data[model_name]
+        if isinstance(layer_data, dict) and "error" in layer_data:
+            continue
+        layer_indices = sorted(layer_data.keys(), key=lambda k: int(k) if str(k).isdigit() else 0)
+        if not layer_indices:
+            continue
+        last_key = layer_indices[-1]
+        last_layer_names.append(model_name)
+        last_layer_ratios.append(layer_data[last_key].get("rankme_ratio", 0))
+
+    if last_layer_names:
+        bar_colors = [colors[model_names.index(n)] for n in last_layer_names]
+        x_pos = range(len(last_layer_names))
+        axes[1].bar(x_pos, last_layer_ratios, color=bar_colors, alpha=0.8)
+        axes[1].set_xticks(x_pos)
+        axes[1].set_xticklabels(last_layer_names, rotation=45, ha='right')
+        axes[1].set_ylabel("Last-Layer RankMe Ratio")
+        axes[1].set_title("Last-Layer RankMe Ratio Comparison")
+        axes[1].set_ylim(0, 1.0)
+
+    analysis_type = data.get("analysis", "activation")
+    model_label = data.get("model", "")
+    title = f"Activation RankMe Analysis"
+    if model_label:
+        title += f" ({model_label})"
+    fig.suptitle(title, fontsize=16, y=1.02)
+    fig.tight_layout()
+    plot_name = analysis_type
+    _save_fig(fig, plot_name)
+    return plot_name
+
+
 def generate_all_plots(results_dir: Optional[str] = None):
     """Generate all plots from saved results."""
     if results_dir is None:
@@ -470,6 +555,19 @@ def generate_all_plots(results_dir: Optional[str] = None):
                 print(f"  Error plotting {filename}: {e}")
         else:
             print(f"  Skipping {filename}: not found")
+
+    import glob as glob_mod
+    activation_files = sorted(glob_mod.glob(os.path.join(results_dir, "activation_*.json")))
+    for act_path in activation_files:
+        act_name = os.path.basename(act_path)
+        if act_name in (fn for fn, _ in plot_files):
+            continue
+        try:
+            name = plot_activation_analysis(results_path=act_path)
+            if name:
+                generated.append(name)
+        except Exception as e:
+            print(f"  Error plotting {act_name}: {e}")
     
     print(f"\nGenerated {len(generated)} plots in {FIGURES_DIR}")
     return generated

@@ -41,6 +41,10 @@ def parse_args():
             "training-stages",
             "post-training-methods",
             "fixed-ratio",
+            "activation-cross-model",
+            "activation-training-dynamics",
+            "activation-single",
+            "activation-all",
         ],
         default="all",
         help="Which analysis to run (default: all)",
@@ -81,6 +85,26 @@ def parse_args():
         "--output-dir",
         default=None,
         help="Custom output directory (default: results/)",
+    )
+    
+    parser.add_argument(
+        "--num-samples",
+        type=int,
+        default=None,
+        help="Number of MMLU Pro samples for activation analysis (default: all 12032)",
+    )
+    
+    parser.add_argument(
+        "--max-seq-len",
+        type=int,
+        default=512,
+        help="Max sequence length for tokenization in activation analysis (default: 512)",
+    )
+    
+    parser.add_argument(
+        "--fit-range",
+        default="10,100",
+        help="Fit range for alpha-ReQ, comma-separated (default: 10,100)",
     )
     
     return parser.parse_args()
@@ -154,6 +178,47 @@ def main():
     elif analysis == "fixed-ratio":
         results = analyze_fixed_ratio_hypothesis()
     
+    elif analysis in ("activation-cross-model", "activation-training-dynamics",
+                       "activation-single", "activation-all"):
+        from src.activation_analysis import (
+            load_mmlu_questions,
+            extract_and_analyze_activations,
+            analyze_activation_cross_model,
+            analyze_activation_training_dynamics,
+        )
+        
+        questions = load_mmlu_questions(num_samples=args.num_samples)
+        fit_range = tuple(int(x) for x in args.fit_range.split(","))
+        
+        if analysis == "activation-cross-model" or analysis == "activation-all":
+            results["activation_cross_model"] = analyze_activation_cross_model(
+                PYTHIA_CONFIGS, num_samples=args.num_samples,
+                max_seq_len=args.max_seq_len, fit_range=fit_range,
+            )
+        
+        if analysis == "activation-training-dynamics" or analysis == "activation-all":
+            ckpts = PYTHIA_CHECKPOINTS_QUICK if args.quick else PYTHIA_CHECKPOINTS
+            results[f"activation_training_dynamics_{args.model}"] = analyze_activation_training_dynamics(
+                args.model, checkpoints=ckpts, num_samples=args.num_samples,
+                max_seq_len=args.max_seq_len, fit_range=fit_range,
+            )
+        
+        if analysis == "activation-single":
+            if args.model not in PYTHIA_CONFIGS:
+                print(f"Model {args.model} not found. Available: {list(PYTHIA_CONFIGS.keys())}")
+                return
+            single_result = extract_and_analyze_activations(
+                PYTHIA_CONFIGS[args.model], questions,
+                max_seq_len=args.max_seq_len, fit_range=fit_range,
+            )
+            results["activation_single"] = {
+                "analysis": "activation_single",
+                "model": single_result.model_name,
+                "layer_results": {str(k): v for k, v in single_result.layer_results.items()},
+                "num_questions": single_result.num_questions,
+                "elapsed_seconds": single_result.elapsed_seconds,
+            }
+    
     # Generate plots
     print("\n" + "=" * 60)
     print("Generating plots...")
@@ -192,6 +257,24 @@ def main():
         data = results.get("fixed_ratio_hypothesis", results)
         if isinstance(data, dict) and "overall_stats" in data:
             plot_fixed_ratio_distribution(data=data)
+    
+    if analysis in ("activation-cross-model", "activation-all"):
+        from src.visualization import plot_activation_analysis
+        acm_data = results.get("activation_cross_model", {})
+        if isinstance(acm_data, dict) and "models" in acm_data:
+            plot_activation_analysis(data=acm_data)
+    
+    if analysis in ("activation-training-dynamics", "activation-all"):
+        from src.visualization import plot_activation_analysis
+        for key, val in results.items():
+            if key.startswith("activation_training_dynamics") and isinstance(val, dict):
+                plot_activation_analysis(data=val)
+    
+    if analysis == "activation-single":
+        from src.visualization import plot_activation_analysis
+        single_data = results.get("activation_single", {})
+        if isinstance(single_data, dict) and "layer_results" in single_data:
+            plot_activation_analysis(data=single_data)
     
     print("\n" + "=" * 60)
     print("DONE! Results saved to:", RESULTS_DIR)

@@ -19,6 +19,7 @@ results/*.json
 results/*.csv
 results/figures/*.png
 results/figures/*.pdf
+results/activation_*.json
 
 # IDE
 .idea/
