@@ -31,6 +31,7 @@ from src.config import (
     ModelConfig,
     PYTHIA_CONFIGS,
     PYTHIA_CHECKPOINTS,
+    OLMO3_VARIANTS,
     RESULTS_DIR,
 )
 
@@ -575,8 +576,97 @@ def analyze_activation_training_dynamics(
 
 
 # =============================================================================
-# CLI Entry Point
+# Analysis: OLMo-3 Post-Training Comparison
 # =============================================================================
+
+def analyze_activation_post_training(
+    num_samples: Optional[int] = None,
+    max_seq_len: int = 512,
+    fit_range: tuple[int, int] = (10, 100),
+) -> dict:
+    """
+    Compare activation RankMe across OLMo-3 post-training variants.
+
+    Analyzes all 12 OLMo-3 variants (base + think/instruct/rl-zero pathways).
+    """
+    _ensure_dirs()
+
+    print(f"\n{'#'*60}")
+    print(f"# Activation Analysis: OLMo-3 Post-Training Comparison")
+    print(f"# Variants: {len(OLMO3_VARIANTS)}")
+    print(f"# Samples: {num_samples or 'all'}")
+    print(f"{'#'*60}")
+
+    questions = load_mmlu_questions(num_samples=num_samples)
+
+    output_path = os.path.join(RESULTS_DIR, "activation_post_training.json")
+    existing_results: dict[str, dict] = {}
+    if os.path.exists(output_path):
+        try:
+            with open(output_path) as f:
+                existing = json.load(f)
+                existing_results = existing.get("variants", {})
+                print(f"  Loaded {len(existing_results)} existing variant results")
+        except Exception:
+            pass
+
+    all_results: dict[str, dict] = dict(existing_results)
+
+    for name, config in OLMO3_VARIANTS.items():
+        if name in all_results and "error" not in all_results[name]:
+            print(f"  Skipping {name} (already computed)")
+            continue
+
+        try:
+            result = extract_and_analyze_activations(
+                config, questions, max_seq_len=max_seq_len, fit_range=fit_range,
+            )
+            variant_data = _activation_result_to_dict(result)
+            variant_data["pathway"] = config.pathway
+            variant_data["stage"] = config.stage
+            all_results[name] = variant_data
+        except Exception as e:
+            print(f"  ERROR ({name}): {e}")
+            import traceback
+            traceback.print_exc()
+            all_results[name] = {"error": str(e)}
+
+        pathway_comparison = _build_pathway_summary(all_results)
+        _save_results({
+            "analysis": "activation_post_training",
+            "description": "Compare activation RankMe across OLMo-3 post-training variants",
+            "variants": all_results,
+            "pathway_comparison": pathway_comparison,
+            "timestamp": datetime.now().isoformat(),
+        }, "activation_post_training.json")
+
+    pathway_comparison = _build_pathway_summary(all_results)
+    output = {
+        "analysis": "activation_post_training",
+        "description": "Compare activation RankMe across OLMo-3 post-training variants",
+        "variants": all_results,
+        "pathway_comparison": pathway_comparison,
+        "timestamp": datetime.now().isoformat(),
+    }
+    _save_results(output, "activation_post_training.json")
+    return output
+
+
+def _build_pathway_summary(all_results: dict) -> dict:
+    pathways = {}
+    for name, layer_data in all_results.items():
+        if "error" in layer_data:
+            continue
+        pathway = layer_data.get("pathway", "unknown")
+        stage = layer_data.get("stage", "unknown")
+        if pathway not in pathways:
+            pathways[pathway] = {}
+        layer_keys = sorted([int(k) for k in layer_data.keys() if str(k).isdigit()])
+        if not layer_keys:
+            continue
+        last_layer = layer_data[str(layer_keys[-1])]
+        pathways[pathway][stage] = last_layer.get("rankme_ratio", 0)
+    return pathways
 
 if __name__ == "__main__":
     # Quick test: analyze pythia-70m with 100 samples

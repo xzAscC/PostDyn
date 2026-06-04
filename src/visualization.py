@@ -440,6 +440,120 @@ def plot_fixed_ratio_distribution(
     return "fixed_ratio_distribution"
 
 
+def _is_training_dynamics(data: dict) -> bool:
+    analysis = data.get("analysis", "")
+    return "training_dynamics" in analysis or "training_dynamics" in analysis.lower()
+
+
+def _sort_checkpoint_keys(keys: list[str]) -> list[str]:
+    def _ckpt_sort_key(k: str):
+        if k.startswith("step") and k[4:].isdigit():
+            return (0, int(k[4:]))
+        return (1, k)
+    return sorted(keys, key=_ckpt_sort_key)
+
+
+def _sort_model_by_size(names: list[str]) -> list[str]:
+    def _size_key(name: str):
+        units = {"m": 1e6, "b": 1e9}
+        for suffix, mult in units.items():
+            if suffix in name:
+                parts = name.split(suffix)[0].rsplit("-", 1)[-1]
+                try:
+                    return float(parts) * mult
+                except ValueError:
+                    pass
+        return 0.0
+    return sorted(names, key=_size_key)
+
+
+def plot_activation_training_dynamics(
+    results_path: Optional[str] = None,
+    data: Optional[dict] = None,
+) -> str:
+    _setup_style()
+
+    if data is None:
+        if results_path is None:
+            return ""
+        with open(results_path) as f:
+            data = json.load(f)
+
+    results = data.get("results", {})
+    model_label = data.get("model", "")
+
+    ckpt_names = [k for k in results.keys() if "error" not in (results[k] if isinstance(results[k], dict) else {})]
+    ckpt_names = _sort_checkpoint_keys(ckpt_names)
+
+    if not ckpt_names:
+        print("  No data for training dynamics plot")
+        return ""
+
+    steps = [int(c.replace("step", "")) for c in ckpt_names]
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+    layer_indices = set()
+    for ckpt in ckpt_names:
+        ckpt_data = results[ckpt]
+        if isinstance(ckpt_data, dict):
+            layer_indices.update(int(k) for k in ckpt_data.keys() if str(k).isdigit())
+    layer_indices = sorted(layer_indices)
+
+    cmap = plt.cm.viridis
+    n_layers = len(layer_indices)
+    layer_colors = {li: cmap(i / max(n_layers - 1, 1)) for i, li in enumerate(layer_indices)}
+
+    selected_layers = [layer_indices[0], layer_indices[len(layer_indices)//4],
+                       layer_indices[len(layer_indices)//2],
+                       layer_indices[3*len(layer_indices)//4], layer_indices[-1]]
+    selected_layers = sorted(set(selected_layers))
+
+    for li in selected_layers:
+        ratios = []
+        valid_steps = []
+        for ci, ckpt in enumerate(ckpt_names):
+            ckpt_data = results[ckpt]
+            if isinstance(ckpt_data, dict) and str(li) in ckpt_data:
+                ratios.append(ckpt_data[str(li)].get("rankme_ratio", 0))
+                valid_steps.append(steps[ci])
+        if ratios:
+            axes[0].plot(valid_steps, ratios, '-o', color=layer_colors[li],
+                        linewidth=2, markersize=3, label=f"Layer {li}")
+
+    axes[0].set_xlabel("Training Step")
+    axes[0].set_ylabel("RankMe Ratio")
+    axes[0].set_title("RankMe Ratio vs Training Step (selected layers)")
+    axes[0].set_xscale('log')
+    axes[0].set_ylim(0, None)
+    axes[0].legend(fontsize=8)
+
+    last_layer = layer_indices[-1]
+    last_ratios = []
+    valid_last_steps = []
+    for ci, ckpt in enumerate(ckpt_names):
+        ckpt_data = results[ckpt]
+        if isinstance(ckpt_data, dict) and str(last_layer) in ckpt_data:
+            last_ratios.append(ckpt_data[str(last_layer)].get("rankme_ratio", 0))
+            valid_last_steps.append(steps[ci])
+
+    if last_ratios:
+        axes[1].plot(valid_last_steps, last_ratios, '-o', color='#e74c3c',
+                    linewidth=2, markersize=4)
+        axes[1].set_xlabel("Training Step")
+        axes[1].set_ylabel(f"Last-Layer RankMe Ratio (layer {last_layer})")
+        axes[1].set_title(f"Last-Layer RankMe Ratio vs Training Step")
+        axes[1].set_xscale('log')
+        axes[1].set_ylim(0, None)
+
+    title = f"Activation Training Dynamics ({model_label})"
+    fig.suptitle(title, fontsize=16, y=1.02)
+    fig.tight_layout()
+    analysis_type = data.get("analysis", f"activation_training_dynamics_{model_label}")
+    _save_fig(fig, analysis_type)
+    return analysis_type
+
+
 def plot_activation_analysis(
     results_path: Optional[str] = None,
     data: Optional[dict] = None,
@@ -455,7 +569,10 @@ def plot_activation_analysis(
         with open(results_path) as f:
             data = json.load(f)
 
-    models_data = data.get("models", data.get("results", {}))
+    if _is_training_dynamics(data):
+        return plot_activation_training_dynamics(data=data)
+
+    models_data = data.get("models", data.get("variants", data.get("results", {})))
     if data.get("layer_results"):
         models_data = {data.get("model", "single"): data["layer_results"]}
 
@@ -466,7 +583,7 @@ def plot_activation_analysis(
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
     cmap = plt.cm.viridis
-    model_names = sorted(models_data.keys())
+    model_names = _sort_model_by_size(list(models_data.keys()))
     colors = [cmap(i / max(len(model_names) - 1, 1)) for i in range(len(model_names))]
 
     for mi, model_name in enumerate(model_names):
@@ -474,7 +591,10 @@ def plot_activation_analysis(
         if isinstance(layer_data, dict) and "error" in layer_data:
             continue
 
-        layer_indices = sorted(layer_data.keys(), key=lambda k: int(k) if str(k).isdigit() else 0)
+        layer_indices = sorted(
+            [k for k in layer_data.keys() if str(k).isdigit()],
+            key=lambda k: int(k),
+        )
         if not layer_indices:
             continue
 
@@ -487,7 +607,7 @@ def plot_activation_analysis(
     axes[0].set_xlabel("Layer Index")
     axes[0].set_ylabel("RankMe Ratio")
     axes[0].set_title("Per-Layer Activation RankMe Ratio")
-    axes[0].set_ylim(0, 1.0)
+    axes[0].set_ylim(0, None)
     axes[0].legend(fontsize=8)
 
     last_layer_ratios = []
@@ -496,7 +616,10 @@ def plot_activation_analysis(
         layer_data = models_data[model_name]
         if isinstance(layer_data, dict) and "error" in layer_data:
             continue
-        layer_indices = sorted(layer_data.keys(), key=lambda k: int(k) if str(k).isdigit() else 0)
+        layer_indices = sorted(
+            [k for k in layer_data.keys() if str(k).isdigit()],
+            key=lambda k: int(k),
+        )
         if not layer_indices:
             continue
         last_key = layer_indices[-1]
@@ -511,18 +634,17 @@ def plot_activation_analysis(
         axes[1].set_xticklabels(last_layer_names, rotation=45, ha='right')
         axes[1].set_ylabel("Last-Layer RankMe Ratio")
         axes[1].set_title("Last-Layer RankMe Ratio Comparison")
-        axes[1].set_ylim(0, 1.0)
+        axes[1].set_ylim(0, None)
 
     analysis_type = data.get("analysis", "activation")
     model_label = data.get("model", "")
-    title = f"Activation RankMe Analysis"
+    title = "Activation RankMe Analysis"
     if model_label:
         title += f" ({model_label})"
     fig.suptitle(title, fontsize=16, y=1.02)
     fig.tight_layout()
-    plot_name = analysis_type
-    _save_fig(fig, plot_name)
-    return plot_name
+    _save_fig(fig, analysis_type)
+    return analysis_type
 
 
 def generate_all_plots(results_dir: Optional[str] = None):

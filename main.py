@@ -44,6 +44,7 @@ def parse_args():
             "activation-cross-model",
             "activation-training-dynamics",
             "activation-single",
+            "activation-post-training",
             "activation-all",
         ],
         default="all",
@@ -179,12 +180,14 @@ def main():
         results = analyze_fixed_ratio_hypothesis()
     
     elif analysis in ("activation-cross-model", "activation-training-dynamics",
-                       "activation-single", "activation-all"):
+                       "activation-single", "activation-post-training",
+                       "activation-all"):
         from src.activation_analysis import (
             load_mmlu_questions,
             extract_and_analyze_activations,
             analyze_activation_cross_model,
             analyze_activation_training_dynamics,
+            analyze_activation_post_training,
         )
         
         questions = load_mmlu_questions(num_samples=args.num_samples)
@@ -218,6 +221,12 @@ def main():
                 "num_questions": single_result.num_questions,
                 "elapsed_seconds": single_result.elapsed_seconds,
             }
+        
+        if analysis == "activation-post-training" or analysis == "activation-all":
+            results["activation_post_training"] = analyze_activation_post_training(
+                num_samples=args.num_samples,
+                max_seq_len=args.max_seq_len, fit_range=fit_range,
+            )
     
     # Generate plots
     print("\n" + "=" * 60)
@@ -275,6 +284,12 @@ def main():
         single_data = results.get("activation_single", {})
         if isinstance(single_data, dict) and "layer_results" in single_data:
             plot_activation_analysis(data=single_data)
+    
+    if analysis in ("activation-post-training", "activation-all"):
+        from src.visualization import plot_activation_analysis
+        apt_data = results.get("activation_post_training", {})
+        if isinstance(apt_data, dict) and "variants" in apt_data:
+            plot_activation_analysis(data=apt_data)
     
     print("\n" + "=" * 60)
     print("DONE! Results saved to:", RESULTS_DIR)
