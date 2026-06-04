@@ -1,0 +1,33 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Model caches
+*.safetensors
+model_cache/
+.cache/
+
+# Results (generated)
+results/*.json
+results/*.csv
+results/figures/*.png
+results/figures/*.pdf
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Ultrawork notepad
+/tmp/ulw-*
