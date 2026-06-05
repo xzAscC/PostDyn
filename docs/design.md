@@ -16,17 +16,19 @@ This project analyzes the effective rank of weight matrices in open-source large
 
 ```
 RankAnalysis/
-├── main.py                  # CLI entry point
+├── main.py                      # CLI entry point
 ├── src/
-│   ├── effective_rank.py    # Core SVD entropy computation
-│   ├── config.py            # Model configs, checkpoints, patterns
-│   ├── model_loader.py      # HuggingFace model loading + weight extraction
-│   ├── analysis.py          # Five analysis pipelines
-│   └── visualization.py     # Matplotlib/Seaborn plots
+│   ├── effective_rank.py        # Core SVD entropy computation (weight-level)
+│   ├── config.py                # Model configs, checkpoints, patterns
+│   ├── model_loader.py          # HuggingFace model loading + weight extraction
+│   ├── analysis.py              # Five weight-level analysis pipelines
+│   ├── activation_analysis.py   # Activation-level RankMe analysis
+│   └── visualization.py         # Matplotlib/Seaborn plots
 ├── tests/
-│   └── test_effective_rank.py  # Unit tests for core computation
-├── results/                 # JSON results + figures
-└── docs/                    # Design + methodology documentation
+│   ├── test_effective_rank.py       # Unit tests for weight-level computation
+│   └── test_activation_analysis.py  # Unit tests for activation RankMe
+├── results/                     # JSON results + figures
+└── docs/                        # Design + methodology documentation
 ```
 
 ## Data Flow
@@ -68,11 +70,19 @@ visualization.py → matplotlib/seaborn → PNG/PDF figures
 ## Output Format
 
 All results are saved as JSON files in `results/`:
+
+**Weight-level analysis:**
 - `cross_model_size.json` - Per-model ratios and group statistics
 - `training_dynamics_{model}.json` - Per-checkpoint metrics
 - `training_stages.json` - Per-stage OLMo-3 metrics
 - `post_training_methods.json` - Per-variant OLMo-3 metrics
 - `fixed_ratio_hypothesis.json` - Aggregated hypothesis test
+
+**Activation-level analysis:**
+- `activation_cross_model.json` - Per-model RankMe across layers
+- `activation_training_dynamics_{model}.json` - Per-checkpoint activation RankMe
+- `activation_post_training.json` - Per-variant OLMo-3 activation RankMe
+- `activation_fixed_ratio_hypothesis.json` - Aggregated activation hypothesis test
 
 Plots saved as PNG + PDF in `results/figures/`.
 

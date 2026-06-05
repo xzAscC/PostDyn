@@ -647,6 +647,122 @@ def plot_activation_analysis(
     return analysis_type
 
 
+def plot_activation_combined(
+    results_dir: Optional[str] = None,
+) -> str:
+    _setup_style()
+
+    if results_dir is None:
+        results_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "results",
+        )
+
+    combined: dict[str, dict] = {}
+
+    cross_path = os.path.join(results_dir, "activation_cross_model.json")
+    if os.path.exists(cross_path):
+        with open(cross_path) as f:
+            cross = json.load(f)
+        for name, layers in cross.get("models", {}).items():
+            if isinstance(layers, dict) and "error" not in layers:
+                combined[name] = layers
+
+    post_path = os.path.join(results_dir, "activation_post_training.json")
+    if os.path.exists(post_path):
+        with open(post_path) as f:
+            post = json.load(f)
+        for name, layers in post.get("variants", {}).items():
+            if isinstance(layers, dict) and "error" not in layers:
+                combined[name] = layers
+
+    if not combined:
+        print("  No data for combined activation plot")
+        return ""
+
+    fig, axes = plt.subplots(1, 2, figsize=(20, 8))
+
+    pythia_names = sorted(
+        [n for n in combined if n.startswith("pythia-")],
+        key=_sort_model_by_size_key,
+    )
+    olmo3_names = sorted(
+        [n for n in combined if n.startswith("olmo3-")],
+    )
+    ordered = pythia_names + olmo3_names
+
+    pythia_cmap = plt.cm.Blues
+    olmo3_cmap = plt.cm.Reds
+    colors = []
+    for i, name in enumerate(pythia_names):
+        t = (i + 1) / (len(pythia_names) + 1)
+        colors.append(pythia_cmap(0.3 + 0.6 * t))
+    for i, name in enumerate(olmo3_names):
+        t = (i + 1) / (len(olmo3_names) + 1)
+        colors.append(olmo3_cmap(0.3 + 0.6 * t))
+
+    for mi, model_name in enumerate(ordered):
+        layer_data = combined[model_name]
+        layer_indices = sorted(
+            [k for k in layer_data.keys() if str(k).isdigit()],
+            key=lambda k: int(k),
+        )
+        if not layer_indices:
+            continue
+        x = [int(k) for k in layer_indices]
+        ratios = [layer_data[k].get("rankme_ratio", 0) for k in layer_indices]
+        axes[0].plot(x, ratios, '-o', color=colors[mi], linewidth=2,
+                     markersize=4, label=model_name)
+
+    axes[0].set_xlabel("Layer Index")
+    axes[0].set_ylabel("RankMe Ratio")
+    axes[0].set_title("Per-Layer Activation RankMe Ratio")
+    axes[0].set_ylim(0, None)
+    axes[0].legend(fontsize=7, ncol=2)
+
+    last_layer_ratios = []
+    last_layer_names = []
+    for model_name in ordered:
+        layer_data = combined[model_name]
+        layer_indices = sorted(
+            [k for k in layer_data.keys() if str(k).isdigit()],
+            key=lambda k: int(k),
+        )
+        if not layer_indices:
+            continue
+        last_key = layer_indices[-1]
+        display_name = model_name.replace("olmo3-", "O3-")
+        last_layer_names.append(display_name)
+        last_layer_ratios.append(layer_data[last_key].get("rankme_ratio", 0))
+
+    if last_layer_names:
+        bar_colors = colors[:len(last_layer_names)]
+        x_pos = range(len(last_layer_names))
+        axes[1].bar(x_pos, last_layer_ratios, color=bar_colors, alpha=0.8)
+        axes[1].set_xticks(x_pos)
+        axes[1].set_xticklabels(last_layer_names, rotation=45, ha='right', fontsize=8)
+        axes[1].set_ylabel("Last-Layer RankMe Ratio")
+        axes[1].set_title("Last-Layer RankMe Ratio Comparison")
+        axes[1].set_ylim(0, None)
+
+    fig.suptitle("Activation RankMe: Pythia + OLMo-3 Combined", fontsize=16, y=1.02)
+    fig.tight_layout()
+    _save_fig(fig, "activation_combined")
+    return "activation_combined"
+
+
+def _sort_model_by_size_key(name: str) -> float:
+    units = {"m": 1e6, "b": 1e9}
+    for suffix, mult in units.items():
+        if suffix in name:
+            parts = name.split(suffix)[0].rsplit("-", 1)[-1]
+            try:
+                return float(parts) * mult
+            except ValueError:
+                pass
+    return 0.0
+
+
 def generate_all_plots(results_dir: Optional[str] = None):
     """Generate all plots from saved results."""
     if results_dir is None:
@@ -690,6 +806,13 @@ def generate_all_plots(results_dir: Optional[str] = None):
                 generated.append(name)
         except Exception as e:
             print(f"  Error plotting {act_name}: {e}")
+
+    try:
+        name = plot_activation_combined(results_dir=results_dir)
+        if name:
+            generated.append(name)
+    except Exception as e:
+        print(f"  Error plotting activation_combined: {e}")
     
     print(f"\nGenerated {len(generated)} plots in {FIGURES_DIR}")
     return generated

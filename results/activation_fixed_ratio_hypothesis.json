@@ -1,0 +1,169 @@
+{
+  "analysis": "activation_fixed_ratio_hypothesis",
+  "description": "Tests whether activation RankMe ratio (RankMe/d_model) is approximately constant across models and training",
+  "overall_stats": {
+    "mean_last_layer_ratio": 0.051012,
+    "std_last_layer_ratio": 0.047586,
+    "cv_last_layer_ratio": 0.932831,
+    "min_last_layer_ratio": 0.015536,
+    "max_last_layer_ratio": 0.215559,
+    "range_last_layer_ratio": 0.200023,
+    "num_models": 19
+  },
+  "ratio_by_model": {
+    "pythia-70m": 0.215559,
+    "pythia-160m": 0.143903,
+    "pythia-410m": 0.076942,
+    "pythia-1b": 0.037763,
+    "pythia-1.4b": 0.030236,
+    "pythia-2.8b": 0.025427,
+    "pythia-6.9b": 0.019245,
+    "pythia-12b": 0.015536,
+    "olmo3-olmo3-base": 0.026417,
+    "olmo3-olmo3-think-sft": 0.041103,
+    "olmo3-olmo3-think-dpo": 0.042739,
+    "olmo3-olmo3-think-rlvr": 0.04305,
+    "olmo3-olmo3-instruct-sft": 0.044396,
+    "olmo3-olmo3-instruct-dpo": 0.048181,
+    "olmo3-olmo3-instruct-rlvr": 0.049049,
+    "olmo3-olmo3-rl-zero-math": 0.027534,
+    "olmo3-olmo3-rl-zero-code": 0.027905,
+    "olmo3-olmo3-rl-zero-if": 0.02685,
+    "olmo3-olmo3-rl-zero-general": 0.027395
+  },
+  "per_model_layer_stats": {
+    "pythia-70m": {
+      "mean_ratio": 0.04204633333333333,
+      "std_ratio": 0.07784013036488456,
+      "min_ratio": 0.002396,
+      "max_ratio": 0.215559,
+      "num_layers": 6
+    },
+    "pythia-160m": {
+      "mean_ratio": 0.01457525,
+      "std_ratio": 0.039115401270098625,
+      "min_ratio": 0.001401,
+      "max_ratio": 0.143903,
+      "num_layers": 12
+    },
+    "pythia-410m": {
+      "mean_ratio": 0.049869166666666666,
+      "std_ratio": 0.018686848850788678,
+      "min_ratio": 0.008082,
+      "max_ratio": 0.076942,
+      "num_layers": 24
+    },
+    "pythia-1b": {
+      "mean_ratio": 0.035144375000000005,
+      "std_ratio": 0.012808047030456087,
+      "min_ratio": 0.007801,
+      "max_ratio": 0.045423,
+      "num_layers": 16
+    },
+    "pythia-1.4b": {
+      "mean_ratio": 0.03305916666666667,
+      "std_ratio": 0.010922732711592319,
+      "min_ratio": 0.005557,
+      "max_ratio": 0.04698,
+      "num_layers": 24
+    },
+    "pythia-2.8b": {
+      "mean_ratio": 0.00226846875,
+      "std_ratio": 0.005939684156083002,
+      "min_ratio": 0.000416,
+      "max_ratio": 0.025427,
+      "num_layers": 32
+    },
+    "pythia-6.9b": {
+      "mean_ratio": 0.0209526875,
+      "std_ratio": 0.005979338160686663,
+      "min_ratio": 0.004886,
+      "max_ratio": 0.029215,
+      "num_layers": 32
+    },
+    "pythia-12b": {
+      "mean_ratio": 0.01766416666666667,
+      "std_ratio": 0.005139791076060929,
+      "min_ratio": 0.004009,
+      "max_ratio": 0.024432,
+      "num_layers": 36
+    },
+    "olmo3-olmo3-base": {
+      "mean_ratio": 0.030727875,
+      "std_ratio": 0.009253678632542573,
+      "min_ratio": 0.004516,
+      "max_ratio": 0.043209,
+      "num_layers": 32
+    },
+    "olmo3-olmo3-think-sft": {
+      "mean_ratio": 0.039813125000000005,
+      "std_ratio": 0.012116066525356942,
+      "min_ratio": 0.004308,
+      "max_ratio": 0.053553,
+      "num_layers": 32
+    },
+    "olmo3-olmo3-think-dpo": {
+      "mean_ratio": 0.04043509375,
+      "std_ratio": 0.012212423055948435,
+      "min_ratio": 0.004308,
+      "max_ratio": 0.053738,
+      "num_layers": 32
+    },
+    "olmo3-olmo3-think-rlvr": {
+      "mean_ratio": 0.040490437500000004,
+      "std_ratio": 0.012228266360510541,
+      "min_ratio": 0.004305,
+      "max_ratio": 0.053738,
+      "num_layers": 32
+    },
+    "olmo3-olmo3-instruct-sft": {
+      "mean_ratio": 0.042948375000000004,
+      "std_ratio": 0.013191500596383075,
+      "min_ratio": 0.004468,
+      "max_ratio": 0.058288,
+      "num_layers": 32
+    },
+    "olmo3-olmo3-instruct-dpo": {
+      "mean_ratio": 0.043823875,
+      "std_ratio": 0.013299060391504167,
+      "min_ratio": 0.004458,
+      "max_ratio": 0.057731,
+      "num_layers": 32
+    },
+    "olmo3-olmo3-instruct-rlvr": {
+      "mean_ratio": 0.0440340625,
+      "std_ratio": 0.01340342035624093,
+      "min_ratio": 0.004455,
+      "max_ratio": 0.057843,
+      "num_layers": 32
+    },
+    "olmo3-olmo3-rl-zero-math": {
+      "mean_ratio": 0.031030375,
+      "std_ratio": 0.009334071059664962,
+      "min_ratio": 0.004519,
+      "max_ratio": 0.043523,
+      "num_layers": 32
+    },
+    "olmo3-olmo3-rl-zero-code": {
+      "mean_ratio": 0.030871562499999998,
+      "std_ratio": 0.009304157544941603,
+      "min_ratio": 0.00451,
+      "max_ratio": 0.043323,
+      "num_layers": 32
+    },
+    "olmo3-olmo3-rl-zero-if": {
+      "mean_ratio": 0.030737,
+      "std_ratio": 0.00934807288629587,
+      "min_ratio": 0.004522,
+      "max_ratio": 0.043471,
+      "num_layers": 32
+    },
+    "olmo3-olmo3-rl-zero-general": {
+      "mean_ratio": 0.030789406249999998,
+      "std_ratio": 0.009199337217496212,
+      "min_ratio": 0.004517,
+      "max_ratio": 0.043081,
+      "num_layers": 32
+    }
+  }
+}
