@@ -20,8 +20,8 @@ This analysis follows the methodology of:
 | **Input to SVD** | Weight matrix W ∈ ℝ^{m×n} | Feature matrix F ∈ ℝ^{M×d} |
 | **Data dependency** | None (static parameters) | Depends on input data distribution |
 | **What it measures** | Parameter space utilization | Representation space utilization |
-| **Computation** | SVD of W directly | SVD of centered hidden state matrix |
-| **Formula** | Same RankMe formula | Same RankMe formula |
+| **Computation** | SVD of W directly | SVD of centered F, then σ² for covariance eigenvalues |
+| **Formula** | p_i = σ_i / Σσ_j | p_i = λ_i / Σλ_j where λ_i = σ_i² |
 
 ## Methodology
 
@@ -73,11 +73,12 @@ Where:
 - p_i = σ_i / Σ_j σ_j is the proportion of variance along the i-th principal axis
 - S(Σ̂) is the Von Neumann entropy of the normalized eigenvalue distribution
 
-**Implementation**: We compute SVD of F_centered directly (avoiding explicit covariance computation):
+**Implementation**: We compute SVD of F_centered, then square the singular values to obtain the covariance eigenspectrum (avoiding explicit covariance matrix computation):
 ```python
-s = torch.linalg.svdvals(F_centered)  # Singular values
-p = s / s.sum()                        # Normalize
-H = -torch.sum(p * torch.log(p))       # Shannon entropy
+s = torch.linalg.svdvals(F_centered)    # Singular values
+eigenvalues = s ** 2                     # Covariance eigenspectrum (λ_i = σ_i²)
+p = eigenvalues / eigenvalues.sum()      # Normalize to probability distribution
+H = -torch.sum(p * torch.log(p))         # Shannon entropy
 RankMe = torch.exp(H)
 ```
 
@@ -99,11 +100,12 @@ Following Agrawal et al. (2022), we estimate the power-law decay exponent of the
 σ_i ∝ i^{-α_ReQ}
 ```
 
-Estimated via weighted least-squares regression on log(σ_i) vs log(i), typically over the range i ∈ [10, 100):
+Estimated via weighted least-squares regression on log(λ_i) vs log(i), typically over the range i ∈ [10, 100):
 ```python
-log_σ = log(singular_values[fit_range])
+eigenvalues = singular_values ** 2      # Covariance eigenspectrum
+log_λ = log(eigenvalues[fit_range])
 log_i = log(indices[fit_range])
-α_ReQ = -slope(log_i vs log_σ)
+α_ReQ = -slope(log_i vs log_λ)
 ```
 
 **Interpretation**:

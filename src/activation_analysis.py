@@ -6,7 +6,8 @@ Extracts hidden states from LLM forward passes on MMLU Pro questions and compute
 per-layer RankMe and alpha-ReQ metrics.
 
 Core metrics:
-    RankMe(F) = exp(-sum p_i * ln(p_i))  where p_i = sigma_i / sum(sigma_j)
+    RankMe(F) = exp(-sum p_i * ln(p_i))  where p_i = lambda_i / sum(lambda_j)
+    and lambda_i are eigenvalues of the centered feature covariance matrix.
     ratio     = RankMe / D  in (0, 1]
     alpha-ReQ = power-law decay rate of singular value spectrum
 
@@ -22,7 +23,7 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Iterable, Mapping, Optional, cast
 
 import torch
 from tqdm import tqdm
@@ -44,7 +45,8 @@ def load_mmlu_questions(num_samples: Optional[int] = None) -> list[str]:
     """Load MMLU Pro questions. Returns list of raw question strings."""
     from datasets import load_dataset
     ds = load_dataset("TIGER-Lab/MMLU-Pro", split="test")
-    questions = [example["question"] for example in ds]
+    examples = cast(Iterable[Mapping[str, object]], ds)
+    questions = [question for example in examples if isinstance((question := example.get("question")), str)]
     if num_samples is not None:
         questions = questions[:num_samples]
     print(f"Loaded {len(questions)} MMLU Pro questions")
@@ -81,17 +83,17 @@ def compute_activation_rankme(features: torch.Tensor, eps: float = 1e-10) -> tup
     Algorithm (following Li et al. 2025):
     1. Center: F_centered = F - mean(F, dim=0)
     2. SVD: sigma = svdvals(F_centered)
-    3. Normalize: p_i = sigma_i / sum(sigma_j)
-    4. Entropy: H = -sum(p_i * ln(p_i))
-    5. RankMe = exp(H)
-    6. Ratio = RankMe / D
+    3. Convert to covariance eigenspectrum: lambda_i = sigma_i^2 / N
+    4. Normalize: p_i = lambda_i / sum(lambda_j)
+    5. Entropy: H = -sum(p_i * ln(p_i))
+    6. RankMe = exp(H)
+    7. Ratio = RankMe / D
     """
     d_model = features.shape[1]
 
     # Center
     centered = features - features.mean(dim=0, keepdim=True)
 
-    # SVD
     sigma = torch.linalg.svdvals(centered.float())
 
     # Filter near-zero
@@ -99,8 +101,8 @@ def compute_activation_rankme(features: torch.Tensor, eps: float = 1e-10) -> tup
     if len(sigma) == 0:
         return 1.0, 1.0 / d_model
 
-    # Normalize to probability distribution
-    p = sigma / sigma.sum()
+    covariance_eigenvalues = sigma ** 2
+    p = covariance_eigenvalues / covariance_eigenvalues.sum()
 
     # Shannon entropy
     log_p = torch.log(p.clamp(min=eps))
@@ -127,12 +129,12 @@ def compute_activation_alpha_req(
     2. Uses configurable fit_range for log-log regression
     3. Operates on (N, D) feature matrix
 
-    Fits log(sigma_i) ~ -alpha * log(i) + const for i in [fit_range[0], fit_range[1]).
+    Fits log(lambda_i) ~ -alpha * log(i) + const for i in [fit_range[0], fit_range[1]).
     """
     centered = features - features.mean(dim=0, keepdim=True)
     sigma = torch.linalg.svdvals(centered.float())
-    sigma = sigma[sigma > eps]
-    n = len(sigma)
+    covariance_eigenvalues = sigma[sigma > eps] ** 2
+    n = len(covariance_eigenvalues)
     if n < 3:
         return 0.0
 
@@ -148,12 +150,12 @@ def compute_activation_alpha_req(
     if len(indices) < 2:
         return 0.0
 
-    log_sigma = torch.log(sigma[lo - 1 : hi - 1].to(torch.float64).clamp(min=eps))
+    log_eigenvalues = torch.log(covariance_eigenvalues[lo - 1 : hi - 1].to(torch.float64).clamp(min=eps))
     log_indices = torch.log(indices)
 
     x_mean = log_indices.mean()
-    y_mean = log_sigma.mean()
-    numerator = torch.sum((log_indices - x_mean) * (log_sigma - y_mean))
+    y_mean = log_eigenvalues.mean()
+    numerator = torch.sum((log_indices - x_mean) * (log_eigenvalues - y_mean))
     denominator = torch.sum((log_indices - x_mean) ** 2)
 
     if abs(denominator.item()) < eps:
@@ -170,7 +172,12 @@ def compute_activation_alpha_req(
 def _get_tokenizer(model_config: ModelConfig):
     """Load tokenizer for the model."""
     from transformers import AutoTokenizer
-    tokenizer = AutoTokenizer.from_pretrained(model_config.hf_id, revision=model_config.revision)
+    trust = model_config.architecture == "olmo3"
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_config.hf_id,
+        revision=model_config.revision,
+        trust_remote_code=trust,
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     return tokenizer
@@ -179,12 +186,14 @@ def _get_tokenizer(model_config: ModelConfig):
 def _load_model(model_config: ModelConfig):
     """Load model with memory-efficient settings."""
     from transformers import AutoModelForCausalLM
+    trust = model_config.architecture == "olmo3"
     model = AutoModelForCausalLM.from_pretrained(
         model_config.hf_id,
         revision=model_config.revision,
         torch_dtype=torch.bfloat16,
         device_map="auto",
         low_cpu_mem_usage=True,
+        trust_remote_code=trust,
     )
     model.eval()
     return model
@@ -357,7 +366,7 @@ def _save_results(data: dict, filename: str):
     return path
 
 
-def _activation_result_to_dict(result: ActivationResult) -> dict[int, dict]:
+def _activation_result_to_dict(result: ActivationResult) -> dict[str, dict]:
     """Convert ActivationResult.layer_results to a JSON-serializable dict with string keys."""
     return {str(k): v for k, v in result.layer_results.items()}
 
@@ -621,7 +630,7 @@ def analyze_activation_post_training(
             result = extract_and_analyze_activations(
                 config, questions, max_seq_len=max_seq_len, fit_range=fit_range,
             )
-            variant_data = _activation_result_to_dict(result)
+            variant_data: dict[str, object] = dict(_activation_result_to_dict(result))
             variant_data["pathway"] = config.pathway
             variant_data["stage"] = config.stage
             all_results[name] = variant_data
