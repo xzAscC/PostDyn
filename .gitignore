@@ -32,3 +32,6 @@ Thumbs.db
 
 # Ultrawork notepad
 /tmp/ulw-*
+
+# Opencode
+.omo/
