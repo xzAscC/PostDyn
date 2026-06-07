@@ -15,12 +15,7 @@ model_cache/
 .cache/
 
 # Results (generated)
-results/*.json
-results/*.csv
-results/figures/*.png
-results/figures/*.pdf
-results/activation_*.json
-
+results/
 # IDE
 .idea/
 .vscode/
