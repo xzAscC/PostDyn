@@ -301,6 +301,45 @@ OLMO3_VARIANTS: dict[str, ModelConfig] = {
     ),
 }
 
+# =============================================================================
+# EXPERIMENT CONFIGURATION — PaCE concepts × OLMo-3 (Think focus)
+# Setup adapted from TrainingDynamic.tex. See docs/experiment_setup.md.
+# =============================================================================
+
+EXPERIMENT_CONCEPT_SOURCE_URL = (
+    "https://github.com/peterljq/Parsimonious-Concept-Engineering"
+)
+EXPERIMENT_NUM_CONCEPTS = 100
+
+EXPERIMENT_MODEL_COLLECTION_URL = (
+    "https://huggingface.co/collections/allenai/olmo-3-post-training"
+)
+EXPERIMENT_DTYPE = "bfloat16"
+
+# Think chain (ordered): base -> SFT -> DPO -> RL
+# Keys index into OLMO3_VARIANTS. The three families SFT/DPO/RLVR
+# are the last three entries; olmo3-base is the shared starting point.
+THINK_CHAIN: list[str] = [
+    "olmo3-base",
+    "olmo3-think-sft",
+    "olmo3-think-dpo",
+    "olmo3-think-rlvr",
+]
+
+# RL-Zero family: RL directly from base (no SFT/DPO)
+RL_ZERO_FAMILY: list[str] = [
+    "olmo3-rl-zero-math",
+    "olmo3-rl-zero-code",
+    "olmo3-rl-zero-if",
+    "olmo3-rl-zero-general",
+    "olmo3-rl-zero-mix",
+]
+
+# Combined experiment checkpoint list (9 unique; base shared once).
+# Early stage; will expand toward ~10 per TrainingDynamic.tex.
+EXPERIMENT_MODELS: list[str] = THINK_CHAIN + RL_ZERO_FAMILY
+
+
 # OLMo-3 pretraining stage checkpoints (if available as revisions)
 # These may not all exist - the pipeline should handle missing gracefully
 OLMO3_PRETRAIN_CHECKPOINTS: list[str] = [
