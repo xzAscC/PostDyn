@@ -4,6 +4,8 @@ Tests the difference-in-means steering vector pipeline using mock activations.
 No model dependency — activation extraction is abstracted away.
 """
 
+import os
+
 import torch
 import pytest
 
@@ -15,6 +17,18 @@ from src.concept_steering import (
     batch_compute_steering_vectors,
     save_steering_vectors,
     load_steering_vectors,
+    _DEFAULT_INDEX_PATH,
+)
+
+# Tests that call load_concept_index() with the default path require the
+# PaCE concept_index.txt data file, which is gitignored (too large for git).
+# Download it from:
+#   https://raw.githubusercontent.com/peterljq/Parsimonious-Concept-Engineering/main/concept_index.txt
+# into data/concept_index.txt
+_requires_concept_data = pytest.mark.skipif(
+    not os.path.exists(_DEFAULT_INDEX_PATH),
+    reason=f"PaCE concept_index.txt not found at {_DEFAULT_INDEX_PATH}. "
+    "Download it from the PaCE repo.",
 )
 
 
@@ -26,16 +40,19 @@ from src.concept_steering import (
 class TestLoadConceptIndex:
     """Test loading PaCE concept index."""
 
+    @_requires_concept_data
     def test_load_returns_list_of_strings(self):
         concepts = load_concept_index()
         assert isinstance(concepts, list)
         assert all(isinstance(c, str) for c in concepts)
 
+    @_requires_concept_data
     def test_load_correct_count(self):
         """PaCE concept_index.txt has 40,000 concepts."""
         concepts = load_concept_index()
         assert len(concepts) == 40000
 
+    @_requires_concept_data
     def test_load_first_concept_is_said(self):
         """First concept should be 'said' (highest frequency rank)."""
         concepts = load_concept_index()
@@ -61,6 +78,7 @@ class TestLoadConceptIndex:
 class TestSelectConcepts:
     """Test concept selection strategies."""
 
+    @_requires_concept_data
     def test_select_first_n_default_100(self):
         """Default selection returns 100 concepts."""
         concepts = load_concept_index()
