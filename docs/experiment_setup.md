@@ -69,6 +69,15 @@ The experiment covers three post-training method families:
 - **Deferred**: Instruct pathway variants (`olmo3-instruct-sft`, `olmo3-instruct-dpo`, `olmo3-instruct-rlvr`) are excluded from the current experiment
 - **Checkpoint count**: 9 unique models currently; the experimental design targets ~10, with room to expand
 
+## Layer Selection
+
+Per the experimental setup, the DIM pipeline is applied at 10 evenly-spaced depth positions: 10%, 20%, ..., 100% of the model's transformer layers. For OLMo-3 7B (32 layers), this yields layer indices `[3, 6, 9, 12, 16, 19, 22, 25, 28, 31]`.
+
+The percentages and a helper function are defined in `src/config.py`:
+- `EXPERIMENT_LAYER_PERCENTAGES = [0.1, 0.2, ..., 1.0]`
+- `compute_experiment_layers(n_layers)` — maps percentages to 0-indexed layer indices
+- `EXPERIMENT_LAYERS_7B` — pre-computed for the 32-layer architecture
+
 ## Method: Difference-in-Means (DIM)
 
 For each concept, the steering vector is computed as the difference between the mean activations of positive and negative stimulus sets:
@@ -89,7 +98,7 @@ Results are stored as safetensors + JSON via `save_steering_vectors()`, using in
 ## Limitations
 
 1. **Early stage**: Only 9 of the target ~10 checkpoints are configured; Instruct pathway is deferred
-2. **Layer selection**: The specific layer at which to extract activations is not yet determined (marked as TODO in the original setup)
+2. **Layer selection**: 10 depth positions specified (10%–100%); the activation extraction pipeline to probe these layers is not yet implemented
 3. **Activation extraction**: The model-specific activation extraction pipeline (Phase 2) is not yet implemented — the DIM computation module is model-agnostic and tested with synthetic data
 4. **Single precision**: All models use bfloat16; no mixed-precision or quantization comparison
 5. **Concept coverage**: 100 concepts is a small subset of PaCE's full dictionary; results may not generalize to the complete concept space

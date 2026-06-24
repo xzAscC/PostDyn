@@ -339,6 +339,21 @@ RL_ZERO_FAMILY: list[str] = [
 # Early stage; will expand toward ~10 per TrainingDynamic.tex.
 EXPERIMENT_MODELS: list[str] = THINK_CHAIN + RL_ZERO_FAMILY
 
+# Layer selection: 10 layers at 10%, 20%, ..., 100% of model depth.
+# Per TrainingDynamic.tex line 8.
+EXPERIMENT_LAYER_PERCENTAGES: list[float] = [
+    0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0,
+]
+
+
+def compute_experiment_layers(n_layers: int) -> list[int]:
+    """Map depth percentages to 0-indexed layer indices."""
+    return [min(int(p * n_layers), n_layers - 1) for p in EXPERIMENT_LAYER_PERCENTAGES]
+
+
+# Pre-computed for OLMo-3 7B (32 transformer layers)
+EXPERIMENT_LAYERS_7B: list[int] = compute_experiment_layers(32)
+
 
 # OLMo-3 pretraining stage checkpoints (if available as revisions)
 # These may not all exist - the pipeline should handle missing gracefully

@@ -18,6 +18,9 @@ from src.config import (
     EXPERIMENT_DTYPE,
     EXPERIMENT_CONCEPT_SOURCE_URL,
     EXPERIMENT_MODEL_COLLECTION_URL,
+    EXPERIMENT_LAYER_PERCENTAGES,
+    EXPERIMENT_LAYERS_7B,
+    compute_experiment_layers,
     OLMO3_VARIANTS,
 )
 
@@ -101,3 +104,39 @@ class TestExperimentModels:
     def test_checkpoint_count_is_nine(self):
         # Early-stage: 9 unique checkpoints, room to expand to 10.
         assert len(EXPERIMENT_MODELS) == 9
+
+
+class TestLayerSelection:
+    """10 layers at 10%, 20%, ..., 100% of model depth (tex line 8)."""
+
+    def test_percentages_are_ten_even_steps(self):
+        assert EXPERIMENT_LAYER_PERCENTAGES == [
+            0.1,
+            0.2,
+            0.3,
+            0.4,
+            0.5,
+            0.6,
+            0.7,
+            0.8,
+            0.9,
+            1.0,
+        ]
+
+    def test_compute_layers_for_32_layer_model(self):
+        layers = compute_experiment_layers(32)
+        assert layers == [3, 6, 9, 12, 16, 19, 22, 25, 28, 31]
+
+    def test_compute_layers_returns_ten(self):
+        assert len(compute_experiment_layers(32)) == 10
+
+    def test_compute_layers_all_in_range(self):
+        n = 32
+        layers = compute_experiment_layers(n)
+        assert all(0 <= i < n for i in layers)
+
+    def test_compute_layers_last_is_final_layer(self):
+        assert compute_experiment_layers(32)[-1] == 31
+
+    def test_precomputed_7b_matches_function(self):
+        assert EXPERIMENT_LAYERS_7B == compute_experiment_layers(32)
