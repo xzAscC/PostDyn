@@ -18,6 +18,8 @@
   - `negative_std` — spread of negative-class activations
 - **Storage**: safetensors (tensors) + JSON (metadata), model-agnostic format
 
+See experiment_setup.md for the full experimental setup and model table.
+
 **Current status**: Phase 1 complete — model-agnostic DIM pipeline built with TDD (30 tests).
 Activation extraction (model-specific) is Phase 2.
 
