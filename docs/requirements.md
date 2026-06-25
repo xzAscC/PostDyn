@@ -19,8 +19,10 @@
 - **Storage**: safetensors (tensors) + JSON (metadata), model-agnostic format
 
 See experiment_setup.md for the full experimental setup and model table.
+See concept_analysis.md for the 4 training-dynamics analysis metrics.
 
 **Current status**: Phase 1 complete — model-agnostic DIM pipeline built with TDD (30 tests).
+Phase 1.5 complete — 4 concept analysis metrics (directional stability, separability margin, Gram matrix, anisotropy spectrum) with 28 TDD tests.
 Activation extraction (model-specific) is Phase 2.
 
 ---
