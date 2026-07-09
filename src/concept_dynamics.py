@@ -16,6 +16,7 @@ object with the HF transformers calling convention (mockable).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 
@@ -399,28 +400,20 @@ def save_concept_vectors(
     output_dir: str,
     model_name: str,
     layer_idx: int,
+    checkpoint: str = "final",
 ) -> str:
-    """Save all concept vectors for one (model, layer) pair.
+    """Save all concept vectors for one (model, checkpoint, layer) triple.
 
-    Layout: {output_dir}/{model_name}/layer_{layer_idx}.{safetensors,json}
-
-    Args:
-        vectors: {concept_name: ConceptVector} for one model at one layer.
-        output_dir: Base output directory.
-        model_name: Model identifier (used in path).
-        layer_idx: Layer index (used in path).
-
-    Returns:
-        Base path (without extension) where vectors were saved.
+    Layout: {output_dir}/{model_name}/{checkpoint}/layer_{layer_idx}.{safetensors,json}
     """
     import json
     import os
 
     from safetensors.torch import save_file
 
-    model_dir = os.path.join(output_dir, model_name)
-    os.makedirs(model_dir, exist_ok=True)
-    base_path = os.path.join(model_dir, f"layer_{layer_idx}")
+    ckpt_dir = os.path.join(output_dir, model_name, checkpoint)
+    os.makedirs(ckpt_dir, exist_ok=True)
+    base_path = os.path.join(ckpt_dir, f"layer_{layer_idx}")
 
     tensor_dict: dict[str, torch.Tensor] = {}
     metadata: dict = {"concepts": [], "layer_idx": layer_idx, "model_name": model_name}
@@ -459,26 +452,15 @@ def load_concept_vectors(
     input_dir: str,
     model_name: str,
     layer_idx: int,
+    checkpoint: str = "final",
 ) -> dict[str, ConceptVector]:
-    """Load concept vectors for one (model, layer) pair.
-
-    Args:
-        input_dir: Base directory where vectors were saved.
-        model_name: Model identifier.
-        layer_idx: Layer index.
-
-    Returns:
-        {concept_name: ConceptVector} for the specified model and layer.
-
-    Raises:
-        FileNotFoundError: If the safetensors or JSON file is missing.
-    """
+    """Load concept vectors for one (model, checkpoint, layer) triple."""
     import json
     import os
 
     from safetensors import safe_open
 
-    base_path = os.path.join(input_dir, model_name, f"layer_{layer_idx}")
+    base_path = os.path.join(input_dir, model_name, checkpoint, f"layer_{layer_idx}")
     safetensors_path = base_path + ".safetensors"
     json_path = base_path + ".json"
 
@@ -522,24 +504,30 @@ def load_concept_vectors(
 # =============================================================================
 
 
-def _load_model_and_tokenizer(model_config):
-    """Load model (bfloat16) and tokenizer for a ModelConfig.
+def _clean_hf_cache(hf_id: str):
+    """Remove a model's HF cache entries to free disk space."""
+    import os
+    import shutil
 
-    Returns (model, tokenizer). Caller is responsible for cleanup.
-    Handles olmo2-retrofit variants (e.g. RL-Zero-Mix) whose tokenizer
-    config may be incomplete by falling back to the shared Olmo-3 base
-    tokenizer, and loads them via Olmo2ForCausalLM since the retrofit
-    architecture shares Olmo2's layer structure.
-    """
+    cache_name = hf_id.replace("/", "--")
+    cache_path = os.path.expanduser(f"~/.cache/huggingface/hub/models--{cache_name}")
+    if os.path.exists(cache_path):
+        shutil.rmtree(cache_path)
+        print(f"  Cleaned HF cache: {cache_name}")
+
+
+def _load_model_and_tokenizer(model_config, revision=None):
+    """Load model (bfloat16) and tokenizer for a ModelConfig at a given revision."""
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     trust = getattr(model_config, "architecture", "") == "olmo3"
+    rev = revision if revision else model_config.revision
 
     try:
         tokenizer = AutoTokenizer.from_pretrained(
             model_config.hf_id,
-            revision=model_config.revision,
+            revision=rev,
             trust_remote_code=trust,
         )
     except (KeyError, AttributeError):
@@ -555,7 +543,7 @@ def _load_model_and_tokenizer(model_config):
     try:
         model = AutoModelForCausalLM.from_pretrained(
             model_config.hf_id,
-            revision=model_config.revision,
+            revision=rev,
             torch_dtype=torch.bfloat16,
             device_map="auto",
             low_cpu_mem_usage=True,
@@ -568,6 +556,7 @@ def _load_model_and_tokenizer(model_config):
 
             model = Olmo2ForCausalLM.from_pretrained(
                 model_config.hf_id,
+                revision=rev,
                 torch_dtype=torch.bfloat16,
                 device_map="auto",
                 low_cpu_mem_usage=True,
@@ -591,29 +580,10 @@ def run_model_extraction(
     n_samples: int,
     output_dir: str,
     max_seq_len: int = 2048,
+    checkpoint: str = "final",
+    revision: Optional[str] = None,
 ) -> dict:
-    """Extract concept vectors for one model at specified layers.
-
-    Pipeline per (concept, layer):
-        1. Load contrastive texts (Dolci positive + wikitext negative)
-        2. Forward pass, extract last-token activations
-        3. Compute DiM concept vector (normalized)
-        4. Save
-
-    Memory: one model loaded at a time. Activations extracted for all
-    concepts before freeing the model.
-
-    Args:
-        model_config: ModelConfig from src.config.
-        concepts: e.g. ["math", "code", "if", "general"].
-        layers: e.g. [3, 6, 9, 12, 16, 19, 22, 25, 28, 31].
-        n_samples: Number of positive/negative samples per concept.
-        output_dir: Where to save concept vectors.
-        max_seq_len: Max tokenization length.
-
-    Returns:
-        Summary dict with extracted concept counts per layer.
-    """
+    """Extract concept vectors for one model checkpoint at specified layers."""
     import gc
     import time
 
@@ -622,11 +592,13 @@ def run_model_extraction(
     model_name = model_config.name
     start = time.time()
 
+    eff_revision = revision if revision else model_config.revision
+
     print(f"\n{'=' * 60}")
-    print(f"Concept extraction: {model_name} ({model_config.hf_id})")
-    print(f"Concepts: {concepts}")
-    print(f"Layers: {layers}")
-    print(f"Samples per concept: {n_samples}")
+    print(
+        f"Concept extraction: {model_name} / {checkpoint} ({model_config.hf_id} rev={eff_revision})"
+    )
+    print(f"Concepts: {concepts}, Layers: {layers}, Samples: {n_samples}")
     print(f"{'=' * 60}")
 
     # Step 1: Load all contrastive texts upfront (no model needed)
@@ -638,8 +610,8 @@ def run_model_extraction(
         print(f"    positive={len(pos)}, negative={len(neg)}")
 
     # Step 2: Load model + tokenizer
-    print(f"  Loading model {model_config.hf_id} (bfloat16)...")
-    model, tokenizer = _load_model_and_tokenizer(model_config)
+    print(f"  Loading model {model_config.hf_id} rev={eff_revision} (bfloat16)...")
+    model, tokenizer = _load_model_and_tokenizer(model_config, eff_revision)
     print(f"  Model loaded on {next(model.parameters()).device}")
 
     # Step 3: Extract activations per concept, compute vectors per layer
@@ -674,14 +646,17 @@ def run_model_extraction(
                     normalize=True,
                 )
 
-                # Load existing vectors for this (model, layer) or start fresh
                 try:
-                    existing = load_concept_vectors(output_dir, model_name, layer_idx)
+                    existing = load_concept_vectors(
+                        output_dir, model_name, layer_idx, checkpoint
+                    )
                 except FileNotFoundError:
                     existing = {}
 
                 existing[concept] = cv
-                save_concept_vectors(existing, output_dir, model_name, layer_idx)
+                save_concept_vectors(
+                    existing, output_dir, model_name, layer_idx, checkpoint
+                )
 
             del pos_acts, neg_acts
             if torch.cuda.is_available():
@@ -699,6 +674,7 @@ def run_model_extraction(
 
     return {
         "model": model_name,
+        "checkpoint": checkpoint,
         "concepts": concepts,
         "layers": layers,
         "n_samples": n_samples,
@@ -707,7 +683,7 @@ def run_model_extraction(
 
 
 # =============================================================================
-# Full Experiment Runner
+# Full Experiment Runner (checkpoint trajectory)
 # =============================================================================
 
 
@@ -719,82 +695,72 @@ def run_full_experiment(
     output_dir: str,
     max_seq_len: int = 2048,
 ) -> dict:
-    """Run concept extraction across all models, then compute dynamics.
-
-    Args:
-        model_names: Keys into OLMO3_VARIANTS (e.g. "olmo3-think-sft").
-        concepts: e.g. ["math", "code", "if", "general"].
-        layers: Layer indices to probe.
-        n_samples: Samples per concept per class.
-        output_dir: Where to save all results.
-        max_seq_len: Max tokenization length.
-
-    Returns:
-        Full results summary including per-model extraction stats and
-        cross-model dynamics analysis.
-    """
+    """Run concept extraction across all models × checkpoints, then dynamics."""
     import json
     import os
 
-    from src.config import OLMO3_VARIANTS
+    from src.config import OLMO3_VARIANTS, MODEL_CHECKPOINTS
 
     os.makedirs(output_dir, exist_ok=True)
     vectors_dir = os.path.join(output_dir, "vectors")
     os.makedirs(vectors_dir, exist_ok=True)
     results_path = os.path.join(output_dir, "extraction_results.json")
 
-    # Resume support: load existing results
     if os.path.exists(results_path):
         with open(results_path) as f:
             all_results = json.load(f)
-        print(
-            f"Resuming: {len(all_results.get('models_done', []))} models already done"
-        )
+        print(f"Resuming: {len(all_results.get('checkpoints_done', []))} ckpts done")
     else:
-        all_results = {"models_done": [], "extraction": {}}
+        all_results = {"checkpoints_done": [], "extraction": {}}
 
     for name in model_names:
-        if name in all_results["models_done"]:
-            print(f"\nSkipping {name} (already extracted)")
-            continue
-
         if name not in OLMO3_VARIANTS:
-            print(f"\nWARNING: '{name}' not in OLMO3_VARIANTS, skipping")
+            print(f"WARNING: '{name}' not in OLMO3_VARIANTS, skipping")
             continue
 
         config = OLMO3_VARIANTS[name]
-        try:
-            stats = run_model_extraction(
-                config,
-                concepts,
-                layers,
-                n_samples,
-                vectors_dir,
-                max_seq_len,
-            )
-            all_results["extraction"][name] = stats
-            all_results["models_done"].append(name)
-        except Exception as e:
-            import traceback
+        checkpoints = MODEL_CHECKPOINTS.get(name, ["main"])
 
-            traceback.print_exc()
-            all_results["extraction"][name] = {"error": str(e)}
-            all_results["models_done"].append(name)
+        for ckpt in checkpoints:
+            ckpt_key = f"{name}/{ckpt}"
+            if ckpt_key in all_results["checkpoints_done"]:
+                print(f"\nSkipping {ckpt_key} (already done)")
+                continue
 
-        # Incremental save
-        with open(results_path, "w") as f:
-            json.dump(all_results, f, indent=2)
+            try:
+                stats = run_model_extraction(
+                    config,
+                    concepts,
+                    layers,
+                    n_samples,
+                    vectors_dir,
+                    max_seq_len,
+                    checkpoint=ckpt,
+                    revision=ckpt,
+                )
+                all_results["extraction"][ckpt_key] = stats
+                all_results["checkpoints_done"].append(ckpt_key)
+            except Exception as e:
+                import traceback
 
-    # Step 2: Compute dynamics analysis
+                traceback.print_exc()
+                all_results["extraction"][ckpt_key] = {"error": str(e)}
+                all_results["checkpoints_done"].append(ckpt_key)
+
+            with open(results_path, "w") as f:
+                json.dump(all_results, f, indent=2)
+
+        # Clean HF cache for this model to free disk space
+        model_ckpts_done = all(
+            f"{name}/{c}" in all_results["checkpoints_done"] for c in checkpoints
+        )
+        if model_ckpts_done:
+            _clean_hf_cache(config.hf_id)
+
     print(f"\n{'=' * 60}")
-    print("Computing cross-model dynamics...")
+    print("Computing checkpoint trajectory dynamics...")
     print(f"{'=' * 60}")
-    dynamics = compute_dynamics_analysis(
-        output_dir,
-        model_names,
-        concepts,
-        layers,
-    )
+    dynamics = compute_dynamics_analysis(output_dir, model_names, concepts, layers)
 
     all_results["dynamics"] = dynamics
     with open(results_path, "w") as f:
@@ -805,7 +771,7 @@ def run_full_experiment(
 
 
 # =============================================================================
-# Dynamics Analysis (stability + gram matrices)
+# Dynamics Analysis (per-model checkpoint stability + gram)
 # =============================================================================
 
 
@@ -815,29 +781,17 @@ def compute_dynamics_analysis(
     concepts: list[str],
     layers: list[int],
 ) -> dict:
-    """Compute cross-model stability and per-model gram matrices.
+    """Compute per-model checkpoint stability and per-checkpoint gram matrices.
 
-    Loads all saved concept vectors and computes:
-        1. stability[k; t, t'] = cos(r_k^t, r_k^t')  — per concept, per layer
-        2. G_ij^t = cos(r_i^t, r_j^t)                — per model, per layer
+    Stability: for each (model, concept, layer), cosine matrix across
+    that model's checkpoints (NxN where N = num checkpoints).
 
-    Args:
-        results_dir: Directory containing saved concept vectors.
-        model_names: Ordered list of model names.
-        concepts: Ordered list of concept names.
-        layers: Ordered list of layer indices.
-
-    Returns:
-        {
-            "stability": {concept: {layer: {matrix: [[NxN]], models: [...]}}},
-            "gram": {model: {layer: [[4x4 matrix]]}},
-            "model_names": [...],
-            "concepts": [...],
-            "layers": [...],
-        }
+    Gram: for each (model, checkpoint, layer), 4x4 cosine across concepts.
     """
     import json
     import os
+
+    from src.config import MODEL_CHECKPOINTS
 
     vectors_dir = os.path.join(results_dir, "vectors")
     stability_dir = os.path.join(results_dir, "stability")
@@ -849,60 +803,77 @@ def compute_dynamics_analysis(
         m for m in model_names if os.path.exists(os.path.join(vectors_dir, m))
     ]
 
-    if len(available_models) < 2:
-        print("WARNING: Need ≥2 models for stability analysis")
+    # --- Stability: per model, per concept, per layer, across checkpoints ---
+    stability: dict[str, dict[str, dict[int, dict]]] = {}
+    for model in available_models:
+        stability[model] = {}
+        ckpts = MODEL_CHECKPOINTS.get(model, ["main"])
+        available_ckpts = [
+            c for c in ckpts if os.path.exists(os.path.join(vectors_dir, model, c))
+        ]
 
-    # --- Stability: per concept, per layer, across models ---
-    stability: dict[str, dict[int, dict]] = {}
-    for concept in concepts:
-        stability[concept] = {}
-        for layer in layers:
-            per_model: dict[str, ConceptVector] = {}
-            for model in available_models:
-                try:
-                    vecs = load_concept_vectors(vectors_dir, model, layer)
-                    if concept in vecs:
-                        per_model[model] = vecs[concept]
-                except FileNotFoundError:
-                    continue
+        for concept in concepts:
+            stability[model][concept] = {}
+            for layer in layers:
+                per_ckpt: dict[str, ConceptVector] = {}
+                for ckpt in available_ckpts:
+                    try:
+                        vecs = load_concept_vectors(vectors_dir, model, layer, ckpt)
+                        if concept in vecs:
+                            per_ckpt[ckpt] = vecs[concept]
+                    except FileNotFoundError:
+                        continue
 
-            if len(per_model) >= 2:
-                matrix = cross_model_stability(per_model)
-                sorted_models = sorted(per_model.keys())
-                stability[concept][layer] = {
-                    "matrix": matrix.tolist(),
-                    "models": sorted_models,
-                }
+                if len(per_ckpt) >= 2:
+                    matrix = cross_model_stability(per_ckpt)
+                    stability[model][concept][layer] = {
+                        "matrix": matrix.tolist(),
+                        "checkpoints": sorted(per_ckpt.keys()),
+                    }
 
-    # Save stability
     with open(os.path.join(stability_dir, "stability.json"), "w") as f:
         json.dump(stability, f, indent=2)
 
-    # --- Gram: per model, per layer, across concepts ---
-    gram: dict[str, dict[int, dict]] = {}
+    # --- Gram: per model, per checkpoint, per layer, across concepts ---
+    gram: dict[str, dict[str, dict[int, dict]]] = {}
     for model in available_models:
         gram[model] = {}
-        for layer in layers:
-            try:
-                vecs = load_concept_vectors(vectors_dir, model, layer)
-            except FileNotFoundError:
-                continue
+        ckpts = MODEL_CHECKPOINTS.get(model, ["main"])
+        available_ckpts = [
+            c for c in ckpts if os.path.exists(os.path.join(vectors_dir, model, c))
+        ]
 
-            available_concepts = {c: vecs[c] for c in concepts if c in vecs}
-            if len(available_concepts) >= 2:
-                matrix = concept_gram_matrices(available_concepts)
-                sorted_concepts = sorted(available_concepts.keys())
-                gram[model][layer] = {
-                    "matrix": matrix.tolist(),
-                    "concepts": sorted_concepts,
-                }
+        for ckpt in available_ckpts:
+            gram[model][ckpt] = {}
+            for layer in layers:
+                try:
+                    vecs = load_concept_vectors(vectors_dir, model, layer, ckpt)
+                except FileNotFoundError:
+                    continue
 
-    # Save gram
+                avail = {c: vecs[c] for c in concepts if c in vecs}
+                if len(avail) >= 2:
+                    matrix = concept_gram_matrices(avail)
+                    gram[model][ckpt][layer] = {
+                        "matrix": matrix.tolist(),
+                        "concepts": sorted(avail.keys()),
+                    }
+
     with open(os.path.join(gram_dir, "gram.json"), "w") as f:
         json.dump(gram, f, indent=2)
 
-    print(f"  Stability: {sum(len(v) for v in stability.values())} matrices")
-    print(f"  Gram: {sum(len(v) for v in gram.values())} matrices")
+    n_stab = sum(
+        len(layers_data)
+        for model_data in stability.values()
+        for layers_data in model_data.values()
+    )
+    n_gram = sum(
+        len(layers_data)
+        for ckpt_data in gram.values()
+        for layers_data in ckpt_data.values()
+    )
+    print(f"  Stability: {n_stab} matrices")
+    print(f"  Gram: {n_gram} matrices")
 
     return {
         "stability": stability,
