@@ -18,6 +18,7 @@ Six Olmo-3-7B post-training variants, all sharing the same architecture (32 laye
 | Model Key | HuggingFace ID | Pathway |
 |-----------|---------------|---------|
 | `olmo3-think-sft` | allenai/Olmo-3-7B-Think-SFT | Think (SFT) |
+| `olmo3-instruct-sft` | allenai/Olmo-3-7B-Instruct-SFT | Instruct (SFT) |
 | `olmo3-rl-zero-math` | allenai/Olmo-3-7B-RL-Zero-Math | RL-Zero (math) |
 | `olmo3-rl-zero-code` | allenai/Olmo-3-7B-RL-Zero-Code | RL-Zero (code) |
 | `olmo3-rl-zero-if` | allenai/Olmo-3-7B-RL-Zero-IF | RL-Zero (IF) |
@@ -140,7 +141,7 @@ Runs: 1 model (Think-SFT), 2 concepts (math, code), 2 layers (3, 16), 5 samples 
 experiments/run_concept_dynamics.sh full
 ```
 
-Runs: 6 models × 4 concepts × 10 layers × 50 samples.
+Runs: 7 models × 4 concepts × 10 layers × 50 samples.
 
 ### Custom
 
@@ -222,6 +223,6 @@ Off-diagonal mean of the 4×4 Gram matrix at layer 16 (lower = more disentangled
 | File | Content |
 |------|---------|
 | `results/concept_dynamics/stability/stability.json` | 40 stability matrices (4 concepts × 10 layers, each 6×6) |
-| `results/concept_dynamics/gram/gram.json` | 60 Gram matrices (6 models × 10 layers, each 4×4) |
+| `results/concept_dynamics/gram/gram.json` | 70 Gram matrices (7 models × 10 layers, each 4×4) |
 | `results/concept_dynamics/extraction_results.json` | Full extraction summary + dynamics |
 | `results/concept_dynamics/vectors/{model}/layer_{L}.safetensors` | Concept vectors (gitignored, large) |
