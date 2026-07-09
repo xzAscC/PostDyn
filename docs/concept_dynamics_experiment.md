@@ -184,9 +184,9 @@ Verified on RTX 4090 (bfloat16, `olmo3-think-sft`):
 | d_model | 4096 (matches Olmo-3-7B architecture) |
 | Gram matrix | Symmetric, diagonal = 1.0, meaningful values |
 
-### Full Experiment Results (6 models × 4 concepts × 10 layers × 50 samples)
+### Full Experiment Results (7 models × 4 concepts × 10 layers × 50 samples)
 
-All 6 models processed successfully on RTX 4090 (bfloat16). Results saved to `results/concept_dynamics/`.
+All 7 models processed successfully on RTX 4090 (bfloat16). Results saved to `results/concept_dynamics/`.
 
 #### Directional Stability (concept preservation across models)
 
@@ -203,15 +203,19 @@ The stability metric `cos(r_k^t, r_k^t')` measures how much each concept directi
 
 #### Concept Gram Matrix (entanglement per model)
 
-Off-diagonal mean of the 4×4 Gram matrix (lower = more disentangled):
+Off-diagonal mean of the 4×4 Gram matrix at layer 16 (lower = more disentangled):
 
-| Model | Layer 16 | Interpretation |
-|-------|----------|----------------|
+| Model | Gram off-diag mean | Interpretation |
+|-------|-------------------|----------------|
 | Think-SFT | 0.822 | Most entangled |
+| RL-Zero-General | 0.767 | Less entangled |
+| Instruct-SFT | 0.769 | Less entangled |
+| RL-Zero-Code | 0.764 | Less entangled |
 | RL-Zero-Math | 0.763 | Less entangled |
+| RL-Zero-IF | 0.757 | Least entangled |
 | RL-Zero-Mix | 0.756 | Least entangled |
 
-**Finding**: RL-Zero variants show lower concept entanglement than SFT — RL training disentangles concepts more than SFT. This aligns with prior work showing RLVR consolidates representations into narrower subspaces.
+**Finding**: Think-SFT (chain-of-thought reasoning training) shows significantly higher concept entanglement (0.82) than all other variants (~0.76-0.77). Instruct-SFT and RL-Zero variants show similar, lower entanglement levels. This suggests that reasoning-focused SFT amplifies concept overlap, while instruction-following SFT and RL-Zero training both promote greater concept separation.
 
 #### Files Produced
 

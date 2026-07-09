@@ -31,6 +31,7 @@ from src.concept_dynamics import run_full_experiment, select_uniform_layers
 
 DEFAULT_MODELS = [
     "olmo3-think-sft",
+    "olmo3-instruct-sft",
     "olmo3-rl-zero-math",
     "olmo3-rl-zero-code",
     "olmo3-rl-zero-if",
