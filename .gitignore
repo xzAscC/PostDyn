@@ -14,8 +14,14 @@ wheels/
 model_cache/
 .cache/
 
-# Results (generated)
+# Results (generated) — keep large safetensors gitignored but allow analysis JSONs
 results/
+!results/concept_dynamics/
+results/concept_dynamics/**
+!results/concept_dynamics/stability/
+!results/concept_dynamics/gram/
+!results/concept_dynamics/extraction_results.json
+results/concept_dynamics/vectors/
 # IDE
 .idea/
 .vscode/
