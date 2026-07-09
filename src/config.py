@@ -26,9 +26,11 @@ DOCS_DIR = os.path.join(PROJECT_ROOT, "docs")
 # Model Configuration Data Classes
 # =============================================================================
 
+
 @dataclass
 class ModelConfig:
     """Configuration for a single model variant."""
+
     name: str
     hf_id: str
     revision: str = "main"
@@ -40,7 +42,7 @@ class ModelConfig:
     n_kv_heads: Optional[int] = None
     total_params: str = ""
     pathway: str = ""  # "base", "think", "instruct", "rl-zero"
-    stage: str = ""    # "pretrain", "sft", "dpo", "rlvr", "base"
+    stage: str = ""  # "pretrain", "sft", "dpo", "rlvr", "base"
 
 
 # =============================================================================
@@ -163,22 +165,47 @@ for name, cfg in PYTHIA_CONFIGS.items():
 # ~25 checkpoints: log-spaced early + linear-spaced later
 PYTHIA_CHECKPOINTS: list[str] = [
     # Log-spaced early checkpoints (warmup phase)
-    "step0", "step1", "step2", "step4", "step8", "step16",
-    "step32", "step64", "step128", "step256", "step512",
+    "step0",
+    "step1",
+    "step2",
+    "step4",
+    "step8",
+    "step16",
+    "step32",
+    "step64",
+    "step128",
+    "step256",
+    "step512",
     # Transition phase
-    "step1000", "step2000", "step4000", "step8000",
+    "step1000",
+    "step2000",
+    "step4000",
+    "step8000",
     # Mid-training
-    "step10000", "step20000", "step40000", "step60000",
+    "step10000",
+    "step20000",
+    "step40000",
+    "step60000",
     # Late training
-    "step80000", "step100000", "step120000", "step140000",
+    "step80000",
+    "step100000",
+    "step120000",
+    "step140000",
     # Final
     "step143000",
 ]
 
 # Shorter list for quick testing
 PYTHIA_CHECKPOINTS_QUICK: list[str] = [
-    "step0", "step1", "step16", "step128", "step1000",
-    "step10000", "step50000", "step100000", "step143000",
+    "step0",
+    "step1",
+    "step16",
+    "step128",
+    "step1000",
+    "step10000",
+    "step50000",
+    "step100000",
+    "step143000",
 ]
 
 
@@ -205,99 +232,151 @@ OLMO3_BASE_CONFIG = ModelConfig(
 OLMO3_VARIANTS: dict[str, ModelConfig] = {
     # Base model
     "olmo3-base": OLMO3_BASE_CONFIG,
-    
     # Think pathway (reasoning with chain-of-thought)
     "olmo3-think-sft": ModelConfig(
         name="olmo3-think-sft",
         hf_id="allenai/Olmo-3-7B-Think-SFT",
         architecture="olmo3",
-        layers=32, d_model=4096, intermediate_size=11008,
-        n_heads=32, n_kv_heads=32, total_params="7B",
-        pathway="think", stage="sft",
+        layers=32,
+        d_model=4096,
+        intermediate_size=11008,
+        n_heads=32,
+        n_kv_heads=32,
+        total_params="7B",
+        pathway="think",
+        stage="sft",
     ),
     "olmo3-think-dpo": ModelConfig(
         name="olmo3-think-dpo",
         hf_id="allenai/Olmo-3-7B-Think-DPO",
         architecture="olmo3",
-        layers=32, d_model=4096, intermediate_size=11008,
-        n_heads=32, n_kv_heads=32, total_params="7B",
-        pathway="think", stage="dpo",
+        layers=32,
+        d_model=4096,
+        intermediate_size=11008,
+        n_heads=32,
+        n_kv_heads=32,
+        total_params="7B",
+        pathway="think",
+        stage="dpo",
     ),
     "olmo3-think-rlvr": ModelConfig(
         name="olmo3-think-rlvr",
         hf_id="allenai/Olmo-3-7B-Think",
         architecture="olmo3",
-        layers=32, d_model=4096, intermediate_size=11008,
-        n_heads=32, n_kv_heads=32, total_params="7B",
-        pathway="think", stage="rlvr",
+        layers=32,
+        d_model=4096,
+        intermediate_size=11008,
+        n_heads=32,
+        n_kv_heads=32,
+        total_params="7B",
+        pathway="think",
+        stage="rlvr",
     ),
-    
     # Instruct pathway (chat/tool-use)
     "olmo3-instruct-sft": ModelConfig(
         name="olmo3-instruct-sft",
         hf_id="allenai/Olmo-3-7B-Instruct-SFT",
         architecture="olmo3",
-        layers=32, d_model=4096, intermediate_size=11008,
-        n_heads=32, n_kv_heads=32, total_params="7B",
-        pathway="instruct", stage="sft",
+        layers=32,
+        d_model=4096,
+        intermediate_size=11008,
+        n_heads=32,
+        n_kv_heads=32,
+        total_params="7B",
+        pathway="instruct",
+        stage="sft",
     ),
     "olmo3-instruct-dpo": ModelConfig(
         name="olmo3-instruct-dpo",
         hf_id="allenai/Olmo-3-7B-Instruct-DPO",
         architecture="olmo3",
-        layers=32, d_model=4096, intermediate_size=11008,
-        n_heads=32, n_kv_heads=32, total_params="7B",
-        pathway="instruct", stage="dpo",
+        layers=32,
+        d_model=4096,
+        intermediate_size=11008,
+        n_heads=32,
+        n_kv_heads=32,
+        total_params="7B",
+        pathway="instruct",
+        stage="dpo",
     ),
     "olmo3-instruct-rlvr": ModelConfig(
         name="olmo3-instruct-rlvr",
         hf_id="allenai/Olmo-3-7B-Instruct",
         architecture="olmo3",
-        layers=32, d_model=4096, intermediate_size=11008,
-        n_heads=32, n_kv_heads=32, total_params="7B",
-        pathway="instruct", stage="rlvr",
+        layers=32,
+        d_model=4096,
+        intermediate_size=11008,
+        n_heads=32,
+        n_kv_heads=32,
+        total_params="7B",
+        pathway="instruct",
+        stage="rlvr",
     ),
-    
     # RL-Zero pathway (RL directly from base, no SFT/DPO)
     "olmo3-rl-zero-math": ModelConfig(
         name="olmo3-rl-zero-math",
         hf_id="allenai/Olmo-3-7B-RL-Zero-Math",
         architecture="olmo3",
-        layers=32, d_model=4096, intermediate_size=11008,
-        n_heads=32, n_kv_heads=32, total_params="7B",
-        pathway="rl-zero", stage="rlvr-math",
+        layers=32,
+        d_model=4096,
+        intermediate_size=11008,
+        n_heads=32,
+        n_kv_heads=32,
+        total_params="7B",
+        pathway="rl-zero",
+        stage="rlvr-math",
     ),
     "olmo3-rl-zero-code": ModelConfig(
         name="olmo3-rl-zero-code",
         hf_id="allenai/Olmo-3-7B-RL-Zero-Code",
         architecture="olmo3",
-        layers=32, d_model=4096, intermediate_size=11008,
-        n_heads=32, n_kv_heads=32, total_params="7B",
-        pathway="rl-zero", stage="rlvr-code",
+        layers=32,
+        d_model=4096,
+        intermediate_size=11008,
+        n_heads=32,
+        n_kv_heads=32,
+        total_params="7B",
+        pathway="rl-zero",
+        stage="rlvr-code",
     ),
     "olmo3-rl-zero-if": ModelConfig(
         name="olmo3-rl-zero-if",
         hf_id="allenai/Olmo-3-7B-RL-Zero-IF",
         architecture="olmo3",
-        layers=32, d_model=4096, intermediate_size=11008,
-        n_heads=32, n_kv_heads=32, total_params="7B",
-        pathway="rl-zero", stage="rlvr-if",
+        layers=32,
+        d_model=4096,
+        intermediate_size=11008,
+        n_heads=32,
+        n_kv_heads=32,
+        total_params="7B",
+        pathway="rl-zero",
+        stage="rlvr-if",
     ),
     "olmo3-rl-zero-general": ModelConfig(
         name="olmo3-rl-zero-general",
         hf_id="allenai/Olmo-3-7B-RL-Zero-General",
         architecture="olmo3",
-        layers=32, d_model=4096, intermediate_size=11008,
-        n_heads=32, n_kv_heads=32, total_params="7B",
-        pathway="rl-zero", stage="rlvr-general",
+        layers=32,
+        d_model=4096,
+        intermediate_size=11008,
+        n_heads=32,
+        n_kv_heads=32,
+        total_params="7B",
+        pathway="rl-zero",
+        stage="rlvr-general",
     ),
     "olmo3-rl-zero-mix": ModelConfig(
         name="olmo3-rl-zero-mix",
         hf_id="allenai/Olmo-3-7B-RL-Zero-Mix",
         architecture="olmo3",
-        layers=32, d_model=4096, intermediate_size=11008,
-        n_heads=32, n_kv_heads=32, total_params="7B",
-        pathway="rl-zero", stage="rlvr-mix",
+        layers=32,
+        d_model=4096,
+        intermediate_size=11008,
+        n_heads=32,
+        n_kv_heads=32,
+        total_params="7B",
+        pathway="rl-zero",
+        stage="rlvr-mix",
     ),
 }
 
@@ -342,7 +421,16 @@ EXPERIMENT_MODELS: list[str] = THINK_CHAIN + RL_ZERO_FAMILY
 # Layer selection: 10 layers at 10%, 20%, ..., 100% of model depth.
 # Per TrainingDynamic.tex line 8.
 EXPERIMENT_LAYER_PERCENTAGES: list[float] = [
-    0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0,
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9,
+    1.0,
 ]
 
 
@@ -355,11 +443,70 @@ def compute_experiment_layers(n_layers: int) -> list[int]:
 EXPERIMENT_LAYERS_7B: list[int] = compute_experiment_layers(32)
 
 
+# =============================================================================
+# Training Trajectory Checkpoints (10 uniform per model)
+# =============================================================================
+
+
+def select_uniform_checkpoints(
+    all_steps: list[str],
+    n: int = 10,
+) -> list[str]:
+    """Select n uniformly-spaced checkpoints from step branch names.
+
+    Parses numeric step values from names like 'step5000' or 'step_300',
+    sorts by step number, then picks n at uniform intervals spanning
+    first to last (inclusive of the final step).
+    """
+    import re
+
+    parsed: list[tuple[int, str]] = []
+    for name in all_steps:
+        m = re.search(r"step_?(\d+)", name)
+        if m:
+            parsed.append((int(m.group(1)), name))
+    parsed.sort()
+
+    if not parsed:
+        return list(all_steps)
+
+    if len(parsed) <= n:
+        return [name for _, name in parsed]
+
+    total = len(parsed)
+    indices = [min(int(i * total / n), total - 1) for i in range(1, n + 1)]
+    seen: set[int] = set()
+    result: list[str] = []
+    for idx in indices:
+        if idx not in seen:
+            seen.add(idx)
+            result.append(parsed[idx][1])
+    return result
+
+
+_ALL_STEPS: dict[str, list[str]] = {
+    "olmo3-think-sft": [f"step{s}" for s in range(1000, 44000, 1000)],
+    "olmo3-instruct-sft": ["main"],
+    "olmo3-rl-zero-math": [f"step_{s}" for s in range(100, 2000, 100)],
+    "olmo3-rl-zero-code": [f"step_{s}" for s in range(100, 3000, 100)],
+    "olmo3-rl-zero-if": [f"step_{s}" for s in range(100, 2000, 100)],
+    "olmo3-rl-zero-general": [f"step_{s}" for s in range(100, 900, 100)],
+    "olmo3-rl-zero-mix": [f"step_{s}" for s in range(50, 1000, 50)],
+}
+
+MODEL_CHECKPOINTS: dict[str, list[str]] = {
+    model: select_uniform_checkpoints(steps, n=10)
+    for model, steps in _ALL_STEPS.items()
+}
+
+
 # OLMo-3 pretraining stage checkpoints (if available as revisions)
 # These may not all exist - the pipeline should handle missing gracefully
 OLMO3_PRETRAIN_CHECKPOINTS: list[str] = [
     # Stage 1 (pretraining, ~1.4M steps, 5.93T tokens)
-    "stage1-step0", "stage1-step100000", "stage1-step1000000",
+    "stage1-step0",
+    "stage1-step100000",
+    "stage1-step1000000",
     # Stage 2 (mid-training, ~47K steps, 100B tokens)
     "stage2-step10000",
     # Stage 3 (long context, ~12K steps, 50B tokens)
@@ -371,10 +518,11 @@ OLMO3_PRETRAIN_CHECKPOINTS: list[str] = [
 # Weight Matrix Extraction Patterns
 # =============================================================================
 
+
 def get_weight_patterns(architecture: str) -> dict[str, list[str]]:
     """
     Get weight matrix name patterns grouped by type for a given architecture.
-    
+
     Returns dict of {group_name: [list of substring patterns to match]}
     """
     if architecture == "gpt_neox":
@@ -409,21 +557,26 @@ def get_weight_patterns(architecture: str) -> dict[str, list[str]]:
 def categorize_weight(name: str, architecture: str) -> str:
     """
     Categorize a weight matrix by its layer type.
-    
+
     Returns one of: 'attention_qkv', 'attention_output', 'mlp', 'embed', 'norm', 'other'
     """
     patterns = get_weight_patterns(architecture)
-    
+
     for group, substrings in patterns.items():
         for substr in substrings:
             if substr in name:
-                if "qkv" in group or "q_proj" in group or "k_proj" in group or "v_proj" in group:
+                if (
+                    "qkv" in group
+                    or "q_proj" in group
+                    or "k_proj" in group
+                    or "v_proj" in group
+                ):
                     return "attention_qkv"
                 elif "dense" in group and "h_to_4h" not in group or "o_proj" in group:
                     return "attention_output"
                 elif "mlp" in group:
                     return "mlp"
-    
+
     if "embed" in name.lower():
         return "embed"
     if "norm" in name.lower():
@@ -434,8 +587,9 @@ def categorize_weight(name: str, architecture: str) -> str:
 def get_layer_index(name: str) -> Optional[int]:
     """Extract layer index from weight name, or None if not a layer weight."""
     import re
+
     # Match patterns like "layers.0.", "layer.0.", "h.0.", "blocks.0."
-    match = re.search(r'(?:layers?|h|blocks?)\.(\d+)\.', name)
+    match = re.search(r"(?:layers?|h|blocks?)\.(\d+)\.", name)
     if match:
         return int(match.group(1))
     return None
