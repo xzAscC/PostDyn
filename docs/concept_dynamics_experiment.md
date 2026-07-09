@@ -2,7 +2,7 @@
 
 ## Overview
 
-This experiment traces how concept representations evolve across different post-training methods applied to the Olmo-3-7B backbone. It implements the Difference-in-Means (DiM) concept extraction pipeline from "Tracing Concept Dynamics through Pretraining and Post-training", computing normalized concept directions for **math**, **code**, **instruction-following (if)**, and **general** text across six post-training variants, then measuring:
+This experiment traces how concept representations evolve across different post-training methods applied to the Olmo-3-7B backbone. It implements the Difference-in-Means (DiM) concept extraction pipeline from "Tracing Concept Dynamics through Pretraining and Post-training", computing normalized concept directions for **math**, **code**, **instruction-following (if)**, and **general** text across seven post-training variants, then measuring:
 
 1. **Directional stability** — how much a concept's direction moves across models
 2. **Concept Gram matrix** — how concepts are positioned relative to one another (entanglement)
@@ -13,7 +13,7 @@ Paper: `69e5bc6d27002aeac07372b4/memo/Tracing Concept Dynamics.tex`
 
 ## Models
 
-Six Olmo-3-7B post-training variants, all sharing the same architecture (32 layers, d_model=4096, bfloat16):
+Seven Olmo-3-7B post-training variants, all sharing the same architecture (32 layers, d_model=4096, bfloat16):
 
 | Model Key | HuggingFace ID | Pathway |
 |-----------|---------------|---------|
@@ -74,7 +74,7 @@ For each concept k at layer L, the cosine similarity of its direction across all
 stability(k; t, t') = cos(r_k^t, r_k^t')
 ```
 
-This produces a 6×6 symmetric matrix per (concept, layer). High values mean the concept direction is preserved across post-training methods; low values mean it shifts.
+This produces a 7×7 symmetric matrix per (concept, layer). High values mean the concept direction is preserved across post-training methods; low values mean it shifts.
 
 ### 2. Concept Gram Matrix (per-model, entanglement)
 
@@ -96,7 +96,7 @@ src/concept_dynamics.py                Core module:
   ├── select_uniform_layers()          10 layers at 10%-100% depth
   ├── extract_layer_activations()      Last-token hidden states (HF transformers)
   ├── compute_concept_vector()         DiM + normalization (r̂ = r/||r||)
-  ├── cross_model_stability()          6×6 cosine matrix across models
+  ├── cross_model_stability()          7×7 cosine matrix across models
   ├── concept_gram_matrices()          4×4 cosine matrix across concepts
   ├── run_model_extraction()           Single-model pipeline
   ├── run_full_experiment()            All models + dynamics analysis
@@ -165,7 +165,7 @@ Developed with TDD (test-first). All new code has 100% test coverage with no GPU
 3. **Activation extraction**: For each text, forward pass with `output_hidden_states=True`, extract last-token hidden state at each of the 10 layers
 4. **DiM computation**: `r = μ+ - μ-`, then normalize `r̂ = r / ||r||`
 5. **Save**: Per (model, layer) as safetensors + JSON metadata
-6. **Stability analysis**: Load all models' vectors, compute 6×6 cosine matrix per (concept, layer)
+6. **Stability analysis**: Load all models' vectors, compute 7×7 cosine matrix per (concept, layer)
 7. **Gram analysis**: Compute 4×4 cosine matrix per (model, layer)
 
 ## Results
@@ -222,7 +222,7 @@ Off-diagonal mean of the 4×4 Gram matrix at layer 16 (lower = more disentangled
 
 | File | Content |
 |------|---------|
-| `results/concept_dynamics/stability/stability.json` | 40 stability matrices (4 concepts × 10 layers, each 6×6) |
+| `results/concept_dynamics/stability/stability.json` | 40 stability matrices (4 concepts × 10 layers, each 7×7) |
 | `results/concept_dynamics/gram/gram.json` | 70 Gram matrices (7 models × 10 layers, each 4×4) |
 | `results/concept_dynamics/extraction_results.json` | Full extraction summary + dynamics |
 | `results/concept_dynamics/vectors/{model}/layer_{L}.safetensors` | Concept vectors (gitignored, large) |
