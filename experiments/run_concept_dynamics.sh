@@ -18,7 +18,7 @@ Runs the Concept Dynamics experiment: DiM concept extraction across
 Olmo-3-7B post-training variants, then stability + gram analysis.
 
 Modes:
-  full     Full experiment: 6 models × 4 concepts × 10 layers × 50 samples (default)
+  full     Full experiment: 7 models × 4 concepts × 10 layers × 50 samples (default)
   quick    Smoke test:      1 model  × 2 concepts × 2 layers × 5 samples
 
 Options (override defaults):
