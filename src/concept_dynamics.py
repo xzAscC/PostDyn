@@ -829,7 +829,7 @@ def compute_dynamics_analysis(
 
     Returns:
         {
-            "stability": {concept: {layer: [[6x6 matrix]]}},
+            "stability": {concept: {layer: {matrix: [[NxN]], models: [...]}}},
             "gram": {model: {layer: [[4x4 matrix]]}},
             "model_names": [...],
             "concepts": [...],
