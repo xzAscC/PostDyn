@@ -526,27 +526,55 @@ def _load_model_and_tokenizer(model_config):
     """Load model (bfloat16) and tokenizer for a ModelConfig.
 
     Returns (model, tokenizer). Caller is responsible for cleanup.
+    Handles olmo2-retrofit variants (e.g. RL-Zero-Mix) whose tokenizer
+    config may be incomplete by falling back to the shared Olmo-3 base
+    tokenizer, and loads them via Olmo2ForCausalLM since the retrofit
+    architecture shares Olmo2's layer structure.
     """
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     trust = getattr(model_config, "architecture", "") == "olmo3"
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_config.hf_id,
-        revision=model_config.revision,
-        trust_remote_code=trust,
-    )
+
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_config.hf_id,
+            revision=model_config.revision,
+            trust_remote_code=trust,
+        )
+    except (KeyError, AttributeError):
+        print(f"  Tokenizer load failed, falling back to Olmo-3 base tokenizer")
+        tokenizer = AutoTokenizer.from_pretrained(
+            "allenai/Olmo-3-1025-7B",
+            trust_remote_code=True,
+        )
+
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(
-        model_config.hf_id,
-        revision=model_config.revision,
-        torch_dtype=torch.bfloat16,
-        device_map="auto",
-        low_cpu_mem_usage=True,
-        trust_remote_code=trust,
-    )
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_config.hf_id,
+            revision=model_config.revision,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+            low_cpu_mem_usage=True,
+            trust_remote_code=trust,
+        )
+    except (KeyError, ValueError) as e:
+        if "olmo2-retrofit" in str(e) or "olmo2_retrofit" in str(e):
+            print(f"  olmo2-retrofit detected, loading via Olmo2ForCausalLM")
+            from transformers import Olmo2ForCausalLM
+
+            model = Olmo2ForCausalLM.from_pretrained(
+                model_config.hf_id,
+                torch_dtype=torch.bfloat16,
+                device_map="auto",
+                low_cpu_mem_usage=True,
+            )
+        else:
+            raise
+
     model.eval()
     return model, tokenizer
 

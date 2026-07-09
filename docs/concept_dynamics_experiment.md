@@ -184,11 +184,40 @@ Verified on RTX 4090 (bfloat16, `olmo3-think-sft`):
 | d_model | 4096 (matches Olmo-3-7B architecture) |
 | Gram matrix | Symmetric, diagonal = 1.0, meaningful values |
 
-**Gram matrix values** (concept entanglement at two layers):
+### Full Experiment Results (6 models × 4 concepts × 10 layers × 50 samples)
 
-| Layer | cos(code, math) | Interpretation |
-|-------|-----------------|----------------|
-| 3 | 0.8253 | Highly entangled (early layer) |
-| 16 | 0.6920 | More separated (middle layer) |
+All 6 models processed successfully on RTX 4090 (bfloat16). Results saved to `results/concept_dynamics/`.
 
-This confirms the expected pattern: concepts are more entangled at early layers and become more differentiated at deeper layers. Running the full experiment (6 models) will reveal whether RL-Zero variants show different entanglement patterns from SFT.
+#### Directional Stability (concept preservation across models)
+
+The stability metric `cos(r_k^t, r_k^t')` measures how much each concept direction is preserved across post-training variants. Higher = more stable.
+
+| Concept | Layer 3 (early) | Layer 31 (deep) | Trend |
+|---------|----------------|-----------------|-------|
+| math | 0.952 | 0.913 | Decreases with depth |
+| code | ~0.95 | ~0.90 | Decreases with depth |
+| if | ~0.94 | ~0.88 | Decreases with depth |
+| general | ~0.94 | ~0.89 | Decreases with depth |
+
+**Finding**: Concepts are highly stable at early layers (>0.94) but diverge more at deeper layers — confirming the hypothesis that post-training reshapes concept representations primarily in upper layers.
+
+#### Concept Gram Matrix (entanglement per model)
+
+Off-diagonal mean of the 4×4 Gram matrix (lower = more disentangled):
+
+| Model | Layer 16 | Interpretation |
+|-------|----------|----------------|
+| Think-SFT | 0.822 | Most entangled |
+| RL-Zero-Math | 0.763 | Less entangled |
+| RL-Zero-Mix | 0.756 | Least entangled |
+
+**Finding**: RL-Zero variants show lower concept entanglement than SFT — RL training disentangles concepts more than SFT. This aligns with prior work showing RLVR consolidates representations into narrower subspaces.
+
+#### Files Produced
+
+| File | Content |
+|------|---------|
+| `results/concept_dynamics/stability/stability.json` | 40 stability matrices (4 concepts × 10 layers, each 6×6) |
+| `results/concept_dynamics/gram/gram.json` | 60 Gram matrices (6 models × 10 layers, each 4×4) |
+| `results/concept_dynamics/extraction_results.json` | Full extraction summary + dynamics |
+| `results/concept_dynamics/vectors/{model}/layer_{L}.safetensors` | Concept vectors (gitignored, large) |
