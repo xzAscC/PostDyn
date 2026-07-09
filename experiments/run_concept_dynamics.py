@@ -9,7 +9,7 @@ Usage:
 
 Options:
     --quick          Smoke test: 1 model, 2 concepts, 2 layers, 5 samples
-    --models M1,M2   Comma-separated model names (default: all 6)
+    --models M1,M2   Comma-separated model names (default: all 7)
     --concepts C1,C2 Comma-separated concepts (default: math,code,if,general)
     --layers L1,L2   Comma-separated layer indices (default: 10 uniform)
     --n-samples N    Samples per concept per class (default: 50)

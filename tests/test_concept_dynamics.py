@@ -3,7 +3,7 @@
 Tests the core concept-dynamics pipeline:
   1. Layer-specific activation extraction (last-token, mock model)
   2. DiM concept vector with normalization (r_hat = r / ||r||)
-  3. Cross-model directional stability (6 models → 6×6 cosine matrix)
+  3. Cross-model directional stability (7 models → 7×7 cosine matrix)
   4. Per-model concept Gram matrix (4 concepts → 4×4 cosine matrix)
 
 No GPU or network required — model forward pass is mocked.
