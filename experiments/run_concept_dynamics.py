@@ -10,10 +10,10 @@ Usage:
 Options:
     --quick          Smoke test: 1 model, 2 concepts, 2 layers, 5 samples
     --models M1,M2   Comma-separated model names (default: all 7)
-    --concepts C1,C2 Comma-separated concepts (default: math,code,if,general)
+    --concepts C1,C2 Comma-separated paired concept directions
     --layers L1,L2   Comma-separated layer indices (default: 10 uniform)
     --n-samples N    Samples per concept per class (default: 50)
-    --output DIR     Output directory (default: results/concept_dynamics)
+    --output DIR     Output directory (mode-specific default)
     --max-seq-len N  Max tokenization length (default: 2048)
 """
 
@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import sys
 import os
+from typing import Callable
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -39,12 +40,76 @@ DEFAULT_MODELS = [
     "olmo3-rl-zero-mix",
 ]
 
-DEFAULT_CONCEPTS = ["math", "code", "if", "general"]
+DEFAULT_CONCEPTS = [
+    "python_vs_cpp",
+    "concise_math_reasoning_vs_verbose_math_reasoning",
+    "french_vs_english_language",
+    "female_vs_male_gender",
+]
+
+CONCEPT_DIRECTIONS = [
+    "Python - C++",
+    "Concise - Verbose",
+    "French - English",
+    "Female - Male",
+]
+
+DEFAULT_OUTPUT = "results/concept_dynamics_paired"
+DEFAULT_QUICK_OUTPUT = "results/concept_dynamics_paired_quick"
+
+DEFAULT_HUMANEVAL_REPORT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "experiments",
+    "artifacts",
+    "humaneval-x-validation.jsonl",
+)
+HUMANEVAL_X_CONCEPT_KEY = "python_vs_cpp"
 
 
-def parse_args():
+def run_humaneval_preflight(
+    report_path: str,
+    n_samples: int,
+    *,
+    preflight_fn: "Callable[[str, int], None] | None" = None,
+) -> None:
+    """Verify a HumanEval-X validation report covers the requested sample count.
+
+    Imports the validator lazily so ``--help`` stays offline. Raises on the
+    first failed check (missing report, wrong revision, hash mismatch,
+    duplicate task ids, insufficient successful rows). Re-exports a
+    callable seam for tests that want to assert the wiring without
+    loading the real validator.
+    """
+    if preflight_fn is not None:
+        preflight_fn(report_path, n_samples)
+        return
+
+    from pathlib import Path
+
+    from src.humaneval_x_validator import (
+        PreflightOptions,
+        load_humaneval_x_raw_pairs,
+        preflight_validation,
+    )
+
+    current_pairs = load_humaneval_x_raw_pairs(n_samples)
+    preflight_validation(
+        Path(report_path),
+        current_pairs,
+        PreflightOptions(n_required=n_samples),
+    )
+
+
+def resolve_output_directory(*, quick: bool, output: str | None) -> str:
+    if output is not None:
+        return output
+    return DEFAULT_QUICK_OUTPUT if quick else DEFAULT_OUTPUT
+
+
+def parse_args(argv: list[str] | None = None):
     parser = argparse.ArgumentParser(
         description="Concept Dynamics across Olmo-3-7B post-training variants",
+        formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
         "--quick",
@@ -61,7 +126,13 @@ def parse_args():
         "--concepts",
         type=str,
         default=None,
-        help=f"Comma-separated concepts (default: {','.join(DEFAULT_CONCEPTS)})",
+        help=(
+            "Comma-separated concepts. Defaults and directions:\n"
+            + "\n".join(
+                f"  {concept}: {direction}"
+                for concept, direction in zip(DEFAULT_CONCEPTS, CONCEPT_DIRECTIONS)
+            )
+        ),
     )
     parser.add_argument(
         "--layers",
@@ -78,8 +149,11 @@ def parse_args():
     parser.add_argument(
         "--output",
         type=str,
-        default="results/concept_dynamics",
-        help="Output directory (default: results/concept_dynamics)",
+        default=None,
+        help=(
+            "Output directory "
+            f"(default: {DEFAULT_OUTPUT}; quick: {DEFAULT_QUICK_OUTPUT})"
+        ),
     )
     parser.add_argument(
         "--max-seq-len",
@@ -87,15 +161,27 @@ def parse_args():
         default=2048,
         help="Max tokenization length (default: 2048)",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--humaneval-report-path",
+        type=str,
+        default=DEFAULT_HUMANEVAL_REPORT,
+        help=(
+            "HumanEval-X validation report required before extracting the "
+            "python_vs_cpp concept. Generate it with "
+            "`experiments/validate_humaneval_x.py`. "
+            f"(default: {DEFAULT_HUMANEVAL_REPORT})"
+        ),
+    )
+    return parser.parse_args(argv)
 
 
-def main():
-    args = parse_args()
+def main(argv: list[str] | None = None):
+    args = parse_args(argv)
+    output_dir = resolve_output_directory(quick=args.quick, output=args.output)
 
     if args.quick:
         models = ["olmo3-think-sft"]
-        concepts = ["math", "code"]
+        concepts = DEFAULT_CONCEPTS[:2]
         layers = [3, 16]
         n_samples = 5
         max_seq_len = 512
@@ -123,13 +209,31 @@ def main():
         print("ERROR: No valid models selected")
         sys.exit(1)
 
+    if HUMANEVAL_X_CONCEPT_KEY in concepts:
+        print(
+            f"Preflight: HumanEval-X validation report at "
+            f"{args.humaneval_report_path} (n_required={n_samples})"
+        )
+        try:
+            run_humaneval_preflight(args.humaneval_report_path, n_samples)
+        except (ValueError, FileNotFoundError) as exc:
+            print(
+                f"ERROR: HumanEval-X preflight failed: {exc}\n"
+                "Run `uv run python experiments/validate_humaneval_x.py` "
+                "first.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        print("Preflight OK: HumanEval-X report validated.")
+        print()
+
     print(f"\nConcept Dynamics Experiment")
     print(f"  Models ({len(valid_models)}):    {valid_models}")
     print(f"  Concepts ({len(concepts)}): {concepts}")
     print(f"  Layers ({len(layers)}):     {layers}")
     print(f"  Samples/concept:  {n_samples}")
     print(f"  Max seq len:      {max_seq_len}")
-    print(f"  Output:           {args.output}")
+    print(f"  Output:           {output_dir}")
     print()
 
     results = run_full_experiment(
@@ -137,15 +241,15 @@ def main():
         concepts=concepts,
         layers=layers,
         n_samples=n_samples,
-        output_dir=args.output,
+        output_dir=output_dir,
         max_seq_len=max_seq_len,
     )
 
     n_errors = sum(1 for v in results.get("extraction", {}).values() if "error" in v)
-    n_ok = len(results.get("models_done", [])) - n_errors
+    n_ok = len(results.get("checkpoints_done", []))
     print(f"\n{'=' * 60}")
     print(f"Extraction complete: {n_ok} OK, {n_errors} errors")
-    print(f"Results: {args.output}")
+    print(f"Results: {output_dir}")
     print(f"{'=' * 60}")
 
     if n_errors > 0:
