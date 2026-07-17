@@ -1,5 +1,5 @@
 """
-Configuration module for RankAnalysis.
+Configuration module for PostDyn.
 
 Defines all model configurations, checkpoint schedules, weight matrix patterns,
 and result paths used throughout the analysis pipeline.

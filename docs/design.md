@@ -1,8 +1,8 @@
-# Design Document: Effective Rank Analysis of Open-Source LLMs
+# Design Document: PostDyn (Post-training Dynamics)
 
 ## Project Overview
 
-This project analyzes the effective rank of weight matrices in open-source large language models (LLMs) to investigate whether a consistent effective rank ratio exists across different model scales, training stages, and post-training methods.
+PostDyn analyzes post-training dynamics in open-source LLMs — how representations and weight structure evolve under SFT, RL, and related methods. One line of work studies effective rank of weight matrices across model scales, training stages, and post-training methods.
 
 ## Research Questions
 
@@ -15,7 +15,7 @@ This project analyzes the effective rank of weight matrices in open-source large
 ## Architecture
 
 ```
-RankAnalysis/
+PostDyn/
 ├── main.py                      # CLI entry point
 ├── src/
 │   ├── effective_rank.py        # Core SVD entropy computation (weight-level)
