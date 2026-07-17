@@ -105,6 +105,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.n <= 0:
         print("ERROR: --n must be positive", file=sys.stderr)
         return 2
+    if not (args.timeout > 0) or args.timeout != args.timeout:
+        print("ERROR: --timeout must be a finite positive number", file=sys.stderr)
+        return 2
 
     if not args.skip_tool_check:
         try:

@@ -71,24 +71,33 @@ def _planned_jobs() -> list[tuple[str, str, Any]]:
 
 
 def _checkpoint_has_concept(
-    vectors_dir: str, name: str, ckpt: str, concept: str
+    vectors_dir: str,
+    name: str,
+    ckpt: str,
+    concept: str,
+    layers: list[int] | None = None,
 ) -> bool:
+    required_layers = layers if layers is not None else list(LAYERS)
     ckpt_dir = Path(vectors_dir) / name / ckpt
     if not ckpt_dir.is_dir():
         return False
-    for meta_path in ckpt_dir.glob("layer_*.json"):
+    for layer in required_layers:
+        meta_path = ckpt_dir / f"layer_{layer}.json"
+        tensor_path = ckpt_dir / f"layer_{layer}.safetensors"
+        if not meta_path.is_file() or not tensor_path.is_file():
+            return False
         try:
             metadata = json.loads(meta_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            continue
+            return False
         names = {
             entry.get("name")
             for entry in metadata.get("concepts", [])
             if isinstance(entry, dict)
         }
-        if concept in names:
-            return True
-    return False
+        if concept not in names:
+            return False
+    return True
 
 
 def _prefetch(config: Any, revision: str) -> str:
@@ -110,7 +119,7 @@ def main() -> None:
     jobs = [
         (n, c, cfg)
         for n, c, cfg in _planned_jobs()
-        if not _checkpoint_has_concept(vectors_dir, n, c, CONCEPT)
+        if not _checkpoint_has_concept(vectors_dir, n, c, CONCEPT, LAYERS)
     ]
     print(f"Planned remaining jobs: {len(jobs)}", flush=True)
 

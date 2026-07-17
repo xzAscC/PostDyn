@@ -300,11 +300,16 @@ class TestBwrapArgv:
         argv = bwrap_argv(command, Path("/tmp/scratch"))
         dd = argv.index("--")
         payload = argv[dd + 1 :]
-        assert payload[:3] == ["/bin/bash", "-c", payload[2]]
-        assert payload[-2:] == command
-        assert "ulimit -v" in payload[2]
-        assert "ulimit -t" in payload[2]
-        assert "ulimit -u" in payload[2]
+        assert payload[0] == "/bin/bash"
+        assert payload[1] == "-c"
+        script = payload[2]
+        assert isinstance(script, str)
+        assert "ulimit -v" in script
+        assert "ulimit -t" in script
+        assert "ulimit -u" in script
+        assert 'exec "$@"' in script
+        assert payload[3] == "--"
+        assert payload[4:] == command
 
     def test_scratch_dir_is_bind_mounted(self):
         scratch = "/tmp/abc"

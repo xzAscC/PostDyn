@@ -27,7 +27,8 @@ from typing import Callable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.config import OLMO3_VARIANTS, EXPERIMENT_LAYERS_7B
-from src.concept_dynamics import run_full_experiment, select_uniform_layers
+from src.concept_dynamics import run_full_experiment
+from src.contrastive_datasets import PAIRED_CONCEPTS
 
 
 DEFAULT_MODELS = [
@@ -215,8 +216,16 @@ def main(argv: list[str] | None = None):
             file=sys.stderr,
         )
         sys.exit(2)
-    if any(layer < 0 for layer in layers):
-        print("ERROR: --layers must be non-negative integers", file=sys.stderr)
+    if any(layer < 0 or layer > 31 for layer in layers):
+        print("ERROR: --layers must be integers in [0, 31]", file=sys.stderr)
+        sys.exit(2)
+    unknown_concepts = [c for c in concepts if c not in PAIRED_CONCEPTS]
+    if unknown_concepts:
+        print(
+            f"ERROR: Unknown concepts: {unknown_concepts}. "
+            f"Supported: {sorted(PAIRED_CONCEPTS)}",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
     valid_models = [m for m in models if m in OLMO3_VARIANTS]
