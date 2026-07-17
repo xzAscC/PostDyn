@@ -474,7 +474,12 @@ def select_uniform_checkpoints(
         return [name for _, name in parsed]
 
     total = len(parsed)
-    indices = [min(int(i * total / n), total - 1) for i in range(1, n + 1)]
+    if n == 1:
+        indices = [total - 1]
+    else:
+        indices = [
+            min(int(round(i * (total - 1) / (n - 1))), total - 1) for i in range(n)
+        ]
     seen: set[int] = set()
     result: list[str] = []
     for idx in indices:
