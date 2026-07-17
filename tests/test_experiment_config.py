@@ -166,18 +166,26 @@ _FOUR_DIRECTION_LABELS = [
 
 
 def _load_runner():
-    spec = importlib.util.spec_from_file_location(
-        "_concept_dynamics_runner", _RUNNER_PATH
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError("could not load concept dynamics runner")
-    loader = spec.loader
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
+    import sys
+
+    prior = list(sys.path)
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_concept_dynamics_runner", _RUNNER_PATH
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError("could not load concept dynamics runner")
+        loader = spec.loader
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        return module
+    finally:
+        sys.path[:] = prior
 
 
-_RUNNER = _load_runner()
+@pytest.fixture(scope="module")
+def runner():
+    return _load_runner()
 
 
 class TestConceptDynamicsCheckpointWiring:
@@ -195,13 +203,13 @@ class TestConceptDynamicsCheckpointWiring:
         total = sum(len(MODEL_CHECKPOINTS[m]) for m, _ in self._SPLIT)
         assert total == 59
 
-    def test_checkpoint_split_in_runner_model_order(self):
-        split = [len(MODEL_CHECKPOINTS[m]) for m in _RUNNER.DEFAULT_MODELS]
+    def test_checkpoint_split_in_runner_model_order(self, runner):
+        split = [len(MODEL_CHECKPOINTS[m]) for m in runner.DEFAULT_MODELS]
         assert split == [10, 1, 10, 10, 10, 8, 10]
 
-    def test_runner_family_is_seven_models_covering_all_checkpoints(self):
-        assert len(_RUNNER.DEFAULT_MODELS) == 7
-        assert set(_RUNNER.DEFAULT_MODELS) == {m for m, _ in self._SPLIT}
+    def test_runner_family_is_seven_models_covering_all_checkpoints(self, runner):
+        assert len(runner.DEFAULT_MODELS) == 7
+        assert set(runner.DEFAULT_MODELS) == {m for m, _ in self._SPLIT}
         assert set(MODEL_CHECKPOINTS) == {m for m, _ in self._SPLIT}
 
 
@@ -216,19 +224,19 @@ class TestConceptDynamicsLayerWiring:
 
 
 class TestConceptDynamicsConceptWiring:
-    def test_default_concepts_are_the_four_named_directions(self):
-        assert _RUNNER.DEFAULT_CONCEPTS == _FOUR_NAMED_CONCEPTS
+    def test_default_concepts_are_the_four_named_directions(self, runner):
+        assert runner.DEFAULT_CONCEPTS == _FOUR_NAMED_CONCEPTS
 
-    def test_exactly_four_concepts(self):
-        assert len(_RUNNER.DEFAULT_CONCEPTS) == 4
+    def test_exactly_four_concepts(self, runner):
+        assert len(runner.DEFAULT_CONCEPTS) == 4
 
 
 class TestConceptDynamicsOutputWiring:
     def test_default_output_is_distinct_from_results_concept_dynamics(
-        self, monkeypatch
+        self, runner, monkeypatch
     ):
         monkeypatch.setattr("sys.argv", ["run_concept_dynamics.py"])
-        args = _RUNNER.parse_args()
+        args = runner.parse_args()
         assert args.output != "results/concept_dynamics"
 
     def test_shell_wrapper_uses_the_fresh_output_directory(self):
@@ -240,18 +248,18 @@ class TestConceptDynamicsOutputWiring:
         assert "results/concept_dynamics_paired" in wrapper
         assert 'OUTPUT_DIR="${OUTPUT_DIR:-results/concept_dynamics}"' not in wrapper
 
-    def test_quick_and_full_modes_have_distinct_default_outputs(self):
-        assert _RUNNER.resolve_output_directory(quick=False, output=None) == (
+    def test_quick_and_full_modes_have_distinct_default_outputs(self, runner):
+        assert runner.resolve_output_directory(quick=False, output=None) == (
             "results/concept_dynamics_paired"
         )
-        assert _RUNNER.resolve_output_directory(quick=True, output=None) == (
+        assert runner.resolve_output_directory(quick=True, output=None) == (
             "results/concept_dynamics_paired_quick"
         )
 
-    def test_explicit_output_overrides_both_mode_defaults(self):
+    def test_explicit_output_overrides_both_mode_defaults(self, runner):
         for quick in (False, True):
             assert (
-                _RUNNER.resolve_output_directory(quick=quick, output="results/custom")
+                runner.resolve_output_directory(quick=quick, output="results/custom")
                 == "results/custom"
             )
 

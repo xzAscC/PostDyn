@@ -22,9 +22,13 @@ from src.gender_surface_analysis import (
 
 GENDER_CONCEPT = "female_vs_male_gender"
 DEFAULT_MODEL = "olmo3-rl-zero-math"
-DEFAULT_CHECKPOINT = MODEL_CHECKPOINTS[DEFAULT_MODEL][-1]
 DEFAULT_VECTORS_DIR = "results/concept_dynamics_paired/vectors"
 DEFAULT_OUTPUT = "results/concept_dynamics_paired/gender_surface_control.json"
+
+
+def default_checkpoint_for(model: str) -> str:
+    checkpoints = MODEL_CHECKPOINTS.get(model) or ["main"]
+    return checkpoints[-1]
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -35,7 +39,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         )
     )
     parser.add_argument("--model", default=DEFAULT_MODEL)
-    parser.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT)
+    parser.add_argument(
+        "--checkpoint",
+        default=None,
+        help="Checkpoint/revision (default: last trajectory step for --model)",
+    )
     parser.add_argument(
         "--layers",
         default=",".join(str(layer) for layer in EXPERIMENT_LAYERS_7B),
@@ -44,7 +52,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--vectors-dir", default=DEFAULT_VECTORS_DIR)
     parser.add_argument("--output", default=DEFAULT_OUTPUT)
     parser.add_argument("--max-seq-len", type=int, default=32)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.checkpoint is None:
+        args.checkpoint = default_checkpoint_for(args.model)
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
