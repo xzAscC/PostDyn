@@ -70,6 +70,27 @@ def _planned_jobs() -> list[tuple[str, str, Any]]:
     return jobs
 
 
+def _checkpoint_has_concept(
+    vectors_dir: str, name: str, ckpt: str, concept: str
+) -> bool:
+    ckpt_dir = Path(vectors_dir) / name / ckpt
+    if not ckpt_dir.is_dir():
+        return False
+    for meta_path in ckpt_dir.glob("layer_*.json"):
+        try:
+            metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        names = {
+            entry.get("name")
+            for entry in metadata.get("concepts", [])
+            if isinstance(entry, dict)
+        }
+        if concept in names:
+            return True
+    return False
+
+
 def _prefetch(config: Any, revision: str) -> str:
     print(f"  [prefetch] {config.hf_id} rev={revision}", flush=True)
     path = snapshot_download(
@@ -86,8 +107,11 @@ def main() -> None:
     vectors_dir = str(Path(OUTPUT_DIR) / "vectors")
     Path(vectors_dir).mkdir(parents=True, exist_ok=True)
     results = _load_results()
-    done = set(results.get("checkpoints_done", []))
-    jobs = [(n, c, cfg) for n, c, cfg in _planned_jobs() if f"{n}/{c}" not in done]
+    jobs = [
+        (n, c, cfg)
+        for n, c, cfg in _planned_jobs()
+        if not _checkpoint_has_concept(vectors_dir, n, c, CONCEPT)
+    ]
     print(f"Planned remaining jobs: {len(jobs)}", flush=True)
 
     load_flores_pairs(N_SAMPLES)

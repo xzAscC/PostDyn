@@ -40,22 +40,32 @@ USAGE
 }
 
 main() {
-    local mode="${1:-full}"
+    local mode="full"
     local output_dir
-    shift || true
+    local -a passthrough=()
+
+    if [[ $# -gt 0 ]]; then
+        case "$1" in
+            full|quick|help|--help|-h)
+                mode="$1"
+                shift
+                ;;
+        esac
+    fi
+    passthrough=("$@")
 
     case "$mode" in
         full)
             output_dir="${OUTPUT_DIR:-results/concept_dynamics_paired}"
             log "Running FULL concept dynamics experiment"
             uv run python experiments/run_concept_dynamics.py \
-                --output "$output_dir" "$@"
+                --output "$output_dir" "${passthrough[@]}"
             ;;
         quick)
             output_dir="${OUTPUT_DIR:-results/concept_dynamics_paired_quick}"
             log "Running QUICK concept dynamics (smoke test)"
             uv run python experiments/run_concept_dynamics.py \
-                --quick --output "$output_dir" "$@"
+                --quick --output "$output_dir" "${passthrough[@]}"
             ;;
         help|--help|-h)
             usage

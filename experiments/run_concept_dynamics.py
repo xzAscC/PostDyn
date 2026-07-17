@@ -106,6 +106,12 @@ def resolve_output_directory(*, quick: bool, output: str | None) -> str:
     return DEFAULT_QUICK_OUTPUT if quick else DEFAULT_OUTPUT
 
 
+def _split_csv(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
 def parse_args(argv: list[str] | None = None):
     parser = argparse.ArgumentParser(
         description="Concept Dynamics across Olmo-3-7B post-training variants",
@@ -189,18 +195,32 @@ def main(argv: list[str] | None = None):
         print("QUICK MODE (smoke test)")
         print("=" * 60)
     else:
-        models = args.models.split(",") if args.models else DEFAULT_MODELS
-        concepts = args.concepts.split(",") if args.concepts else DEFAULT_CONCEPTS
-        layers = (
-            [int(x) for x in args.layers.split(",")]
-            if args.layers
-            else EXPERIMENT_LAYERS_7B
+        models = _split_csv(args.models) if args.models else list(DEFAULT_MODELS)
+        concepts = (
+            _split_csv(args.concepts) if args.concepts else list(DEFAULT_CONCEPTS)
         )
+        if args.layers:
+            layers = [int(x) for x in _split_csv(args.layers)]
+        else:
+            layers = list(EXPERIMENT_LAYERS_7B)
         n_samples = args.n_samples
         max_seq_len = args.max_seq_len
 
-    valid_models = [m.strip() for m in models if m.strip() in OLMO3_VARIANTS]
-    invalid = [m for m in models if m.strip() not in OLMO3_VARIANTS]
+    if n_samples <= 0:
+        print("ERROR: --n-samples must be positive", file=sys.stderr)
+        sys.exit(2)
+    if "female_vs_male_gender" in concepts and n_samples % 2 != 0:
+        print(
+            "ERROR: --n-samples must be even when female_vs_male_gender is selected",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if any(layer < 0 for layer in layers):
+        print("ERROR: --layers must be non-negative integers", file=sys.stderr)
+        sys.exit(2)
+
+    valid_models = [m for m in models if m in OLMO3_VARIANTS]
+    invalid = [m for m in models if m not in OLMO3_VARIANTS]
     if invalid:
         print(f"WARNING: Unknown models (skipped): {invalid}")
         print(f"Available: {sorted(OLMO3_VARIANTS.keys())}")
@@ -245,14 +265,26 @@ def main(argv: list[str] | None = None):
         max_seq_len=max_seq_len,
     )
 
-    n_errors = sum(1 for v in results.get("extraction", {}).values() if "error" in v)
-    n_ok = len(results.get("checkpoints_done", []))
+    selected_prefixes = tuple(f"{m}/" for m in valid_models)
+    selected_done = [
+        key
+        for key in results.get("checkpoints_done", [])
+        if key.startswith(selected_prefixes)
+    ]
+    selected_errors = sum(
+        1
+        for key, value in results.get("extraction", {}).items()
+        if key.startswith(selected_prefixes)
+        and isinstance(value, dict)
+        and "error" in value
+    )
+    n_ok = len(selected_done)
     print(f"\n{'=' * 60}")
-    print(f"Extraction complete: {n_ok} OK, {n_errors} errors")
+    print(f"Extraction complete: {n_ok} OK, {selected_errors} errors")
     print(f"Results: {output_dir}")
     print(f"{'=' * 60}")
 
-    if n_errors > 0:
+    if selected_errors > 0:
         sys.exit(1)
 
 
