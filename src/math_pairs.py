@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -124,9 +125,22 @@ def build_math_pairs(
 def write_math_pairs_jsonl(path: str | Path, pairs: Iterable[MathPair]) -> None:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with destination.open("w", encoding="utf-8") as handle:
-        for pair in pairs:
-            handle.write(json.dumps(asdict(pair), ensure_ascii=False) + "\n")
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+        dir=destination.parent,
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            for pair in pairs:
+                handle.write(json.dumps(asdict(pair), ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, destination)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def append_math_pair_jsonl(path: str | Path, pair: MathPair) -> None:
