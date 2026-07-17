@@ -54,7 +54,7 @@ class ConceptVector:
     """Container for a single concept direction at a specific layer and model.
 
     Attributes:
-        concept_name: e.g. "math", "code", "if", "general"
+        concept_name: e.g. "python_vs_cpp", "french_vs_english_language"
         model_name: e.g. "olmo3-think-sft"
         layer_idx: 0-indexed transformer layer index
         steering_vector: The direction to use for analysis (normalized r_hat
@@ -134,7 +134,7 @@ def extract_layer_activations(
 
     # Accumulate per-layer last-token hidden states
     layer_features: dict[int, list[torch.Tensor]] = {layer: [] for layer in layers}
-    d_model = None
+    d_model: int = 0
 
     device = getattr(model, "device", torch.device("cpu"))
 
@@ -162,7 +162,7 @@ def extract_layer_activations(
             # Shape: (1, seq_len, d_model) → extract last token
             last_tok = hs[0, last_token_idx, :].detach().cpu().float()
             layer_features[layer_idx].append(last_tok)
-            if d_model is None:
+            if d_model == 0:
                 d_model = last_tok.shape[0]
 
         del outputs, hidden_states, inputs
@@ -521,20 +521,17 @@ def _load_model_and_tokenizer(model_config, revision=None):
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    trust = getattr(model_config, "architecture", "") == "olmo3"
     rev = revision if revision else model_config.revision
 
     try:
         tokenizer = AutoTokenizer.from_pretrained(
             model_config.hf_id,
             revision=rev,
-            trust_remote_code=trust,
         )
     except (KeyError, AttributeError):
         print(f"  Tokenizer load failed, falling back to Olmo-3 base tokenizer")
         tokenizer = AutoTokenizer.from_pretrained(
             "allenai/Olmo-3-1025-7B",
-            trust_remote_code=True,
         )
 
     if tokenizer.pad_token is None:
@@ -544,10 +541,9 @@ def _load_model_and_tokenizer(model_config, revision=None):
         model = AutoModelForCausalLM.from_pretrained(
             model_config.hf_id,
             revision=rev,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             device_map="auto",
             low_cpu_mem_usage=True,
-            trust_remote_code=trust,
         )
     except (KeyError, ValueError) as e:
         if "olmo2-retrofit" in str(e) or "olmo2_retrofit" in str(e):
@@ -557,7 +553,7 @@ def _load_model_and_tokenizer(model_config, revision=None):
             model = Olmo2ForCausalLM.from_pretrained(
                 model_config.hf_id,
                 revision=rev,
-                torch_dtype=torch.bfloat16,
+                dtype=torch.bfloat16,
                 device_map="auto",
                 low_cpu_mem_usage=True,
             )
@@ -745,7 +741,6 @@ def run_full_experiment(
 
                 traceback.print_exc()
                 all_results["extraction"][ckpt_key] = {"error": str(e)}
-                all_results["checkpoints_done"].append(ckpt_key)
 
             with open(results_path, "w") as f:
                 json.dump(all_results, f, indent=2)
@@ -799,6 +794,13 @@ def compute_dynamics_analysis(
     os.makedirs(stability_dir, exist_ok=True)
     os.makedirs(gram_dir, exist_ok=True)
 
+    results_path = os.path.join(results_dir, "extraction_results.json")
+    completed_keys: set[str] | None = None
+    if os.path.exists(results_path):
+        with open(results_path) as f:
+            extraction_results = json.load(f)
+        completed_keys = set(extraction_results.get("checkpoints_done", []))
+
     available_models = [
         m for m in model_names if os.path.exists(os.path.join(vectors_dir, m))
     ]
@@ -809,7 +811,10 @@ def compute_dynamics_analysis(
         stability[model] = {}
         ckpts = MODEL_CHECKPOINTS.get(model, ["main"])
         available_ckpts = [
-            c for c in ckpts if os.path.exists(os.path.join(vectors_dir, model, c))
+            c
+            for c in ckpts
+            if os.path.exists(os.path.join(vectors_dir, model, c))
+            and (completed_keys is None or f"{model}/{c}" in completed_keys)
         ]
 
         for concept in concepts:
@@ -840,7 +845,10 @@ def compute_dynamics_analysis(
         gram[model] = {}
         ckpts = MODEL_CHECKPOINTS.get(model, ["main"])
         available_ckpts = [
-            c for c in ckpts if os.path.exists(os.path.join(vectors_dir, model, c))
+            c
+            for c in ckpts
+            if os.path.exists(os.path.join(vectors_dir, model, c))
+            and (completed_keys is None or f"{model}/{c}" in completed_keys)
         ]
 
         for ckpt in available_ckpts:

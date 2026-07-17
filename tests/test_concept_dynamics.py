@@ -12,6 +12,9 @@ No GPU or network required — model forward pass is mocked.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import sys
+from types import SimpleNamespace
 from typing import Optional
 
 import torch
@@ -24,6 +27,9 @@ from src.concept_dynamics import (
     cross_model_stability,
     concept_gram_matrices,
     select_uniform_layers,
+    _load_model_and_tokenizer,
+    compute_dynamics_analysis,
+    run_full_experiment,
 )
 
 
@@ -79,6 +85,129 @@ class MockTokenizer:
         input_ids = torch.randint(0, 1000, (1, self._seq_len))
         attention_mask = torch.ones(1, self._seq_len)
         return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+
+class TestModelLoading:
+    def test_native_olmo3_uses_dtype_without_remote_code(self, monkeypatch):
+        calls = {}
+
+        class TokenizerFactory:
+            @classmethod
+            def from_pretrained(cls, model_id, **kwargs):
+                calls["tokenizer"] = kwargs
+                return SimpleNamespace(pad_token=None, eos_token="<eos>")
+
+        class LoadedModel:
+            def eval(self):
+                calls["eval"] = True
+
+        class ModelFactory:
+            @classmethod
+            def from_pretrained(cls, model_id, **kwargs):
+                calls["model"] = kwargs
+                return LoadedModel()
+
+        fake_transformers = SimpleNamespace(
+            AutoModelForCausalLM=ModelFactory,
+            AutoTokenizer=TokenizerFactory,
+        )
+        monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+        config = SimpleNamespace(
+            hf_id="allenai/Olmo-3-7B-RL-Zero-Math",
+            revision="main",
+            architecture="olmo3",
+        )
+
+        _load_model_and_tokenizer(config, "step_1900")
+
+        assert calls["model"]["dtype"] is torch.bfloat16
+        assert "torch_dtype" not in calls["model"]
+        assert "trust_remote_code" not in calls["model"]
+        assert "trust_remote_code" not in calls["tokenizer"]
+        assert calls["eval"] is True
+
+
+class TestExperimentResume:
+    def test_failed_checkpoint_remains_retryable_and_keeps_cache(
+        self, tmp_path, monkeypatch
+    ):
+        from src import config as config_module
+        from src import concept_dynamics as dynamics_module
+
+        model_config = SimpleNamespace(name="model", hf_id="org/model")
+        monkeypatch.setattr(config_module, "OLMO3_VARIANTS", {"model": model_config})
+        monkeypatch.setattr(config_module, "MODEL_CHECKPOINTS", {"model": ["step_1"]})
+        monkeypatch.setattr(
+            dynamics_module,
+            "run_model_extraction",
+            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("failed")),
+        )
+        monkeypatch.setattr(
+            dynamics_module,
+            "compute_dynamics_analysis",
+            lambda *args, **kwargs: {},
+        )
+        cleaned = []
+        monkeypatch.setattr(dynamics_module, "_clean_hf_cache", cleaned.append)
+
+        results = run_full_experiment(
+            ["model"],
+            ["python_vs_cpp"],
+            [3],
+            1,
+            str(tmp_path),
+        )
+
+        assert results["checkpoints_done"] == []
+        assert results["extraction"]["model/step_1"] == {"error": "failed"}
+        assert cleaned == []
+
+    def test_dynamics_excludes_partial_failed_checkpoints(self, tmp_path, monkeypatch):
+        from src import config as config_module
+        from src import concept_dynamics as dynamics_module
+
+        checkpoints = ["step_1", "step_2", "step_failed"]
+        monkeypatch.setattr(config_module, "MODEL_CHECKPOINTS", {"model": checkpoints})
+        for checkpoint in checkpoints:
+            (tmp_path / "vectors" / "model" / checkpoint).mkdir(parents=True)
+
+        results = {
+            "checkpoints_done": ["model/step_1", "model/step_2"],
+            "extraction": {"model/step_failed": {"error": "failed"}},
+        }
+        (tmp_path / "extraction_results.json").write_text(
+            json.dumps(results), encoding="utf-8"
+        )
+
+        def load_vectors(*args, **kwargs):
+            vector = ConceptVector(
+                concept_name="python_vs_cpp",
+                model_name="model",
+                layer_idx=3,
+                steering_vector=torch.tensor([1.0, 0.0]),
+                raw_direction=torch.tensor([1.0, 0.0]),
+                positive_mean=torch.tensor([1.0, 0.0]),
+                negative_mean=torch.tensor([0.0, 0.0]),
+                positive_std=torch.tensor([0.0, 0.0]),
+                negative_std=torch.tensor([0.0, 0.0]),
+                n_positive=1,
+                n_negative=1,
+                d_model=2,
+            )
+            return {"python_vs_cpp": vector, "french_vs_english_language": vector}
+
+        monkeypatch.setattr(dynamics_module, "load_concept_vectors", load_vectors)
+
+        dynamics = compute_dynamics_analysis(
+            str(tmp_path),
+            ["model"],
+            ["python_vs_cpp", "french_vs_english_language"],
+            [3],
+        )
+
+        stability = dynamics["stability"]["model"]["python_vs_cpp"][3]
+        assert stability["checkpoints"] == ["step_1", "step_2"]
+        assert set(dynamics["gram"]["model"]) == {"step_1", "step_2"}
 
 
 # =============================================================================
@@ -145,7 +274,8 @@ class TestExtractLayerActivations:
 
         # Build a model where layer 1 hidden state encodes position in dim 0
         class PositionModel(MockModel):
-            def __call__(self, input_ids=None, **kwargs):
+            def __call__(self, input_ids=None, attention_mask=None, **kwargs):
+                assert input_ids is not None
                 seq = input_ids.shape[1]
                 bs = input_ids.shape[0]
                 # layer 0 (embedding): dim 0 = position index
