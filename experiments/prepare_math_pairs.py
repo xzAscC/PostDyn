@@ -195,6 +195,8 @@ def main() -> None:
     args = parse_args()
     if args.n_pairs <= 0:
         raise ValueError("--n-pairs must be positive")
+    if args.n_pairs > 500:
+        raise ValueError("--n-pairs cannot exceed the fixed MATH-500 population (500)")
     if args.max_new_tokens <= 0 or args.max_input_tokens <= 0:
         raise ValueError("Token limits must be positive")
 
