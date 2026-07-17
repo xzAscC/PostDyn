@@ -5,8 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-OUTPUT_DIR="${OUTPUT_DIR:-results/concept_dynamics}"
-
 log() { echo -e "\033[1;34m[$(date +%H:%M:%S)]\033[0m $*"; }
 err() { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; }
 
@@ -30,33 +28,38 @@ Options (override defaults):
   --max-seq-len N           Max tokenization length
 
 Environment:
-  OUTPUT_DIR  Output directory (default: results/concept_dynamics)
+  OUTPUT_DIR  Output directory (full default: results/concept_dynamics_paired;
+              quick default: results/concept_dynamics_paired_quick)
 
 Examples:
   experiments/run_concept_dynamics.sh quick
   experiments/run_concept_dynamics.sh full --models olmo3-think-sft,olmo3-rl-zero-math
-  experiments/run_concept_dynamics.sh --concepts math,code --n-samples 100
+  experiments/run_concept_dynamics.sh --concepts python_vs_cpp,female_vs_male_gender
 
 USAGE
 }
 
 main() {
     local mode="${1:-full}"
+    local output_dir
     shift || true
 
     case "$mode" in
         full)
+            output_dir="${OUTPUT_DIR:-results/concept_dynamics_paired}"
             log "Running FULL concept dynamics experiment"
             uv run python experiments/run_concept_dynamics.py \
-                --output "$OUTPUT_DIR" "$@"
+                --output "$output_dir" "$@"
             ;;
         quick)
+            output_dir="${OUTPUT_DIR:-results/concept_dynamics_paired_quick}"
             log "Running QUICK concept dynamics (smoke test)"
             uv run python experiments/run_concept_dynamics.py \
-                --quick --output "$OUTPUT_DIR" "$@"
+                --quick --output "$output_dir" "$@"
             ;;
         help|--help|-h)
             usage
+            return 0
             ;;
         *)
             err "Unknown mode: ${mode}"
@@ -65,11 +68,11 @@ main() {
             ;;
     esac
 
-    log "Results saved to ${OUTPUT_DIR}/"
-    log "  Concept vectors: ${OUTPUT_DIR}/vectors/"
-    log "  Stability:       ${OUTPUT_DIR}/stability/stability.json"
-    log "  Gram:            ${OUTPUT_DIR}/gram/gram.json"
-    log "  Summary:         ${OUTPUT_DIR}/extraction_results.json"
+    log "Results saved to ${output_dir}/"
+    log "  Concept vectors: ${output_dir}/vectors/"
+    log "  Stability:       ${output_dir}/stability/stability.json"
+    log "  Gram:            ${output_dir}/gram/gram.json"
+    log "  Summary:         ${output_dir}/extraction_results.json"
 }
 
 main "$@"
