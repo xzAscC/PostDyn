@@ -167,10 +167,6 @@ def extract_layer_activations(
 
         del outputs, hidden_states, inputs
 
-        # Periodic GPU cache cleanup
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
     # Stack into (n_texts, d_model) per layer
     return {layer: torch.stack(layer_features[layer], dim=0) for layer in layers}
 
@@ -247,6 +243,12 @@ def compute_concept_vector(
 
     n_pos, d_pos = positive_activations.shape
     n_neg, d_neg = negative_activations.shape
+
+    if n_pos == 0 or n_neg == 0:
+        raise ValueError(
+            f"Need at least one positive and one negative sample; "
+            f"got n_pos={n_pos}, n_neg={n_neg}"
+        )
 
     if d_pos != d_neg:
         raise ValueError(
@@ -683,6 +685,39 @@ def run_model_extraction(
 # =============================================================================
 
 
+def _manifest_covers(
+    manifest: dict | None,
+    concepts: list[str],
+    layers: list[int],
+    n_samples: int,
+) -> bool:
+    """True when a stored checkpoint manifest fully covers the request."""
+    if not manifest:
+        return False
+    stored_concepts = set(manifest.get("concepts", []))
+    stored_layers = set(manifest.get("layers", []))
+    if not set(concepts).issubset(stored_concepts):
+        return False
+    if not set(layers).issubset(stored_layers):
+        return False
+    return int(manifest.get("n_samples", 0)) >= n_samples
+
+
+def _merge_manifest(
+    existing: dict | None,
+    concepts: list[str],
+    layers: list[int],
+    n_samples: int,
+) -> dict:
+    """Union a prior checkpoint manifest with the just-completed request."""
+    prior = existing or {}
+    return {
+        "concepts": sorted(set(prior.get("concepts", [])) | set(concepts)),
+        "layers": sorted(set(prior.get("layers", [])) | set(layers)),
+        "n_samples": max(int(prior.get("n_samples", 0)), n_samples),
+    }
+
+
 def run_full_experiment(
     model_names: list[str],
     concepts: list[str],
@@ -707,7 +742,12 @@ def run_full_experiment(
             all_results = json.load(f)
         print(f"Resuming: {len(all_results.get('checkpoints_done', []))} ckpts done")
     else:
-        all_results = {"checkpoints_done": [], "extraction": {}}
+        all_results = {
+            "checkpoints_done": [],
+            "extraction": {},
+            "checkpoint_manifests": {},
+        }
+    all_results.setdefault("checkpoint_manifests", {})
 
     for name in model_names:
         if name not in OLMO3_VARIANTS:
@@ -719,9 +759,17 @@ def run_full_experiment(
 
         for ckpt in checkpoints:
             ckpt_key = f"{name}/{ckpt}"
-            if ckpt_key in all_results["checkpoints_done"]:
-                print(f"\nSkipping {ckpt_key} (already done)")
+            manifest = all_results["checkpoint_manifests"].get(ckpt_key)
+            if ckpt_key in all_results["checkpoints_done"] and _manifest_covers(
+                manifest, concepts, layers, n_samples
+            ):
+                print(f"\nSkipping {ckpt_key} (already done, request covered)")
                 continue
+            if ckpt_key in all_results["checkpoints_done"]:
+                print(
+                    f"\nRe-running {ckpt_key} "
+                    f"(stored manifest does not cover current request)"
+                )
 
             try:
                 stats = run_model_extraction(
@@ -735,7 +783,11 @@ def run_full_experiment(
                     revision=ckpt,
                 )
                 all_results["extraction"][ckpt_key] = stats
-                all_results["checkpoints_done"].append(ckpt_key)
+                if ckpt_key not in all_results["checkpoints_done"]:
+                    all_results["checkpoints_done"].append(ckpt_key)
+                all_results["checkpoint_manifests"][ckpt_key] = _merge_manifest(
+                    manifest, concepts, layers, n_samples
+                )
             except Exception as e:
                 import traceback
 

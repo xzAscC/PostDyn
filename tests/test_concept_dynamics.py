@@ -395,13 +395,19 @@ class TestComputeConceptVector:
         assert abs(cv.steering_vector.norm().item() - 1.0) < 1e-5
 
     def test_zero_direction_handled_gracefully(self):
-        """If pos and neg are identical, direction is zero — no NaN."""
         pos = torch.ones(10, 4)
         neg = torch.ones(10, 4)
 
         cv = compute_concept_vector(pos, neg, normalize=True)
 
         assert not torch.any(torch.isnan(cv.steering_vector))
+        assert torch.allclose(cv.steering_vector, torch.zeros_like(cv.steering_vector))
+
+    def test_empty_activations_raise(self):
+        pos = torch.zeros(0, 4)
+        neg = torch.ones(3, 4)
+        with pytest.raises(ValueError, match="at least one"):
+            compute_concept_vector(pos, neg)
 
 
 # =============================================================================
