@@ -179,6 +179,11 @@ def parse_args(argv: list[str] | None = None):
             f"(default: {DEFAULT_HUMANEVAL_REPORT})"
         ),
     )
+    parser.add_argument(
+        "--keep-hf-cache",
+        action="store_true",
+        help="Do not delete Hugging Face cache entries after each model finishes.",
+    )
     return parser.parse_args(argv)
 
 
@@ -201,7 +206,14 @@ def main(argv: list[str] | None = None):
             _split_csv(args.concepts) if args.concepts else list(DEFAULT_CONCEPTS)
         )
         if args.layers:
-            layers = [int(x) for x in _split_csv(args.layers)]
+            try:
+                layers = [int(x) for x in _split_csv(args.layers)]
+            except ValueError:
+                print(
+                    "ERROR: --layers must be comma-separated integers",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
         else:
             layers = list(EXPERIMENT_LAYERS_7B)
         n_samples = args.n_samples
@@ -272,6 +284,7 @@ def main(argv: list[str] | None = None):
         n_samples=n_samples,
         output_dir=output_dir,
         max_seq_len=max_seq_len,
+        clean_hf_cache=not args.keep_hf_cache,
     )
 
     selected_prefixes = tuple(f"{m}/" for m in valid_models)

@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "torch>=2.5.0",
-    "transformers>=4.57.0",
+    "transformers>=4.57.1",
     "numpy>=2.0.0",
     "matplotlib>=3.9.0",
     "seaborn>=0.13.0",

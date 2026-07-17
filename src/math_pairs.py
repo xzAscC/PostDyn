@@ -145,30 +145,33 @@ def write_math_pairs_jsonl(path: str | Path, pairs: Iterable[MathPair]) -> None:
 
 def append_math_pair_jsonl(path: str | Path, pair: MathPair) -> None:
     destination = Path(path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with destination.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(asdict(pair), ensure_ascii=False) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
+    existing = read_math_pairs_jsonl(destination) if destination.exists() else []
+    existing.append(pair)
+    write_math_pairs_jsonl(destination, existing)
 
 
 def read_math_pairs_jsonl(path: str | Path) -> list[MathPair]:
     source = Path(path)
     pairs: list[MathPair] = []
-    with source.open(encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, start=1):
-            if not line.strip():
-                continue
+    lines = source.read_text(encoding="utf-8").splitlines()
+    for line_number, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        try:
             record = json.loads(line)
-            try:
-                pair = MathPair(
-                    unique_id=_math_id(record["unique_id"]),
-                    problem=str(record["problem"]),
-                    gold_answer=str(record["gold_answer"]),
-                    verbose_solution=str(record["verbose_solution"]),
-                    concise_solution=str(record["concise_solution"]),
-                )
-            except (KeyError, TypeError, ValueError) as exc:
-                raise ValueError(f"Invalid math pair on line {line_number}") from exc
-            pairs.append(pair)
+        except json.JSONDecodeError as exc:
+            if line_number == len(lines):
+                continue
+            raise ValueError(f"Invalid JSON on line {line_number}") from exc
+        try:
+            pair = MathPair(
+                unique_id=_math_id(record["unique_id"]),
+                problem=str(record["problem"]),
+                gold_answer=str(record["gold_answer"]),
+                verbose_solution=str(record["verbose_solution"]),
+                concise_solution=str(record["concise_solution"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid math pair on line {line_number}") from exc
+        pairs.append(pair)
     return pairs

@@ -566,6 +566,9 @@ def _load_model_and_tokenizer(model_config, revision=None):
     return model, tokenizer
 
 
+load_model_and_tokenizer = _load_model_and_tokenizer
+
+
 # =============================================================================
 # Single-Model Extraction Pipeline
 # =============================================================================
@@ -691,14 +694,19 @@ def _manifest_covers(
     layers: list[int],
     n_samples: int,
 ) -> bool:
-    """True when a stored checkpoint manifest fully covers the request."""
     if not manifest:
         return False
-    stored_concepts = set(manifest.get("concepts", []))
     stored_layers = set(manifest.get("layers", []))
-    if not set(concepts).issubset(stored_concepts):
-        return False
     if not set(layers).issubset(stored_layers):
+        return False
+    per_concept = manifest.get("concept_samples")
+    if isinstance(per_concept, dict) and per_concept:
+        for concept in concepts:
+            if int(per_concept.get(concept, 0)) < n_samples:
+                return False
+        return True
+    stored_concepts = set(manifest.get("concepts", []))
+    if not set(concepts).issubset(stored_concepts):
         return False
     return int(manifest.get("n_samples", 0)) >= n_samples
 
@@ -709,12 +717,15 @@ def _merge_manifest(
     layers: list[int],
     n_samples: int,
 ) -> dict:
-    """Union a prior checkpoint manifest with the just-completed request."""
     prior = existing or {}
+    concept_samples = dict(prior.get("concept_samples") or {})
+    for concept in concepts:
+        concept_samples[concept] = max(int(concept_samples.get(concept, 0)), n_samples)
     return {
         "concepts": sorted(set(prior.get("concepts", [])) | set(concepts)),
         "layers": sorted(set(prior.get("layers", [])) | set(layers)),
         "n_samples": max(int(prior.get("n_samples", 0)), n_samples),
+        "concept_samples": concept_samples,
     }
 
 
@@ -725,6 +736,7 @@ def run_full_experiment(
     n_samples: int,
     output_dir: str,
     max_seq_len: int = 2048,
+    clean_hf_cache: bool = True,
 ) -> dict:
     """Run concept extraction across all models × checkpoints, then dynamics."""
     import json
@@ -801,7 +813,7 @@ def run_full_experiment(
         model_ckpts_done = all(
             f"{name}/{c}" in all_results["checkpoints_done"] for c in checkpoints
         )
-        if model_ckpts_done:
+        if model_ckpts_done and clean_hf_cache:
             _clean_hf_cache(config.hf_id)
 
     print(f"\n{'=' * 60}")

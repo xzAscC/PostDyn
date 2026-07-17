@@ -11,7 +11,7 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.concept_dynamics import _load_model_and_tokenizer, load_concept_vectors
+from src.concept_dynamics import load_concept_vectors, load_model_and_tokenizer
 from src.config import EXPERIMENT_LAYERS_7B, MODEL_CHECKPOINTS, OLMO3_VARIANTS
 from src.gender_surface_analysis import (
     compare_gender_surface_vectors,
@@ -63,7 +63,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.model not in OLMO3_VARIANTS:
         print(f"ERROR: Unknown model {args.model!r}", file=sys.stderr)
         return 2
-    layers = [int(value) for value in args.layers.split(",")]
+    try:
+        layers = [int(value) for value in args.layers.split(",") if value.strip()]
+    except ValueError:
+        print("ERROR: --layers must be comma-separated integers", file=sys.stderr)
+        return 2
+    if not layers or any(layer < 0 or layer > 31 for layer in layers):
+        print("ERROR: --layers must be non-empty integers in [0, 31]", file=sys.stderr)
+        return 2
     gender_vectors = {}
     for layer in layers:
         vectors = load_concept_vectors(
@@ -76,10 +83,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         gender_vectors[layer] = vectors[GENDER_CONCEPT]
 
-    model, tokenizer = _load_model_and_tokenizer(
-        OLMO3_VARIANTS[args.model], args.checkpoint
-    )
+    model = None
+    tokenizer = None
     try:
+        model, tokenizer = load_model_and_tokenizer(
+            OLMO3_VARIANTS[args.model], args.checkpoint
+        )
         surface_vectors = compute_surface_pronoun_vectors(
             model, tokenizer, layers, max_seq_len=args.max_seq_len
         )
@@ -91,7 +100,10 @@ def main(argv: list[str] | None = None) -> int:
             comparisons=comparisons,
         )
     finally:
-        del model
+        if model is not None:
+            del model
+        if tokenizer is not None:
+            del tokenizer
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

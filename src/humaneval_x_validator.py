@@ -336,6 +336,7 @@ def _resource_limited_command(command: Sequence[str]) -> list[str]:
         f"ulimit -v {SANDBOX_AS_KB}; "
         f"ulimit -t {SANDBOX_CPU_SECONDS}; "
         f"ulimit -u {SANDBOX_NPROC}; "
+        "ulimit -f 131072; "
         'exec "$@"'
     )
     return ["/bin/bash", "-c", script, "--", *command]

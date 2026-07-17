@@ -307,6 +307,7 @@ class TestBwrapArgv:
         assert "ulimit -v" in script
         assert "ulimit -t" in script
         assert "ulimit -u" in script
+        assert "ulimit -f" in script
         assert 'exec "$@"' in script
         assert payload[3] == "--"
         assert payload[4:] == command
@@ -376,8 +377,16 @@ class TestCheckSandboxTools:
         with pytest.raises(RuntimeError, match="Sandbox tooling missing"):
             check_sandbox_tools_available()
 
-    def test_passes_when_all_tools_present(self):
-        # All real paths exist on the host; should not raise.
+    def test_passes_when_all_tools_present(self, monkeypatch, tmp_path):
+        bwrap = tmp_path / "bwrap"
+        gpp = tmp_path / "g++"
+        py = tmp_path / "python"
+        for path in (bwrap, gpp, py):
+            path.write_text("", encoding="utf-8")
+        monkeypatch.setattr(hv, "BWRAP_PATH", str(bwrap))
+        monkeypatch.setattr(hv, "GPP_PATH", str(gpp))
+        monkeypatch.setattr(hv, "PYTHON_PATH", str(py))
+        monkeypatch.delenv("HUMANEVAL_X_CPP_INCLUDE_DIR", raising=False)
         check_sandbox_tools_available()
 
     def test_raises_when_configured_include_directory_is_missing(
