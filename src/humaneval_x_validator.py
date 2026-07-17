@@ -37,7 +37,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable, Iterator, Protocol, Sequence, cast
+from typing import Any, Callable, Iterable, Iterator, Protocol, Sequence, cast
 
 from src.contrastive_datasets import (
     HUMANEVAL_X_DATASET,
@@ -430,7 +430,7 @@ class SandboxRunner(Protocol):
         command: Sequence[str],
         scratch_dir: Path,
         timeout: float,
-    ) -> subprocess.CompletedProcess[str]:
+    ) -> subprocess.CompletedProcess[Any]:
         """Run ``command`` in the sandbox and return the completed process."""
         ...
 
@@ -443,7 +443,7 @@ class BwrapRunner:
     outcomes without ever spawning bwrap.
     """
 
-    subprocess_run: Callable[..., subprocess.CompletedProcess[str]] = field(
+    subprocess_run: Callable[..., subprocess.CompletedProcess[Any]] = field(
         default_factory=lambda: subprocess.run
     )
 
@@ -452,16 +452,29 @@ class BwrapRunner:
         command: Sequence[str],
         scratch_dir: Path,
         timeout: float,
-    ) -> subprocess.CompletedProcess[str]:
+    ) -> subprocess.CompletedProcess[Any]:
         argv = bwrap_argv(command, scratch_dir)
-        return self.subprocess_run(
+        completed = self.subprocess_run(
             argv,
             cwd=str(scratch_dir),
-            capture_output=True,
-            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=False,
             timeout=timeout,
             check=False,
         )
+        # Bound host-side buffers after the child exits; child still has RLIMIT_AS.
+        if (
+            isinstance(completed.stdout, (bytes, bytearray))
+            and len(completed.stdout) > MAX_DIAGNOSTIC_BYTES * 4
+        ):
+            completed.stdout = completed.stdout[: MAX_DIAGNOSTIC_BYTES * 4]
+        if (
+            isinstance(completed.stderr, (bytes, bytearray))
+            and len(completed.stderr) > MAX_DIAGNOSTIC_BYTES * 4
+        ):
+            completed.stderr = completed.stderr[: MAX_DIAGNOSTIC_BYTES * 4]
+        return completed
 
 
 # =============================================================================
@@ -489,11 +502,22 @@ class ProgramOutcome:
         return self.status == OUTCOME_PASS
 
 
+def _decode_bounded(data: bytes | str | None) -> str:
+    if data is None:
+        return ""
+    if isinstance(data, bytes):
+        text = data.decode("utf-8", errors="replace")
+    else:
+        text = data
+    return _bound(text)
+
+
 def _bound(text: str) -> str:
-    """Truncate ``text`` to ``MAX_DIAGNOSTIC_BYTES`` for stable report size."""
-    if len(text) <= MAX_DIAGNOSTIC_BYTES:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= MAX_DIAGNOSTIC_BYTES:
         return text
-    return text[:MAX_DIAGNOSTIC_BYTES] + "...[truncated]"
+    truncated = encoded[:MAX_DIAGNOSTIC_BYTES].decode("utf-8", errors="ignore")
+    return truncated + "...[truncated]"
 
 
 def _python_filename(task_id: int) -> str:
@@ -533,7 +557,9 @@ def run_python_program(
             exit_code=None,
             diagnostics=_bound(str(exc)),
         )
-    diagnostics = _bound((completed.stdout or "") + (completed.stderr or ""))
+    diagnostics = _bound(
+        _decode_bounded(completed.stdout) + _decode_bounded(completed.stderr)
+    )
     if completed.returncode == 0:
         return ProgramOutcome(
             status=OUTCOME_PASS,
@@ -584,7 +610,8 @@ def run_cpp_program(
             status=OUTCOME_COMPILE_ERROR,
             exit_code=compile_completed.returncode,
             diagnostics=_bound(
-                (compile_completed.stdout or "") + (compile_completed.stderr or "")
+                _decode_bounded(compile_completed.stdout)
+                + _decode_bounded(compile_completed.stderr)
             ),
         )
     run_command = [str(binary_path)]
@@ -602,7 +629,9 @@ def run_cpp_program(
             exit_code=None,
             diagnostics=_bound(str(exc)),
         )
-    diagnostics = _bound((run_completed.stdout or "") + (run_completed.stderr or ""))
+    diagnostics = _bound(
+        _decode_bounded(run_completed.stdout) + _decode_bounded(run_completed.stderr)
+    )
     if run_completed.returncode == 0:
         return ProgramOutcome(
             status=OUTCOME_PASS,
