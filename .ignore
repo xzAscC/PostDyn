@@ -1,5 +1,11 @@
+# Project artifacts remain searchable by OpenCode while Git ignores them.
+!.omo/
+!data/
+!notebook/
 !results/
+
+# Documentation
 !docs/
 
-# Latex files
+# LaTeX files
 !69e5bc6d27002aeac07372b4/
