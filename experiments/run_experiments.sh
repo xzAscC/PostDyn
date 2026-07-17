@@ -36,16 +36,21 @@ exp_tests() {
 
 exp_weight_rank() {
     log "Weight-level effective rank analysis (quick mode)"
-    uv run python main.py --analysis all --quick
+    uv run python main.py --analysis all --quick --output-dir "$RESULTS_DIR"
 }
 
 exp_activation_rank() {
     log "Activation-level effective rank analysis"
-    uv run python main.py --analysis activation-all --quick --num-samples 500
+    uv run python main.py --analysis activation-all --quick --num-samples 500 --output-dir "$RESULTS_DIR"
 }
 
 exp_concept_steering() {
     log "Concept steering: select 100 concepts + DIM pipeline"
+    if [[ ! -f data/concept_index.txt ]]; then
+        log "SKIP concept-steering: data/concept_index.txt not found"
+        log "  Place a PaCE concept index at data/concept_index.txt to enable this step"
+        return 0
+    fi
     uv run python -c "
 from src.concept_steering import load_concept_index, select_concepts
 concepts = load_concept_index()
@@ -111,7 +116,7 @@ exp_dry_run() {
 
 usage() {
     cat << 'USAGE'
-Usage: ./run_experiments.sh [COMMAND]
+Usage: experiments/run_experiments.sh [COMMAND]
 
 Commands:
   all              Run all experiments (tests + weight + activation + concept)

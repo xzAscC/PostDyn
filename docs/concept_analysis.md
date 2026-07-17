@@ -89,8 +89,8 @@ G_{ij}^{(t)} = cos(v_i^{(t)}, v_j^{(t)})
 **Input**: `dict[str, ConceptSteeringVector]` — all concepts at one checkpoint.
 
 **Output**: `AnisotropySpectrum` dataclass with:
-- `eigenvalues` — sorted descending, shape `(r,)`, all ≥ 0
-- `explained_variance_ratio` — same shape, sums to 1.0
+- `eigenvalues` — sorted descending over the activation/feature dimension, all ≥ 0
+- `explained_variance_ratio` — same length as `eigenvalues`, sums to 1.0
 
 **Interpretation**:
 - Flat spectrum (all ρᵢ ≈ 1/r) → isotropic, concepts spread evenly
@@ -143,11 +143,11 @@ stability = directional_stability(trajectory)
 | `TestConceptGramMatrix` | 6 | Diagonal=1, symmetry, shape, value range [-1,1], orthogonality, sorted order |
 | `TestAnisotropySpectrum` | 8 | Descending order, ratio sums to 1, shape match, non-negativity, isotropic flat, rank-1 dominant, type check, centering |
 
-All 108 project tests pass (80 existing + 28 new).
+These 28 tests live in `tests/test_concept_analysis.py`. The full suite currently has 300+ tests (`uv run pytest`).
 
 ## Limitations
 
 1. **No Procrustes alignment**: Cross-model directional stability comparisons may be confounded by basis drift
-2. **No activation extraction yet**: Metrics operate on pre-computed steering vectors; the model-specific extraction pipeline (Phase 2) is not yet implemented
+2. **Separate from concept-dynamics extraction**: These metrics operate on pre-computed steering vectors. Model-side DiM extraction and checkpoint trajectories are implemented in `src/concept_dynamics.py` / `experiments/run_concept_dynamics.py`
 3. **Cohen's d projection**: The per-dimension margin treats each axis independently; the scalar summary aggregates via L2 norms
 4. **Covariance estimation**: With only 100 concepts, the covariance estimate may be noisy for d_model=4096
