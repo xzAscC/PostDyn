@@ -15,13 +15,13 @@ dependencies = [
     "accelerate>=1.0.0",
     "scipy>=1.14.0",
     "datasets>=4.8.5",
-    "jupyter>=1.1.1",
     "math-verify[antlr4-13-2]==0.9.0",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
+    "jupyter>=1.1.1",
 ]
 
 [tool.pytest.ini_options]
