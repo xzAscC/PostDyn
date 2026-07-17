@@ -2,9 +2,9 @@
 
 ## Overview
 
-This experiment traces how concept representations evolve **along each model's training trajectory** (10 uniformly-spaced checkpoints from first to last step). It implements the DiM pipeline from "Tracing Concept Dynamics through Pretraining and Post-training".
+This experiment traces how concept representations evolve **along each model's training trajectory** (up to 10 uniformly-spaced checkpoints spanning the first and final available steps). It implements the DiM pipeline from "Tracing Concept Dynamics through Pretraining and Post-training".
 
-For each model, we extract concept directions at 10 checkpoints × 10 layers, then measure:
+For each model, we extract concept directions at each selected checkpoint (up to 10 per model) × 10 layers, then measure:
 1. **Directional stability** — `cos(r_k^t, r_k^t')` across checkpoints within each model
 2. **Concept Gram matrix** — `G_ij^t = cos(r_i^t, r_j^t)` entanglement at each checkpoint
 
@@ -12,13 +12,13 @@ For each model, we extract concept directions at 10 checkpoints × 10 layers, th
 
 | Model | HF ID | Checkpoints | Range |
 |-------|-------|-------------|-------|
-| Think-SFT | allenai/Olmo-3-7B-Think-SFT | 10 | step5000→step43000 |
+| Think-SFT | allenai/Olmo-3-7B-Think-SFT | 10 | first→last available steps |
 | Instruct-SFT | allenai/Olmo-3-7B-Instruct-SFT | 1 (main only) | — |
-| RL-Zero-Math | allenai/Olmo-3-7B-RL-Zero-Math | 10 | step_200→step_1900 |
-| RL-Zero-Code | allenai/Olmo-3-7B-RL-Zero-Code | 10 | step_300→step_2900 |
-| RL-Zero-IF | allenai/Olmo-3-7B-RL-Zero-IF | 10 | step_200→step_1900 |
+| RL-Zero-Math | allenai/Olmo-3-7B-RL-Zero-Math | 10 | step_100→step_1900 |
+| RL-Zero-Code | allenai/Olmo-3-7B-RL-Zero-Code | 10 | step_100→step_2900 |
+| RL-Zero-IF | allenai/Olmo-3-7B-RL-Zero-IF | 10 | step_100→step_1900 |
 | RL-Zero-General | allenai/Olmo-3-7B-RL-Zero-General | 8 | step_100→step_800 |
-| RL-Zero-Mix | allenai/Olmo-3-7B-RL-Zero-Mix | 10 | step_100→step_950 |
+| RL-Zero-Mix | allenai/Olmo-3-7B-RL-Zero-Mix | 10 | step_50→step_950 |
 
 **Total: 59 checkpoints** uniformly selected from each model's available training steps.
 
