@@ -33,6 +33,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -293,10 +294,13 @@ def _load_jsonl_stream(data_file: str) -> Iterable[dict]:
 
 
 BWRAP_PATH = "/usr/bin/bwrap"
-PYTHON_PATH = "/usr/bin/python3"
+PYTHON_PATH = sys.executable
 GPP_PATH = "/usr/bin/g++"
 
-# Read-only mounts shared with the sandbox so Python/C++/libc are usable.
+SANDBOX_AS_KB: int = 4 * 1024 * 1024
+SANDBOX_CPU_SECONDS: int = 60
+SANDBOX_NPROC: int = 128
+
 _SANDBOX_RO_BINDS: tuple[tuple[str, str], ...] = (
     ("/usr", "/usr"),
     ("/etc", "/etc"),
@@ -308,8 +312,33 @@ _SANDBOX_SYMLINKS: tuple[tuple[str, str], ...] = (
     ("usr/sbin", "/sbin"),
 )
 
-# Cap captured diagnostics so a single failing test cannot blow up the report.
 MAX_DIAGNOSTIC_BYTES: int = 4096
+
+
+def _python_runtime_binds() -> list[tuple[str, str]]:
+    binds: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for candidate in (sys.prefix, sys.base_prefix, sys.exec_prefix):
+        resolved = str(Path(candidate).resolve())
+        if resolved in seen or not Path(resolved).exists():
+            continue
+        seen.add(resolved)
+        binds.append((resolved, resolved))
+    exe = Path(PYTHON_PATH).resolve()
+    exe_parent = str(exe.parent)
+    if exe_parent not in seen and Path(exe_parent).exists():
+        binds.append((exe_parent, exe_parent))
+    return binds
+
+
+def _resource_limited_command(command: Sequence[str]) -> list[str]:
+    script = (
+        f"ulimit -v {SANDBOX_AS_KB}; "
+        f"ulimit -t {SANDBOX_CPU_SECONDS}; "
+        f"ulimit -u {SANDBOX_NPROC}; "
+        'exec "$@"'
+    )
+    return ["/bin/bash", "-c", script, "--", *command]
 
 
 def bwrap_argv(
@@ -322,7 +351,8 @@ def bwrap_argv(
     combined with ``--die-with-parent`` so it cannot outlive this process.
     The host root is mounted read-only, ``scratch_dir`` is bind-mounted
     read/write, and ``/dev`` + ``/proc`` are populated just enough for
-    Python and g++ to function.
+    Python and g++ to function. Per-run ulimit caps constrain memory, CPU,
+    and process count before the payload executes.
     """
     argv: list[str] = [
         BWRAP_PATH,
@@ -331,6 +361,8 @@ def bwrap_argv(
         "--clearenv",
     ]
     for host, target in _SANDBOX_RO_BINDS:
+        argv.extend(["--ro-bind", host, target])
+    for host, target in _python_runtime_binds():
         argv.extend(["--ro-bind", host, target])
     extra_include = _extra_cpp_include_dir()
     if extra_include is not None:
@@ -341,21 +373,29 @@ def bwrap_argv(
     argv.extend(["--proc", "/proc", "--dev", "/dev"])
     scratch = str(scratch_dir)
     argv.extend(["--bind", scratch, scratch])
+    path_entries = [
+        str(Path(PYTHON_PATH).resolve().parent),
+        "/usr/bin",
+        "/bin",
+    ]
     argv.extend(
         [
             "--setenv",
             "PATH",
-            "/usr/bin:/bin",
+            ":".join(path_entries),
             "--setenv",
             "HOME",
             scratch,
             "--setenv",
             "TMPDIR",
             scratch,
+            "--setenv",
+            "PYTHONNOUSERSITE",
+            "1",
         ]
     )
     argv.append("--")
-    argv.extend(command)
+    argv.extend(_resource_limited_command(command))
     return argv
 
 
@@ -720,12 +760,23 @@ def write_report_atomically(
     left untouched if any write attempt fails.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row.to_dict(), sort_keys=True))
-            handle.write("\n")
-    os.replace(tmp, path)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row.to_dict(), sort_keys=True))
+                handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def read_validation_report(path: Path) -> list[ValidationRow]:
@@ -876,18 +927,15 @@ def preflight_validation(
         pair.task_id: pair for pair in current_pairs
     }
     expected_ids = set(pairs_by_id)
-    unexpected_ids = sorted(seen_ids - expected_ids)
     missing_ids = sorted(expected_ids - seen_ids)
-    if unexpected_ids or missing_ids:
-        details: list[str] = []
-        if unexpected_ids:
-            details.append(f"unexpected task ids: {unexpected_ids}")
-        if missing_ids:
-            details.append(f"missing task ids: {missing_ids}")
-        raise ValueError(f"HumanEval-X report {report_path} has " + "; ".join(details))
+    if missing_ids:
+        raise ValueError(
+            f"HumanEval-X report {report_path} has missing task ids: {missing_ids}"
+        )
 
-    for row in rows:
-        pair = pairs_by_id[row.task_id]
+    rows_by_id = {row.task_id: row for row in rows}
+    for task_id, pair in pairs_by_id.items():
+        row = rows_by_id[task_id]
         python_program = assemble_python_program(
             pair.python.prompt,
             pair.python.canonical_solution,

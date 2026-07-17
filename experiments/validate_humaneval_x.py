@@ -67,9 +67,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=DEFAULT_N_SAMPLES,
         help=(
-            "Aligned (python, cpp) pairs to validate. The validator "
-            "raises if fewer than N shared task ids exist upstream. "
-            f"(default: {DEFAULT_N_SAMPLES})"
+            "Aligned (python, cpp) pairs to validate. Must be positive. "
+            "The validator raises if fewer than N shared task ids exist "
+            f"upstream. (default: {DEFAULT_N_SAMPLES})"
         ),
     )
     parser.add_argument(
@@ -102,8 +102,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
+    if args.n <= 0:
+        print("ERROR: --n must be positive", file=sys.stderr)
+        return 2
+
     if not args.skip_tool_check:
-        check_sandbox_tools_available()
+        try:
+            check_sandbox_tools_available()
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
 
     print("=" * 60)
     print("HumanEval-X canonical-solution validation")
