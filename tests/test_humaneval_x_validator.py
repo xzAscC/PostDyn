@@ -299,12 +299,16 @@ class TestBwrapArgv:
         command = ["/usr/bin/python3", "/tmp/scratch/sol.py"]
         argv = bwrap_argv(command, Path("/tmp/scratch"))
         dd = argv.index("--")
-        assert argv[dd + 1 :] == command
+        payload = argv[dd + 1 :]
+        assert payload[:3] == ["/bin/bash", "-c", payload[2]]
+        assert payload[-2:] == command
+        assert "ulimit -v" in payload[2]
+        assert "ulimit -t" in payload[2]
+        assert "ulimit -u" in payload[2]
 
     def test_scratch_dir_is_bind_mounted(self):
         scratch = "/tmp/abc"
         argv = bwrap_argv(["echo"], Path(scratch))
-        # Find the --bind <src> <dest> pair (not the ro-binds).
         for i, tok in enumerate(argv):
             if tok == "--bind" and i + 2 < len(argv):
                 assert argv[i + 1] == scratch
@@ -330,20 +334,24 @@ class TestBwrapArgv:
         scratch = "/tmp/abc"
         argv = bwrap_argv(["echo"], Path(scratch))
         assert "--clearenv" in argv
-        setenv_values = [
-            argv[i + 1 : i + 3] for i, token in enumerate(argv) if token == "--setenv"
-        ]
-        assert setenv_values == [
-            ["PATH", "/usr/bin:/bin"],
-            ["HOME", scratch],
-            ["TMPDIR", scratch],
-        ]
+        setenv_values = {
+            argv[i + 1]: argv[i + 2]
+            for i, token in enumerate(argv)
+            if token == "--setenv"
+        }
+        assert setenv_values["HOME"] == scratch
+        assert setenv_values["TMPDIR"] == scratch
+        assert setenv_values["PYTHONNOUSERSITE"] == "1"
+        assert "/usr/bin" in setenv_values["PATH"]
+        assert "/bin" in setenv_values["PATH"]
 
     def test_no_shell_true_no_shell_metacharacters(self):
         argv = bwrap_argv(["/usr/bin/python3", "-c", "print(1)"], Path("/tmp/x"))
         assert all(isinstance(a, str) for a in argv)
         assert "&&" not in " ".join(argv)
-        assert ";" not in " ".join(argv[argv.index("--") + 1 :])
+        payload = argv[argv.index("--") + 1 :]
+        assert payload[0] == "/bin/bash"
+        assert payload[-3:] == ["/usr/bin/python3", "-c", "print(1)"]
 
     def test_extra_include_directory_is_mounted_read_only(self, monkeypatch, tmp_path):
         monkeypatch.setenv("HUMANEVAL_X_CPP_INCLUDE_DIR", str(tmp_path))
@@ -743,12 +751,11 @@ class TestPreflight:
         with pytest.raises(ValueError, match="cpp hash mismatch"):
             preflight_validation(path, [_make_pair(1)], PreflightOptions(n_required=1))
 
-    def test_rejects_rows_not_present_in_current_pairs(self, tmp_path):
+    def test_allows_surplus_validated_rows_beyond_required_subset(self, tmp_path):
         path = tmp_path / "report.jsonl"
         rows = [_passing_row(1), _passing_row(2)]
         _write_report(path, rows)
-        with pytest.raises(ValueError, match=r"unexpected task ids: \[2\]"):
-            preflight_validation(path, [_make_pair(1)], PreflightOptions(n_required=2))
+        preflight_validation(path, [_make_pair(1)], PreflightOptions(n_required=1))
 
     def test_rejects_report_missing_a_current_pair(self, tmp_path):
         path = tmp_path / "report.jsonl"
@@ -792,7 +799,10 @@ class TestValidateFirstNPairs:
 
         # Make Python always fail.
         def always_fail_run_in_sandbox(command, scratch_dir, timeout):
-            if PYTHON_PATH in command:
+            if (
+                any(str(part).endswith(".py") for part in command)
+                or PYTHON_PATH in command
+            ):
                 return _completed(1, stderr="boom")
             return _completed(0)
 
