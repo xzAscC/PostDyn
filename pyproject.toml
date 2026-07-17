@@ -1,12 +1,12 @@
 [project]
-name = "rankanalysis"
+name = "postdyn"
 version = "0.1.0"
-description = "Effective Rank Analysis of Open-Source LLMs"
+description = "Post-training dynamics analysis for open-source LLMs"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "torch>=2.5.0",
-    "transformers>=4.45.0",
+    "transformers>=4.57.0",
     "numpy>=2.0.0",
     "matplotlib>=3.9.0",
     "seaborn>=0.13.0",
@@ -16,6 +16,7 @@ dependencies = [
     "scipy>=1.14.0",
     "datasets>=4.8.5",
     "jupyter>=1.1.1",
+    "math-verify[antlr4-13-2]==0.9.0",
 ]
 
 [dependency-groups]
