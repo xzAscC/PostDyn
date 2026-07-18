@@ -1,1 +1,1 @@
-# RankAnalysis - Effective Rank Analysis of Open-Source LLMs
+# PostDyn - Post-training dynamics analysis for open-source LLMs

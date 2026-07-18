@@ -14,8 +14,9 @@ wheels/
 model_cache/
 .cache/
 
-# Results (generated)
+# Generated results
 results/
+
 # IDE
 .idea/
 .vscode/
@@ -36,3 +37,6 @@ Thumbs.db
 
 # data files, will handle in hf
 data/
+
+# jupyter notebook
+notebook/
