@@ -696,19 +696,34 @@ def _manifest_covers(
 ) -> bool:
     if not manifest:
         return False
-    stored_layers = set(manifest.get("layers", []))
-    if not set(layers).issubset(stored_layers):
-        return False
     per_concept = manifest.get("concept_samples")
     if isinstance(per_concept, dict) and per_concept:
         for concept in concepts:
             if int(per_concept.get(concept, 0)) < n_samples:
                 return False
-        return True
-    stored_concepts = set(manifest.get("concepts", []))
-    if not set(concepts).issubset(stored_concepts):
-        return False
-    return int(manifest.get("n_samples", 0)) >= n_samples
+    else:
+        stored_concepts = set(manifest.get("concepts", []))
+        if not set(concepts).issubset(stored_concepts):
+            return False
+        if int(manifest.get("n_samples", 0)) < n_samples:
+            return False
+    per_layer_concepts = manifest.get("layer_concepts")
+    if isinstance(per_layer_concepts, dict) and per_layer_concepts:
+        layer_set = set(layers)
+        for layer in layers:
+            entries = (
+                per_layer_concepts.get(str(layer))
+                or per_layer_concepts.get(layer)
+                or []
+            )
+            if not set(concepts).issubset(set(entries)):
+                return False
+        _ = layer_set
+    else:
+        stored_layers = set(manifest.get("layers", []))
+        if not set(layers).issubset(stored_layers):
+            return False
+    return True
 
 
 def _merge_manifest(
@@ -721,11 +736,20 @@ def _merge_manifest(
     concept_samples = dict(prior.get("concept_samples") or {})
     for concept in concepts:
         concept_samples[concept] = max(int(concept_samples.get(concept, 0)), n_samples)
+    layer_concepts_raw = dict(prior.get("layer_concepts") or {})
+    layer_concepts: dict[str, list[str]] = {}
+    for key, value in layer_concepts_raw.items():
+        layer_concepts[str(key)] = list(value)
+    for layer in layers:
+        current = set(layer_concepts.get(str(layer), []))
+        current.update(concepts)
+        layer_concepts[str(layer)] = sorted(current)
     return {
         "concepts": sorted(set(prior.get("concepts", [])) | set(concepts)),
         "layers": sorted(set(prior.get("layers", [])) | set(layers)),
         "n_samples": max(int(prior.get("n_samples", 0)), n_samples),
         "concept_samples": concept_samples,
+        "layer_concepts": layer_concepts,
     }
 
 

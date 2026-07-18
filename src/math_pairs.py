@@ -145,23 +145,46 @@ def write_math_pairs_jsonl(path: str | Path, pairs: Iterable[MathPair]) -> None:
 
 def append_math_pair_jsonl(path: str | Path, pair: MathPair) -> None:
     destination = Path(path)
-    existing = read_math_pairs_jsonl(destination) if destination.exists() else []
-    existing.append(pair)
-    write_math_pairs_jsonl(destination, existing)
+    lock_path = destination.with_name(destination.name + ".lock")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with _file_lock(lock_path):
+        existing = read_math_pairs_jsonl(destination) if destination.exists() else []
+        existing.append(pair)
+        write_math_pairs_jsonl(destination, existing)
+
+
+def _file_lock(lock_path: Path):
+    import fcntl
+    import contextlib
+
+    @contextlib.contextmanager
+    def _cm():
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(lock_path, "w")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
+            lock_path.unlink(missing_ok=True)
+
+    return _cm()
 
 
 def read_math_pairs_jsonl(path: str | Path) -> list[MathPair]:
     source = Path(path)
     pairs: list[MathPair] = []
     lines = source.read_text(encoding="utf-8").splitlines()
-    for line_number, line in enumerate(lines, start=1):
+    last_index = len(lines)
+    while last_index > 0 and not lines[last_index - 1].strip():
+        last_index -= 1
+    for line_number, line in enumerate(lines[:last_index], start=1):
         if not line.strip():
             continue
         try:
             record = json.loads(line)
         except json.JSONDecodeError as exc:
-            if line_number == len(lines):
-                continue
             raise ValueError(f"Invalid JSON on line {line_number}") from exc
         try:
             pair = MathPair(
