@@ -1,8 +1,8 @@
-# Design Document: Effective Rank Analysis of Open-Source LLMs
+# Design Document: PostDyn (Post-training Dynamics)
 
 ## Project Overview
 
-This project analyzes the effective rank of weight matrices in open-source large language models (LLMs) to investigate whether a consistent effective rank ratio exists across different model scales, training stages, and post-training methods.
+PostDyn analyzes post-training dynamics in open-source LLMs — how representations and weight structure evolve under SFT, RL, and related methods. One line of work studies effective rank of weight matrices across model scales, training stages, and post-training methods. Another traces DiM concept directions along Olmo-3 post-training trajectories.
 
 ## Research Questions
 
@@ -11,23 +11,32 @@ This project analyzes the effective rank of weight matrices in open-source large
 3. **Training stages**: How does effective rank change across pretraining stages (initial pretraining → mid-training → long context extension)?
 4. **Post-training methods**: How do different post-training methods (SFT, DPO, RLVR, RL-Zero) affect the effective rank of weight matrices?
 5. **Fixed ratio hypothesis**: Is there a theoretical "ratio space" that effective rank consistently occupies?
+6. **Concept dynamics**: How do paired concept directions (code, math style, language, gender) stabilize or entangle across post-training checkpoints?
 
 ## Architecture
 
 ```
-RankAnalysis/
-├── main.py                      # CLI entry point
+PostDyn/
+├── main.py                      # Effective-rank CLI entry point
 ├── src/
 │   ├── effective_rank.py        # Core SVD entropy computation (weight-level)
 │   ├── config.py                # Model configs, checkpoints, patterns
 │   ├── model_loader.py          # HuggingFace model loading + weight extraction
 │   ├── analysis.py              # Five weight-level analysis pipelines
 │   ├── activation_analysis.py   # Activation-level RankMe analysis
+│   ├── concept_dynamics.py      # DiM extraction + stability / Gram analysis
+│   ├── contrastive_datasets.py  # Four paired contrastive loaders
+│   ├── humaneval_x_validator.py # Sandboxed HumanEval-X preflight
+│   ├── math_pairs.py            # MATH-500 concise/verbose pair builder
+│   ├── gender_surface_analysis.py
 │   └── visualization.py         # Matplotlib/Seaborn plots
+├── experiments/
+│   ├── run_concept_dynamics.py  # Concept-dynamics runner
+│   ├── validate_humaneval_x.py
+│   ├── prepare_math_pairs.py
+│   └── run_flores_pipeline.py
 ├── tests/
-│   ├── test_effective_rank.py       # Unit tests for weight-level computation
-│   └── test_activation_analysis.py  # Unit tests for activation RankMe
-├── results/                     # JSON results + figures
+├── results/                     # JSON results + figures (gitignored)
 └── docs/                        # Design + methodology documentation
 ```
 
@@ -89,21 +98,21 @@ Plots saved as PNG + PDF in `results/figures/`.
 ## Running
 
 ```bash
-# Install dependencies
-uv sync
+# Install dependencies (include notebook tooling via dev group)
+uv sync --group dev
 
-# Run all analyses (quick mode - fewer checkpoints)
+# Effective-rank pipelines
 uv run python main.py --analysis all --quick
-
-# Run specific analysis
 uv run python main.py --analysis cross-model-size
 uv run python main.py --analysis training-dynamics --model pythia-70m
-
-# Validate configs without downloading
 uv run python main.py --dry-run
-
-# Regenerate plots from saved results
 uv run python main.py --plot-only
+
+# Concept dynamics (paired concepts; see docs/concept_dynamics_experiment.md)
+uv run python experiments/validate_humaneval_x.py
+uv run python experiments/prepare_math_pairs.py
+experiments/run_concept_dynamics.sh quick
+experiments/run_concept_dynamics.sh full
 
 # Run tests
 uv run pytest

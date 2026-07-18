@@ -8,6 +8,11 @@ References the experimental setup described in TrainingDynamic.tex
   - Focus on Think, ignore Instruct
 """
 
+import importlib.util
+import os
+import subprocess
+import sys
+
 import pytest
 
 from src.config import (
@@ -21,6 +26,7 @@ from src.config import (
     EXPERIMENT_LAYER_PERCENTAGES,
     EXPERIMENT_LAYERS_7B,
     compute_experiment_layers,
+    MODEL_CHECKPOINTS,
     OLMO3_VARIANTS,
 )
 
@@ -140,3 +146,155 @@ class TestLayerSelection:
 
     def test_precomputed_7b_matches_function(self):
         assert EXPERIMENT_LAYERS_7B == compute_experiment_layers(32)
+
+
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_TESTS_DIR)
+_RUNNER_PATH = os.path.join(_PROJECT_ROOT, "experiments", "run_concept_dynamics.py")
+_FOUR_NAMED_CONCEPTS = [
+    "python_vs_cpp",
+    "concise_math_reasoning_vs_verbose_math_reasoning",
+    "french_vs_english_language",
+    "female_vs_male_gender",
+]
+_FOUR_DIRECTION_LABELS = [
+    "Python - C++",
+    "Concise - Verbose",
+    "French - English",
+    "Female - Male",
+]
+
+
+def _load_runner():
+    import sys
+
+    prior = list(sys.path)
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_concept_dynamics_runner", _RUNNER_PATH
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError("could not load concept dynamics runner")
+        loader = spec.loader
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        return module
+    finally:
+        sys.path[:] = prior
+
+
+@pytest.fixture(scope="module")
+def runner():
+    return _load_runner()
+
+
+class TestConceptDynamicsCheckpointWiring:
+    _SPLIT = [
+        ("olmo3-think-sft", 10),
+        ("olmo3-instruct-sft", 1),
+        ("olmo3-rl-zero-math", 10),
+        ("olmo3-rl-zero-code", 10),
+        ("olmo3-rl-zero-if", 10),
+        ("olmo3-rl-zero-general", 8),
+        ("olmo3-rl-zero-mix", 10),
+    ]
+
+    def test_total_selected_checkpoints_is_59(self):
+        total = sum(len(MODEL_CHECKPOINTS[m]) for m, _ in self._SPLIT)
+        assert total == 59
+
+    def test_checkpoint_split_in_runner_model_order(self, runner):
+        split = [len(MODEL_CHECKPOINTS[m]) for m in runner.DEFAULT_MODELS]
+        assert split == [10, 1, 10, 10, 10, 8, 10]
+
+    def test_runner_family_is_seven_models_covering_all_checkpoints(self, runner):
+        assert len(runner.DEFAULT_MODELS) == 7
+        assert set(runner.DEFAULT_MODELS) == {m for m, _ in self._SPLIT}
+        assert set(MODEL_CHECKPOINTS) == {m for m, _ in self._SPLIT}
+
+
+class TestConceptDynamicsLayerWiring:
+    _LAYERS = [3, 6, 9, 12, 16, 19, 22, 25, 28, 31]
+
+    def test_exactly_ten_layers(self):
+        assert len(self._LAYERS) == 10
+
+    def test_runner_default_layers_are_the_ten_exact(self):
+        assert list(EXPERIMENT_LAYERS_7B) == self._LAYERS
+
+
+class TestConceptDynamicsConceptWiring:
+    def test_default_concepts_are_the_four_named_directions(self, runner):
+        assert runner.DEFAULT_CONCEPTS == _FOUR_NAMED_CONCEPTS
+
+    def test_exactly_four_concepts(self, runner):
+        assert len(runner.DEFAULT_CONCEPTS) == 4
+
+
+class TestConceptDynamicsOutputWiring:
+    def test_default_output_is_distinct_from_results_concept_dynamics(
+        self, runner, monkeypatch
+    ):
+        monkeypatch.setattr("sys.argv", ["run_concept_dynamics.py"])
+        args = runner.parse_args()
+        assert args.output != "results/concept_dynamics"
+
+    def test_shell_wrapper_uses_the_fresh_output_directory(self):
+        wrapper_path = os.path.join(
+            _PROJECT_ROOT, "experiments", "run_concept_dynamics.sh"
+        )
+        with open(wrapper_path, encoding="utf-8") as handle:
+            wrapper = handle.read()
+        assert "results/concept_dynamics_paired" in wrapper
+        assert 'OUTPUT_DIR="${OUTPUT_DIR:-results/concept_dynamics}"' not in wrapper
+
+    def test_quick_and_full_modes_have_distinct_default_outputs(self, runner):
+        assert runner.resolve_output_directory(quick=False, output=None) == (
+            "results/concept_dynamics_paired"
+        )
+        assert runner.resolve_output_directory(quick=True, output=None) == (
+            "results/concept_dynamics_paired_quick"
+        )
+
+    def test_explicit_output_overrides_both_mode_defaults(self, runner):
+        for quick in (False, True):
+            assert (
+                runner.resolve_output_directory(quick=quick, output="results/custom")
+                == "results/custom"
+            )
+
+    def test_shell_wrapper_declares_separate_quick_default(self):
+        wrapper_path = os.path.join(
+            _PROJECT_ROOT, "experiments", "run_concept_dynamics.sh"
+        )
+        with open(wrapper_path, encoding="utf-8") as handle:
+            wrapper = handle.read()
+        assert "results/concept_dynamics_paired_quick" in wrapper
+
+
+class TestConceptDynamicsCliHelp:
+    def test_help_exits_zero_and_exposes_four_directions(self):
+        result = subprocess.run(
+            [sys.executable, _RUNNER_PATH, "--help"],
+            cwd=_PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        for name in _FOUR_NAMED_CONCEPTS:
+            assert name in result.stdout
+        for label in _FOUR_DIRECTION_LABELS:
+            assert label in result.stdout
+
+    def test_shell_help_does_not_claim_results_were_saved(self):
+        wrapper_path = os.path.join(
+            _PROJECT_ROOT, "experiments", "run_concept_dynamics.sh"
+        )
+        result = subprocess.run(
+            [wrapper_path, "--help"],
+            cwd=_PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        assert "Results saved" not in result.stdout
