@@ -167,7 +167,6 @@ def _file_lock(lock_path: Path):
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
             handle.close()
-            lock_path.unlink(missing_ok=True)
 
     return _cm()
 
