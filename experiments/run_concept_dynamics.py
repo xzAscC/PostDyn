@@ -8,13 +8,14 @@ Usage:
     uv run python experiments/run_concept_dynamics.py [OPTIONS]
 
 Options:
-    --quick          Smoke test: 1 model, 2 concepts, 2 layers, 5 samples
-    --models M1,M2   Comma-separated model names (default: all 7)
-    --concepts C1,C2 Comma-separated paired concept directions
-    --layers L1,L2   Comma-separated layer indices (default: 10 uniform)
-    --n-samples N    Samples per concept per class (default: 50)
-    --output DIR     Output directory (mode-specific default)
-    --max-seq-len N  Max tokenization length (default: 2048)
+    --quick             Smoke test: 1 model, 2 concepts, 2 layers, 5 samples
+    --models M1,M2      Comma-separated model names (default: 6 trajectories)
+    --concepts C1,C2    Comma-separated paired concept directions
+    --layers L1,L2      Comma-separated layer indices (default: 10 uniform)
+    --n-samples N       Samples per concept per class (default: 50)
+    --output DIR        Output directory (mode-specific default)
+    --max-seq-len N     Max tokenization length (default: 2048)
+    --[no-]chat-template  Wrap inputs with tokenizer.apply_chat_template (default: on)
 """
 
 from __future__ import annotations
@@ -28,12 +29,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.config import OLMO3_VARIANTS, EXPERIMENT_LAYERS_7B
 from src.concept_dynamics import run_full_experiment
-from src.contrastive_datasets import PAIRED_CONCEPTS
+from src.contrastive_datasets import (
+    PAIRED_CONCEPTS,
+    _resolve_concept,
+    all_concept_keys,
+    list_concepts,
+)
 
 
 DEFAULT_MODELS = [
     "olmo3-think-sft",
-    "olmo3-instruct-sft",
     "olmo3-rl-zero-math",
     "olmo3-rl-zero-code",
     "olmo3-rl-zero-if",
@@ -41,22 +46,10 @@ DEFAULT_MODELS = [
     "olmo3-rl-zero-mix",
 ]
 
-DEFAULT_CONCEPTS = [
-    "python_vs_cpp",
-    "concise_math_reasoning_vs_verbose_math_reasoning",
-    "french_vs_english_language",
-    "female_vs_male_gender",
-]
+DEFAULT_CONCEPTS = all_concept_keys()
 
-CONCEPT_DIRECTIONS = [
-    "Python - C++",
-    "Concise - Verbose",
-    "French - English",
-    "Female - Male",
-]
-
-DEFAULT_OUTPUT = "results/concept_dynamics_paired"
-DEFAULT_QUICK_OUTPUT = "results/concept_dynamics_paired_quick"
+DEFAULT_OUTPUT = "results/concept_dynamics_multi"
+DEFAULT_QUICK_OUTPUT = "results/concept_dynamics_multi_quick"
 
 DEFAULT_HUMANEVAL_REPORT = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -64,7 +57,17 @@ DEFAULT_HUMANEVAL_REPORT = os.path.join(
     "artifacts",
     "humaneval-x-validation.jsonl",
 )
-HUMANEVAL_X_CONCEPT_KEY = "python_vs_cpp"
+HUMANEVAL_X_CONCEPT_KEY = "code_python_vs_cpp"
+HUMANEVAL_X_LEGACY_KEYS = {"code_python_vs_cpp", "python_vs_cpp"}
+_HUMANEVAL_X_DATASETS_FALLBACK = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "datasets",
+    "humaneval_x.json",
+)
+
+
+def _is_code_concept(concept: str) -> bool:
+    return concept in HUMANEVAL_X_LEGACY_KEYS or concept.startswith("code_")
 
 
 def run_humaneval_preflight(
@@ -134,11 +137,9 @@ def parse_args(argv: list[str] | None = None):
         type=str,
         default=None,
         help=(
-            "Comma-separated concepts. Defaults and directions:\n"
-            + "\n".join(
-                f"  {concept}: {direction}"
-                for concept, direction in zip(DEFAULT_CONCEPTS, CONCEPT_DIRECTIONS)
-            )
+            "Comma-separated concepts (default: all "
+            f"{len(DEFAULT_CONCEPTS)} canonical keys from "
+            "src.contrastive_datasets.all_concept_keys)"
         ),
     )
     parser.add_argument(
@@ -184,21 +185,101 @@ def parse_args(argv: list[str] | None = None):
         action="store_true",
         help="Do not delete Hugging Face cache entries after each model finishes.",
     )
+    parser.add_argument(
+        "--chat-template",
+        dest="chat_template",
+        action="store_true",
+        default=True,
+        help=(
+            "Wrap each input with tokenizer.apply_chat_template before the "
+            "forward pass (default)."
+        ),
+    )
+    parser.add_argument(
+        "--no-chat-template",
+        dest="chat_template",
+        action="store_false",
+        help=(
+            "Disable chat-template wrapping and feed the raw paired text "
+            "directly to the model."
+        ),
+    )
     return parser.parse_args(argv)
+
+
+def _preflight_concepts_needing_strict_check(concepts: list[str]) -> list[str]:
+    return [c for c in concepts if c in HUMANEVAL_X_LEGACY_KEYS]
+
+
+def _preflight_concepts_needing_warning(concepts: list[str]) -> list[str]:
+    strict = set(_preflight_concepts_needing_strict_check(concepts))
+    return [c for c in concepts if _is_code_concept(c) and c not in strict]
+
+
+def _run_strict_humaneval_preflight(
+    report_path: str,
+    n_samples: int,
+) -> None:
+    print(
+        f"Preflight: HumanEval-X validation report at "
+        f"{report_path} (n_required={n_samples})"
+    )
+    try:
+        run_humaneval_preflight(report_path, n_samples)
+    except (ValueError, FileNotFoundError) as exc:
+        print(
+            f"ERROR: HumanEval-X preflight failed: {exc}\n"
+            "Run `uv run python experiments/validate_humaneval_x.py` "
+            "first.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    print("Preflight OK: HumanEval-X report validated.")
+    print()
+
+
+def _run_relaxed_code_warning(
+    concepts: list[str],
+    report_path: str,
+    datasets_fallback: str,
+) -> None:
+    if not concepts:
+        return
+    if os.path.exists(datasets_fallback):
+        print(
+            f"Preflight (relaxed): {concepts} will load from "
+            f"{datasets_fallback}; strict HumanEval-X sandbox preflight "
+            f"skipped (multi-language report at {report_path} only covers "
+            "python/cpp)."
+        )
+        return
+    print(
+        f"WARNING: HumanEval-X preflight report at {report_path} only "
+        f"validates python/cpp. Concepts {concepts} are code-related but "
+        "no multi-language preflight is available yet. Proceeding without "
+        "strict validation; place a snapshot at "
+        f"{datasets_fallback} to silence this warning.",
+        file=sys.stderr,
+    )
 
 
 def main(argv: list[str] | None = None):
     args = parse_args(argv)
     output_dir = resolve_output_directory(quick=args.quick, output=args.output)
 
+    max_checkpoints_per_model = None
     if args.quick:
         models = ["olmo3-think-sft"]
-        concepts = DEFAULT_CONCEPTS[:2]
-        layers = [3, 16]
+        concepts = [
+            "code_python_vs_cpp",
+            "math_cot_vs_direct",
+        ]
+        layers = [3, 14]
         n_samples = 5
         max_seq_len = 512
+        max_checkpoints_per_model = 1
         print("=" * 60)
-        print("QUICK MODE (smoke test)")
+        print("QUICK MODE (smoke test: 1 model x 1 ckpt x 2 concepts)")
         print("=" * 60)
     else:
         models = _split_csv(args.models) if args.models else list(DEFAULT_MODELS)
@@ -222,20 +303,29 @@ def main(argv: list[str] | None = None):
     if n_samples <= 0:
         print("ERROR: --n-samples must be positive", file=sys.stderr)
         sys.exit(2)
-    if "female_vs_male_gender" in concepts and n_samples % 2 != 0:
+    resolved_concepts: list[str] = []
+    for c in concepts:
+        try:
+            resolved_concepts.append(_resolve_concept(c))
+        except ValueError:
+            resolved_concepts.append(c)
+    if any(rc == "gender_she_vs_he" for rc in resolved_concepts) and n_samples % 2 != 0:
         print(
-            "ERROR: --n-samples must be even when female_vs_male_gender is selected",
+            "ERROR: --n-samples must be even when gender_she_vs_he "
+            "(a.k.a. female_vs_male_gender) is selected",
             file=sys.stderr,
         )
         sys.exit(2)
     if any(layer < 0 or layer > 31 for layer in layers):
         print("ERROR: --layers must be integers in [0, 31]", file=sys.stderr)
         sys.exit(2)
-    unknown_concepts = [c for c in concepts if c not in PAIRED_CONCEPTS]
+    unknown_concepts = [c for c in concepts if c not in list_concepts()]
     if unknown_concepts:
         print(
             f"ERROR: Unknown concepts: {unknown_concepts}. "
-            f"Supported: {sorted(PAIRED_CONCEPTS)}",
+            f"Supported canonical concepts ({len(PAIRED_CONCEPTS)}): "
+            f"{sorted(PAIRED_CONCEPTS)}\n"
+            f"  aliases also accepted: see src.contrastive_datasets.list_concepts()",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -250,23 +340,15 @@ def main(argv: list[str] | None = None):
         print("ERROR: No valid models selected")
         sys.exit(1)
 
-    if HUMANEVAL_X_CONCEPT_KEY in concepts:
-        print(
-            f"Preflight: HumanEval-X validation report at "
-            f"{args.humaneval_report_path} (n_required={n_samples})"
+    strict_code = _preflight_concepts_needing_strict_check(concepts)
+    if strict_code:
+        _run_strict_humaneval_preflight(args.humaneval_report_path, n_samples)
+
+    relaxed_code = _preflight_concepts_needing_warning(concepts)
+    if relaxed_code:
+        _run_relaxed_code_warning(
+            relaxed_code, args.humaneval_report_path, _HUMANEVAL_X_DATASETS_FALLBACK
         )
-        try:
-            run_humaneval_preflight(args.humaneval_report_path, n_samples)
-        except (ValueError, FileNotFoundError) as exc:
-            print(
-                f"ERROR: HumanEval-X preflight failed: {exc}\n"
-                "Run `uv run python experiments/validate_humaneval_x.py` "
-                "first.",
-                file=sys.stderr,
-            )
-            sys.exit(2)
-        print("Preflight OK: HumanEval-X report validated.")
-        print()
 
     print(f"\nConcept Dynamics Experiment")
     print(f"  Models ({len(valid_models)}):    {valid_models}")
@@ -274,6 +356,7 @@ def main(argv: list[str] | None = None):
     print(f"  Layers ({len(layers)}):     {layers}")
     print(f"  Samples/concept:  {n_samples}")
     print(f"  Max seq len:      {max_seq_len}")
+    print(f"  Chat template:    {'on' if args.chat_template else 'off'}")
     print(f"  Output:           {output_dir}")
     print()
 
@@ -285,6 +368,8 @@ def main(argv: list[str] | None = None):
         output_dir=output_dir,
         max_seq_len=max_seq_len,
         clean_hf_cache=not args.keep_hf_cache,
+        use_chat_template=args.chat_template,
+        max_checkpoints_per_model=max_checkpoints_per_model,
     )
 
     selected_prefixes = tuple(f"{m}/" for m in valid_models)

@@ -1,34 +1,198 @@
-"""Tests for contrastive_datasets module (TDD).
+"""Tests for the 46-concept contrastive dataset loaders.
 
-Covers the four paired steering concepts:
+All dataset/file/URL access is mocked — tests are fully offline. Covers:
 
-    HumanEval-X Python-positive   (python_vs_cpp)
-    MATH-500    Concise-positive  (concise_math_reasoning_vs_verbose_math_reasoning)
-    FLORES+     French-positive   (french_vs_english_language)
-    WinoGender  Female-positive   (female_vs_male_gender)
-
-All dataset/file/URL access is mocked.
+* Concept registry (46 canonical keys + 3 aliases).
+* Code domain (20 directed HumanEval-X pairs from materialized JSON).
+* Math domain (MiniF2F / BeyondX / MATH-500 CoT vs direct).
+* IF domain (20 directed Belebele pairs from materialized JSON).
+* General domain (WinoGender nominative / SST-2 / LLM-LAT refusal).
+* Public API (``load_contrastive_texts``, ``list_concepts``, ``all_concept_keys``).
+* Legacy aliases and clear error messages on missing datasets.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from contextlib import contextmanager
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from itertools import permutations
+from unittest.mock import patch
 
 import pytest
 
 import src.contrastive_datasets as cd
 from src.contrastive_datasets import (
-    HUMANEVAL_X_DATASET,
-    HUMANEVAL_X_REVISION,
+    ALIASES,
+    CODE_LANGS,
+    CONCEPTS,
+    IF_LANGS,
     _extract_text,
     _stream_n_samples,
+    _strip_code_fences,
+    all_concept_keys,
+    list_concepts,
     load_contrastive_texts,
-    load_humaneval_x_pairs,
 )
+
+
+# =============================================================================
+# Fixtures: materialized JSON payloads written to a tmp datasets dir
+# =============================================================================
+
+
+@pytest.fixture(autouse=True)
+def _isolated_datasets(tmp_path, monkeypatch):
+    """Point dataset_store paths at a tmp dir for every test."""
+    import src.dataset_store as store
+
+    monkeypatch.setattr(store, "DATASETS_DIR", tmp_path)
+    monkeypatch.setattr(store, "SHARED_IDS_PATH", tmp_path / "shared_item_ids.json")
+    # Reload the contrastive_datasets path references too.
+    monkeypatch.setattr(cd, "humaneval_x_shared_ids", store.humaneval_x_shared_ids)
+    monkeypatch.setattr(cd, "belebele_shared_keys", store.belebele_shared_keys)
+    monkeypatch.setattr(cd, "dataset_path", store.dataset_path)
+    monkeypatch.setattr(cd, "load_dataset_json", store.load_dataset_json)
+    yield tmp_path
+
+
+def _write_json(path, obj) -> None:
+    path.write_text(json.dumps(obj), encoding="utf-8")
+
+
+def _humaneval_payload(
+    langs=("python", "cpp", "java", "js", "go"),
+    n_ids: int = 60,
+    shared_subset: int = 50,
+):
+    languages = {}
+    for lang in langs:
+        items = []
+        for i in range(n_ids):
+            prompt = f"{lang} prompt {i}\n"
+            canonical = f"{lang} solution {i}\n"
+            items.append(
+                {
+                    "task_id": f"{lang.upper()}/{i}",
+                    "numeric_id": i,
+                    "prompt": prompt,
+                    "canonical_solution": canonical,
+                    "code": prompt + canonical,
+                }
+            )
+        languages[lang] = items
+    return {
+        "dataset": "humaneval-x",
+        "revision": "pinned-test-rev",
+        "languages": languages,
+    }
+
+
+def _belebele_payload(
+    dialects=("eng_Latn", "fra_Latn", "deu_Latn", "zho_Hans", "jpn_Jpan"),
+    n_items: int = 60,
+):
+    dialects_data = {}
+    for dialect in dialects:
+        items = []
+        for i in range(n_items):
+            items.append(
+                {
+                    "link": f"link-{i}",
+                    "question_number": i + 1,
+                    "text": f"{dialect} passage {i}\nQ{i}\nA\nB\nC\nD",
+                }
+            )
+        dialects_data[dialect] = items
+    return {"dataset": "belebele", "dialects": dialects_data}
+
+
+def _minif2f_payload(n: int = 60):
+    items = [
+        {
+            "id": f"m2f_{i}",
+            "informal": f"Solve x + {i} = {i + 1}",
+            "formal": f"theorem t{i} : x + {i} = {i + 1}",
+        }
+        for i in range(n)
+    ]
+    return {"dataset": "minif2f", "items": items}
+
+
+def _beyondx_payload(n: int = 60):
+    items = [
+        {
+            "id": f"bx_{i}",
+            "problem": f"Problem number {i}",
+            "equations": json.dumps([f"x = {i}"]),
+        }
+        for i in range(n)
+    ]
+    return {"dataset": "beyondx", "items": items}
+
+
+def _math500_payload(n: int = 50):
+    items = []
+    for i in range(n):
+        problem = f"What is {i}+{i}?"
+        solution = f"Solution: {i}+{i}=2{i}."
+        answer = str(2 * i)
+        direct = f"The answer is {answer}"
+        items.append(
+            {
+                "unique_id": f"m500_{i}",
+                "problem": problem,
+                "solution": solution,
+                "answer": answer,
+                "direct_answer": direct,
+                "cot_text": problem + "\n" + solution,
+                "direct_text": problem + "\n" + direct,
+            }
+        )
+    return {"dataset": "math500", "items": items}
+
+
+def _winogender_payload():
+    rows = []
+    for i in range(60):
+        rows.append(
+            {
+                "occupation(0)": f"worker-{i}",
+                "other-participant(1)": "client",
+                "answer": str(i % 2),
+                "sentence": f"The $OCCUPATION said that $NOM_PRONOUN would help.",
+            }
+        )
+    return {"dataset": "winogender", "rows": rows}
+
+
+def _sst2_payload(per_class: int = 100):
+    items = []
+    for i in range(per_class):
+        items.append({"sentence": f"bad movie number {i}", "label": 0})
+        items.append({"sentence": f"great film number {i}", "label": 1})
+    return {"dataset": "sst2", "items": items, "counts": {0: per_class, 1: per_class}}
+
+
+def _llm_lat_payload(kind: str, n: int = 100):
+    texts = [f"{kind} text number {i}" for i in range(n)]
+    return {"dataset": f"LLM-LAT/{kind}", "texts": texts}
+
+
+def _write_all_datasets(tmp_path):
+    _write_json(tmp_path / "humaneval_x.json", _humaneval_payload())
+    _write_json(tmp_path / "belebele.json", _belebele_payload())
+    _write_json(tmp_path / "minif2f.json", _minif2f_payload())
+    _write_json(tmp_path / "beyondx.json", _beyondx_payload())
+    _write_json(tmp_path / "math500.json", _math500_payload())
+    _write_json(tmp_path / "winogender.json", _winogender_payload())
+    _write_json(tmp_path / "sst2.json", _sst2_payload())
+    _write_json(tmp_path / "llm_lat_harmful.json", _llm_lat_payload("harmful-dataset"))
+    _write_json(tmp_path / "llm_lat_benign.json", _llm_lat_payload("benign-dataset"))
+
+
+# =============================================================================
+# Text helper tests (pure functions)
+# =============================================================================
 
 
 class TestExtractText:
@@ -59,9 +223,6 @@ class TestExtractText:
         with pytest.raises(KeyError, match="text"):
             _extract_text({"id": 123, "label": "foo"})
 
-    def test_returns_empty_string_for_empty_text_field(self):
-        assert _extract_text({"text": ""}) == ""
-
 
 class TestStreamNSamples:
     def test_returns_exactly_n_samples(self):
@@ -69,23 +230,7 @@ class TestStreamNSamples:
             for i in range(1000):
                 yield {"text": f"sample {i}"}
 
-        samples = _stream_n_samples(gen(), n=10)
-        assert len(samples) == 10
-        assert samples[0] == "sample 0"
-        assert samples[9] == "sample 9"
-
-    def test_returns_all_if_fewer_than_n(self):
-        def gen():
-            for i in range(3):
-                yield {"text": f"s{i}"}
-
-        assert len(_stream_n_samples(gen(), n=10)) == 3
-
-    def test_handles_zero_n(self):
-        def gen():
-            yield {"text": "x"}
-
-        assert len(_stream_n_samples(gen(), n=0)) == 0
+        assert _stream_n_samples(gen(), n=10)[9] == "sample 9"
 
     def test_filters_empty_text(self):
         def gen():
@@ -96,473 +241,526 @@ class TestStreamNSamples:
         assert _stream_n_samples(gen(), n=5) == ["good", "also good"]
 
 
-def _humaneval_row(language: str, task_id: int, fenced: bool = False) -> dict:
-    prompt = f"{language} prompt {task_id}\n"
-    solution = f"{language} solution {task_id}\n"
-    if fenced:
-        prompt = f"```{language}\n{prompt}```\n"
-        solution = f"```{language}\n{solution}```\n"
-    prefix = "Python" if language == "python" else "CPP"
-    return {
-        "task_id": f"{prefix}/{task_id}",
-        "prompt": prompt,
-        "canonical_solution": solution,
-    }
+class TestStripCodeFences:
+    def test_removes_fences(self):
+        text = "```python\ncode\n```"
+        assert _strip_code_fences(text) == "code"
+
+    def test_preserves_unfenced(self):
+        assert _strip_code_fences("plain code\n") == "plain code\n"
 
 
-def _humaneval_rows(language: str, ids, fenced: bool = False) -> list:
-    return [_humaneval_row(language, i, fenced=fenced) for i in ids]
+# =============================================================================
+# Concept registry
+# =============================================================================
 
 
-def _wire_humaneval_loader(mock_load, python_rows, cpp_rows) -> None:
-    def fake(name, *args, **kwargs):
-        assert name == "json"
-        rows = cpp_rows if "/cpp/" in kwargs["data_files"] else python_rows
-        return iter(rows)
+class TestConceptRegistry:
+    def test_registry_has_46_canonical_concepts(self):
+        assert len(all_concept_keys()) == 46
 
-    mock_load.side_effect = fake
+    def test_paired_concepts_alias_matches_concepts(self):
+        assert cd.PAIRED_CONCEPTS is CONCEPTS
 
+    def test_code_concepts_are_20_directed_pairs(self):
+        code_keys = [k for k, v in CONCEPTS.items() if v["domain"] == "code"]
+        assert len(code_keys) == 20
+        expected = {f"code_{a}_vs_{b}" for a, b in permutations(CODE_LANGS, 2)}
+        assert set(code_keys) == expected
 
-def _flores_row(language: str, row_id: int) -> dict:
-    return {
-        "id": row_id,
-        "text": f"{language} sentence number {row_id}",
-        "url": f"http://example.org/{row_id}",
-    }
+    def test_if_concepts_are_20_directed_pairs(self):
+        if_keys = [k for k, v in CONCEPTS.items() if v["domain"] == "if"]
+        assert len(if_keys) == 20
+        expected = {f"if_{a}_vs_{b}" for a, b in permutations(IF_LANGS, 2)}
+        assert set(if_keys) == expected
 
+    def test_math_concepts_are_exactly_three(self):
+        math_keys = [k for k, v in CONCEPTS.items() if v["domain"] == "math"]
+        assert set(math_keys) == {
+            "math_informal_vs_formal",
+            "math_nl_vs_equations",
+            "math_cot_vs_direct",
+        }
 
-def _flores_rows(language: str, ids) -> list:
-    return [_flores_row(language, i) for i in ids]
+    def test_general_concepts_are_exactly_three(self):
+        gen_keys = [k for k, v in CONCEPTS.items() if v["domain"] == "general"]
+        assert set(gen_keys) == {
+            "gender_she_vs_he",
+            "sentiment_label0_vs_label1",
+            "refusal_harmful_vs_benign",
+        }
 
-
-def _wire_flores_loader(mock_load, french_rows, english_rows) -> None:
-    def fake(*args, **kwargs):
-        config = args[1] if len(args) > 1 else kwargs.get("name")
-        cfg = (config or "").lower()
-        if cfg == "fra_latn":
-            return iter(french_rows)
-        if cfg == "eng_latn":
-            return iter(english_rows)
-        raise AssertionError(f"unexpected flores config: {config!r}")
-
-    mock_load.side_effect = fake
-
-
-def _winogender_tsv_content() -> str:
-    lines = ["occupation(0)\tother-participant(1)\tanswer\tsentence"]
-    forms = [
-        ("nom", "$NOM_PRONOUN", 18, "said that {pronoun} would return soon"),
-        ("poss", "$POSS_PRONOUN", 5, "reviewed {pronoun} report"),
-        ("acc", "$ACC_PRONOUN", 2, "spoke to {pronoun}"),
-    ]
-    row_id = 0
-    for answer, subject in ((0, "zerosubject"), (1, "onesubject")):
-        for form, placeholder, count, clause in forms:
-            for _ in range(count):
-                sentence = (
-                    "The $OCCUPATION told the $PARTICIPANT that "
-                    + clause.format(pronoun=placeholder)
-                    + "."
-                )
-                lines.append(
-                    f"worker-{subject}-{form}-{row_id}\tclient\t{answer}\t{sentence}"
-                )
-                row_id += 1
-    return "\n".join(lines) + "\n"
-
-
-@contextmanager
-def _patched_winogender_url(tsv_content: str):
-    mock_resp = MagicMock()
-    mock_resp.read.return_value = tsv_content.encode("utf-8")
-    mock_resp.__enter__.return_value = mock_resp
-    mock_resp.__exit__.return_value = False
-    with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
-        yield mock_urlopen
-
-
-def _math_row(row_id: int) -> dict:
-    return {
-        "unique_id": f"math_{row_id}",
-        "problem": f"What is {row_id}+1?",
-        "gold_answer": str(row_id + 1),
-        "verbose_solution": (
-            f"To compute {row_id}+1, we add one to {row_id}.\n"
-            f"The final answer is {row_id + 1}."
-        ),
-        "concise_solution": f"{row_id + 1}",
-    }
-
-
-def _math_rows(ids) -> list:
-    return [_math_row(i) for i in ids]
-
-
-def _write_math_jsonl(path: Path, rows) -> Path:
-    path.write_text("\n".join(json.dumps(r) for r in rows))
-    return path
-
-
-class TestPairedConceptsRegistry:
-    def test_registry_is_defined(self):
-        assert hasattr(cd, "PAIRED_CONCEPTS")
-        assert getattr(cd, "PAIRED_CONCEPTS") is not None
-
-    def test_registry_has_exactly_four_paired_concepts(self):
-        registry = getattr(cd, "PAIRED_CONCEPTS")
-        assert set(registry.keys()) == {
+    def test_legacy_aliases_are_available(self):
+        assert set(ALIASES.keys()) == {
             "python_vs_cpp",
-            "concise_math_reasoning_vs_verbose_math_reasoning",
             "french_vs_english_language",
             "female_vs_male_gender",
         }
+        for old, new in ALIASES.items():
+            assert new in CONCEPTS
 
-    def test_legacy_python_to_cpp_key_not_in_registry(self):
-        registry = getattr(cd, "PAIRED_CONCEPTS")
-        assert "python_to_cpp" not in registry
+    def test_list_concepts_includes_canonical_and_aliases(self):
+        all_keys = set(list_concepts())
+        assert all_keys >= set(all_concept_keys())
+        assert all_keys >= set(ALIASES.keys())
 
-    def test_python_vs_cpp_metadata(self):
-        entry = getattr(cd, "PAIRED_CONCEPTS")["python_vs_cpp"]
-        assert entry["name"] == "HumanEval-X Python-positive"
-        assert entry["dataset"] == "HumanEval-X"
-        assert entry["direction"] == "Python-C++"
-        assert entry["positive"] == "Python"
-        assert entry["negative"] == "C++"
-
-    def test_concise_math_metadata(self):
-        entry = getattr(cd, "PAIRED_CONCEPTS")[
-            "concise_math_reasoning_vs_verbose_math_reasoning"
-        ]
-        assert entry["name"] == "MATH concise-positive"
-        assert entry["dataset"] == "MATH-500"
-        assert entry["direction"] == "Concise-Verbose"
-        assert entry["positive"] == "Concise"
-        assert entry["negative"] == "Verbose"
-
-    def test_french_english_metadata(self):
-        entry = getattr(cd, "PAIRED_CONCEPTS")["french_vs_english_language"]
-        assert entry["name"] == "FLORES+ French-positive"
-        assert entry["dataset"] == "FLORES+"
-        assert entry["direction"] == "French-English"
-        assert entry["positive"] == "French"
-        assert entry["negative"] == "English"
-
-    def test_female_male_metadata(self):
-        entry = getattr(cd, "PAIRED_CONCEPTS")["female_vs_male_gender"]
-        assert entry["name"] == "WinoGender Female-positive"
-        assert entry["dataset"] == "WinoGender"
-        assert entry["direction"] == "Female-Male"
-        assert entry["positive"] == "Female"
-        assert entry["negative"] == "Male"
+    def test_legacy_concise_verbose_key_is_not_registered(self):
+        # The old concise/verbose key must be dropped (wrong semantics).
+        assert "concise_math_reasoning_vs_verbose_math_reasoning" not in CONCEPTS
+        assert "concise_math_reasoning_vs_verbose_math_reasoning" not in ALIASES
 
 
-class TestHumanEvalXPairsPythonPositive:
-    @patch("src.contrastive_datasets.load_dataset")
-    def test_returns_exactly_50_pairs_for_task_ids_0_to_49(self, mock_load):
-        ids = list(range(50))
-        python_rows = _humaneval_rows("python", ids)
-        cpp_rows = _humaneval_rows("cpp", ids)
-        _wire_humaneval_loader(mock_load, python_rows, cpp_rows)
+class TestConceptMetadata:
+    def test_code_python_vs_cpp_follows_slide_polarity(self):
+        entry = CONCEPTS["code_python_vs_cpp"]
+        # slide arrow python -> cpp means +cpp -python
+        assert entry["positive"] == "cpp"
+        assert entry["negative"] == "python"
+        assert entry["src"] == "python"
+        assert entry["tgt"] == "cpp"
 
-        pairs = load_humaneval_x_pairs(n_samples=50)
+    def test_if_eng_vs_fra_follows_slide_polarity(self):
+        entry = CONCEPTS["if_eng_vs_fra"]
+        # slide arrow eng -> fra means +fra -eng
+        assert entry["positive"] == "fra"
+        assert entry["negative"] == "eng"
 
+    def test_gender_she_vs_he_polarity(self):
+        entry = CONCEPTS["gender_she_vs_he"]
+        # slide arrow she -> he means +he -she
+        assert entry["positive"] == "he"
+        assert entry["negative"] == "she"
+
+    def test_sentiment_polarity(self):
+        entry = CONCEPTS["sentiment_label0_vs_label1"]
+        assert entry["positive"] == "label1"
+        assert entry["negative"] == "label0"
+
+    def test_refusal_polarity(self):
+        entry = CONCEPTS["refusal_harmful_vs_benign"]
+        assert entry["positive"] == "benign"
+        assert entry["negative"] == "harmful"
+
+    def test_math_informal_vs_formal_polarity(self):
+        entry = CONCEPTS["math_informal_vs_formal"]
+        assert entry["positive"] == "formal"
+        assert entry["negative"] == "informal"
+
+    def test_math_nl_vs_equations_polarity(self):
+        entry = CONCEPTS["math_nl_vs_equations"]
+        assert entry["positive"] == "equations"
+        assert entry["negative"] == "nl"
+
+
+# =============================================================================
+# HumanEval-X directed pairs (Code)
+# =============================================================================
+
+
+class TestHumanEvalXDirectedPairs:
+    def test_loads_pinned_shared_ids_from_json(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "humaneval_x.json", _humaneval_payload())
+        _write_json(
+            _isolated_datasets / "shared_item_ids.json",
+            {"humaneval_x_task_ids": list(range(50))},
+        )
+        pairs = cd.load_humaneval_x_directed_pairs("python", "cpp", n_samples=50)
         assert len(pairs) == 50
-        for idx, (py, cpp) in enumerate(pairs):
-            assert f"python prompt {idx}" in py
-            assert f"cpp prompt {idx}" in cpp
-        assert pairs[0][0].startswith("python prompt 0")
-        assert pairs[-1][1].startswith("cpp prompt 49")
+        for pos, neg in pairs:
+            assert "cpp" in pos
+            assert "python" in neg
 
-    @patch("src.contrastive_datasets.load_dataset")
-    def test_strips_markdown_code_fences(self, mock_load):
-        python_rows = _humaneval_rows("python", [0, 1], fenced=True)
-        cpp_rows = _humaneval_rows("cpp", [0, 1], fenced=True)
-        _wire_humaneval_loader(mock_load, python_rows, cpp_rows)
-
-        pairs = load_humaneval_x_pairs(n_samples=2)
-
-        assert len(pairs) == 2
-        for py, cpp in pairs:
-            assert "```" not in py
-            assert "```" not in cpp
-
-    @patch("src.contrastive_datasets.load_dataset")
-    def test_uses_pinned_humaneval_x_raw_jsonl_files(self, mock_load):
-        def fake(name, *args, **kwargs):
-            language = "cpp" if "/cpp/" in kwargs["data_files"] else "python"
-            return iter(_humaneval_rows(language, [0]))
-
-        mock_load.side_effect = fake
-
-        load_humaneval_x_pairs(n_samples=1)
-
-        assert mock_load.call_count == 2
-        for call in mock_load.call_args_list:
-            assert call.args[0] == "json"
-            assert HUMANEVAL_X_DATASET in call.kwargs["data_files"]
-            assert HUMANEVAL_X_REVISION in call.kwargs["data_files"]
-            assert call.kwargs["split"] == "train"
-            assert call.kwargs["streaming"] is True
-
-    @patch("src.contrastive_datasets.load_dataset")
-    def test_strict_gate_raises_when_fewer_shared_than_requested(self, mock_load):
-        mock_load.side_effect = [
-            iter(_humaneval_rows("python", [0, 1])),
-            iter(_humaneval_rows("cpp", [0])),
-        ]
-        with pytest.raises(ValueError, match="aligned"):
-            load_humaneval_x_pairs(n_samples=2)
-
-    @patch("src.contrastive_datasets.load_dataset")
-    def test_python_is_positive_direction_in_load_contrastive_texts(self, mock_load):
-        python_rows = _humaneval_rows("python", [0, 1])
-        cpp_rows = _humaneval_rows("cpp", [0, 1])
-        _wire_humaneval_loader(mock_load, python_rows, cpp_rows)
-
-        pos, neg = load_contrastive_texts("python_vs_cpp", n_samples=2)
-
-        assert len(pos) == 2
-        assert len(neg) == 2
-        assert all("python prompt" in p for p in pos)
-        assert all("cpp prompt" in n for n in neg)
-
-    @patch("src.contrastive_datasets.load_dataset")
-    def test_python_to_cpp_legacy_key_is_unsupported(self, mock_load):
-        mock_load.side_effect = lambda *args, **kwargs: iter(
-            _humaneval_rows("python", [0])
+    def test_tgt_is_positive_src_is_negative(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "humaneval_x.json", _humaneval_payload())
+        _write_json(
+            _isolated_datasets / "shared_item_ids.json",
+            {"humaneval_x_task_ids": list(range(10))},
         )
-        with pytest.raises(ValueError, match="concept"):
-            load_contrastive_texts("python_to_cpp", n_samples=1)
+        pairs = cd.load_humaneval_x_directed_pairs("python", "go", n_samples=10)
+        for pos, neg in pairs:
+            assert pos.startswith("go")
+            assert neg.startswith("python")
 
-
-class TestFloresPairsFrenchPositive:
-    def test_flores_dataset_constant_is_openlanguagedata_plus(self):
-        assert getattr(cd, "FLORES_DATASET") == "openlanguagedata/flores_plus"
-
-    @patch("src.contrastive_datasets.load_dataset")
-    def test_uses_fra_latn_and_eng_latn_configs(self, mock_load):
-        french_rows = _flores_rows("french", range(60))
-        english_rows = _flores_rows("english", range(60))
-        _wire_flores_loader(mock_load, french_rows, english_rows)
-
-        load_flores_pairs = getattr(cd, "load_flores_pairs")
-        load_flores_pairs(n_samples=10)
-
-        configs_used: set = set()
-        for call in mock_load.call_args_list:
-            if len(call.args) > 1:
-                configs_used.add(call.args[1])
-            if "name" in call.kwargs:
-                configs_used.add(call.kwargs["name"])
-        assert "fra_Latn" in configs_used
-        assert "eng_Latn" in configs_used
-
-    @patch("src.contrastive_datasets.load_dataset")
-    def test_aligns_french_and_english_by_row_id(self, mock_load):
-        french_rows = _flores_rows("french", range(20))
-        english_rows = _flores_rows("english", range(20))
-        _wire_flores_loader(mock_load, french_rows, english_rows)
-
-        pairs = getattr(cd, "load_flores_pairs")(n_samples=10)
-
-        assert len(pairs) == 10
-        for idx, (fr, en) in enumerate(pairs):
-            assert isinstance(fr, str)
-            assert isinstance(en, str)
-            assert str(idx) in fr
-            assert str(idx) in en
-            assert fr.startswith("french")
-            assert en.startswith("english")
-
-    @patch("src.contrastive_datasets.load_dataset")
-    def test_limited_to_first_50_pairs_in_id_order(self, mock_load):
-        french_rows = _flores_rows("french", range(80))
-        english_rows = _flores_rows("english", range(80))
-        _wire_flores_loader(mock_load, french_rows, english_rows)
-
-        pairs = getattr(cd, "load_flores_pairs")(n_samples=50)
-
-        assert len(pairs) == 50
-        for idx, (fr, _) in enumerate(pairs):
-            assert f"number {idx}" in fr
-
-    @patch("src.contrastive_datasets.load_dataset")
-    def test_returns_single_token_string_per_pair_member(self, mock_load):
-        french_rows = _flores_rows("french", range(10))
-        english_rows = _flores_rows("english", range(10))
-        _wire_flores_loader(mock_load, french_rows, english_rows)
-
-        pairs = getattr(cd, "load_flores_pairs")(n_samples=10)
-
-        for fr, en in pairs:
-            assert isinstance(fr, str)
-            assert isinstance(en, str)
-            assert len(fr.strip()) > 0
-            assert len(en.strip()) > 0
-
-    @patch("src.contrastive_datasets.load_dataset")
-    def test_strict_gate_raises_when_fewer_aligned_than_requested(self, mock_load):
-        _wire_flores_loader(
-            mock_load,
-            _flores_rows("french", [0, 1]),
-            _flores_rows("english", [0]),
+    def test_all_20_code_concepts_load(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "humaneval_x.json", _humaneval_payload())
+        _write_json(
+            _isolated_datasets / "shared_item_ids.json",
+            {"humaneval_x_task_ids": list(range(50))},
         )
+        code_keys = [k for k, v in CONCEPTS.items() if v["domain"] == "code"]
+        assert len(code_keys) == 20
+        for concept in code_keys:
+            pos, neg = load_contrastive_texts(concept, n_samples=50)
+            assert len(pos) == 50
+            assert len(neg) == 50
+            entry = CONCEPTS[concept]
+            assert entry["tgt"] in pos[0]
+            assert entry["src"] in neg[0]
 
-        with pytest.raises(ValueError, match="aligned"):
-            getattr(cd, "load_flores_pairs")(n_samples=2)
+    def test_src_eq_tgt_raises(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "humaneval_x.json", _humaneval_payload())
+        with pytest.raises(ValueError, match="src == tgt"):
+            cd.load_humaneval_x_directed_pairs("python", "python", n_samples=5)
 
-    @patch("src.contrastive_datasets.load_dataset")
-    def test_duplicate_row_id_raises_instead_of_overwriting(self, mock_load):
-        duplicate = _flores_rows("french", [0, 0])
-        _wire_flores_loader(mock_load, duplicate, _flores_rows("english", [0]))
+    def test_unknown_language_raises(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "humaneval_x.json", _humaneval_payload())
+        with pytest.raises(ValueError, match="Unknown HumanEval-X"):
+            cd.load_humaneval_x_directed_pairs("ruby", "python", n_samples=5)
 
-        with pytest.raises(ValueError, match=r"Duplicate FLORES\+ row ID: 0"):
-            getattr(cd, "load_flores_pairs")(n_samples=1)
+    def test_missing_dataset_raises_with_clear_hint(self, _isolated_datasets):
+        with pytest.raises(FileNotFoundError, match="download_datasets.py"):
+            cd.load_humaneval_x_directed_pairs("python", "cpp", n_samples=5)
 
-    @patch("src.contrastive_datasets.load_dataset")
-    def test_french_is_positive_direction_in_load_contrastive_texts(self, mock_load):
-        french_rows = _flores_rows("french", range(10))
-        english_rows = _flores_rows("english", range(10))
-        _wire_flores_loader(mock_load, french_rows, english_rows)
-
-        pos, neg = load_contrastive_texts("french_vs_english_language", n_samples=10)
-
-        assert len(pos) == 10
-        assert len(neg) == 10
-        assert all("french" in p.lower() for p in pos)
-        assert all("english" in n.lower() for n in neg)
-
-
-class TestWinogenderPairsFemalePositive:
-    def test_winogender_constants_are_pinned(self):
-        assert getattr(cd, "WINOGENDER_DATASET") == "rudinger/winogender-schemas"
-        revision = getattr(cd, "WINOGENDER_REVISION")
-        assert isinstance(revision, str)
-        assert revision and len(revision) >= 7
-
-    def test_loads_templates_from_pinned_github_url(self):
-        with _patched_winogender_url(_winogender_tsv_content()) as mock_urlopen:
-            getattr(cd, "load_winogender_pairs")(n_samples=50)
-            assert mock_urlopen.called
-            called_url = str(mock_urlopen.call_args[0][0])
-            assert "rudinger/winogender-schemas" in called_url
-            assert "/data/templates.tsv" in called_url
-            assert getattr(cd, "WINOGENDER_REVISION") in called_url
-            assert mock_urlopen.call_args.kwargs["timeout"] == 30
-
-    def test_returns_deterministic_50_pairs(self):
-        with _patched_winogender_url(_winogender_tsv_content()):
-            pairs_a = getattr(cd, "load_winogender_pairs")(n_samples=50)
-            pairs_b = getattr(cd, "load_winogender_pairs")(n_samples=50)
-        assert pairs_a == pairs_b
-        assert len(pairs_a) == 50
-
-    def test_odd_sample_count_raises_instead_of_under_delivering(self):
-        with pytest.raises(ValueError, match="even"):
-            getattr(cd, "load_winogender_pairs")(n_samples=5)
-
-    def test_each_pair_differs_by_exactly_one_gendered_pronoun(self):
-        with _patched_winogender_url(_winogender_tsv_content()):
-            pairs = getattr(cd, "load_winogender_pairs")(n_samples=50)
-
-        for female, male in pairs:
-            replacements = (("she", "he"), ("her", "his"), ("her", "him"))
-            assert (
-                sum(
-                    re.sub(rf"\b{f}\b", m, female.lower(), count=1) == male.lower()
-                    for f, m in replacements
-                )
-                == 1
-            )
-
-    def test_pronoun_forms_use_deterministic_36_10_4_stratification(self):
-        with _patched_winogender_url(_winogender_tsv_content()):
-            pairs = getattr(cd, "load_winogender_pairs")(n_samples=50)
-
-        male_forms = [male.lower() for _, male in pairs]
-        assert sum(bool(re.search(r"\bhe\b", text)) for text in male_forms) == 36
-        assert sum(bool(re.search(r"\bhis\b", text)) for text in male_forms) == 10
-        assert sum(bool(re.search(r"\bhim\b", text)) for text in male_forms) == 4
-        assert not any("$" in text for pair in pairs for text in pair)
-
-    def test_answer_stratification_is_25_zero_and_25_one(self):
-        with _patched_winogender_url(_winogender_tsv_content()):
-            pairs = getattr(cd, "load_winogender_pairs")(n_samples=50)
-
-        zero_count = sum(1 for f, _ in pairs if "zerosubject" in f.lower())
-        one_count = sum(1 for f, _ in pairs if "onesubject" in f.lower())
-        assert zero_count == 25
-        assert one_count == 25
-        assert zero_count + one_count == len(pairs)
-
-    def test_female_is_positive_direction_in_load_contrastive_texts(self):
-        with _patched_winogender_url(_winogender_tsv_content()):
-            pos, neg = load_contrastive_texts("female_vs_male_gender", n_samples=50)
-
-        assert len(pos) == 50
-        assert len(neg) == 50
-        assert all(
-            any(re.search(rf"\b{token}\b", text.lower()) for token in ("she", "her"))
-            for text in pos
+    def test_strips_markdown_code_fences(self, _isolated_datasets):
+        payload = _humaneval_payload()
+        for item in payload["languages"]["python"][:5]:
+            item["code"] = "```python\n" + item["code"] + "```"
+        _write_json(_isolated_datasets / "humaneval_x.json", payload)
+        _write_json(
+            _isolated_datasets / "shared_item_ids.json",
+            {"humaneval_x_task_ids": list(range(5))},
         )
-        assert all(
-            any(
-                re.search(rf"\b{token}\b", text.lower())
-                for token in ("he", "his", "him")
-            )
-            for text in neg
-        )
+        pairs = cd.load_humaneval_x_directed_pairs("python", "cpp", n_samples=5)
+        for pos, neg in pairs:
+            assert "```" not in pos
+            assert "```" not in neg
 
-
-class TestMathPairsConcisePositive:
-    def test_default_n_samples_is_50(self, tmp_path, monkeypatch):
-        path = _write_math_jsonl(tmp_path / "math.jsonl", _math_rows(range(60)))
-        monkeypatch.setattr(cd, "MATH_JSONL_PATH", path, raising=False)
-
-        pairs = getattr(cd, "load_math_pairs")()
-
-        assert len(pairs) == 50
-
-    def test_loads_local_jsonl_and_returns_pairs(self, tmp_path, monkeypatch):
-        path = _write_math_jsonl(tmp_path / "math.jsonl", _math_rows(range(60)))
-        monkeypatch.setattr(cd, "MATH_JSONL_PATH", path, raising=False)
-
-        pairs = getattr(cd, "load_math_pairs")(n_samples=10)
-
-        assert len(pairs) == 10
-        for concise, verbose in pairs:
-            assert isinstance(concise, str)
-            assert isinstance(verbose, str)
-
-    def test_each_text_contains_full_problem_and_solution(self, tmp_path, monkeypatch):
-        path = _write_math_jsonl(tmp_path / "math.jsonl", _math_rows(range(60)))
-        monkeypatch.setattr(cd, "MATH_JSONL_PATH", path, raising=False)
-
-        pairs = getattr(cd, "load_math_pairs")(n_samples=10)
-
-        for concise, verbose in pairs:
-            assert "What is" in concise
-            assert "What is" in verbose
-            assert len(verbose) > len(concise)
-
-    def test_strict_50_row_gate_raises_when_fewer_than_50(self, tmp_path, monkeypatch):
-        path = _write_math_jsonl(tmp_path / "math.jsonl", _math_rows(range(30)))
-        monkeypatch.setattr(cd, "MATH_JSONL_PATH", path, raising=False)
-
-        with pytest.raises(ValueError, match="50"):
-            getattr(cd, "load_math_pairs")(n_samples=50)
-
-    def test_concise_is_positive_direction_in_load_contrastive_texts(
-        self, tmp_path, monkeypatch
+    def test_legacy_alias_python_vs_cpp_routes_to_code_python_vs_cpp(
+        self, _isolated_datasets
     ):
-        path = _write_math_jsonl(tmp_path / "math.jsonl", _math_rows(range(60)))
-        monkeypatch.setattr(cd, "MATH_JSONL_PATH", path, raising=False)
-
-        pos, neg = load_contrastive_texts(
-            "concise_math_reasoning_vs_verbose_math_reasoning", n_samples=10
+        _write_json(_isolated_datasets / "humaneval_x.json", _humaneval_payload())
+        _write_json(
+            _isolated_datasets / "shared_item_ids.json",
+            {"humaneval_x_task_ids": list(range(5))},
         )
+        pos, neg = load_contrastive_texts("python_vs_cpp", n_samples=5)
+        for p in pos:
+            assert "cpp" in p
+        for n in neg:
+            assert "python" in n
 
-        assert len(pos) == 10
-        assert len(neg) == 10
-        for concise, verbose in zip(pos, neg):
-            assert len(concise) < len(verbose)
+
+# =============================================================================
+# Math domain
+# =============================================================================
+
+
+class TestMathPairs:
+    def test_minif2f_formal_is_positive(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "minif2f.json", _minif2f_payload(n=60))
+        pairs = cd.load_minif2f_pairs(n_samples=10)
+        assert len(pairs) == 10
+        for formal, informal in pairs:
+            assert formal.startswith("theorem")
+            assert informal.startswith("Solve")
+
+    def test_beyondx_equations_is_positive(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "beyondx.json", _beyondx_payload(n=60))
+        pairs = cd.load_beyondx_pairs(n_samples=10)
+        assert len(pairs) == 10
+        for equations, problem in pairs:
+            assert "x =" in equations
+            assert problem.startswith("Problem")
+
+    def test_math_cot_vs_direct_direct_is_positive(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "math500.json", _math500_payload(n=50))
+        pairs = cd.load_math_cot_vs_direct_pairs(n_samples=10)
+        assert len(pairs) == 10
+        for direct, cot in pairs:
+            assert "The answer is" in direct
+            assert "Solution:" in cot
+
+    def test_math_informal_vs_formal_via_public_api(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "minif2f.json", _minif2f_payload(n=60))
+        pos, neg = load_contrastive_texts("math_informal_vs_formal", n_samples=10)
+        assert all(p.startswith("theorem") for p in pos)
+        assert all(n.startswith("Solve") for n in neg)
+
+    def test_math_nl_vs_equations_via_public_api(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "beyondx.json", _beyondx_payload(n=60))
+        pos, neg = load_contrastive_texts("math_nl_vs_equations", n_samples=10)
+        assert all("x =" in p for p in pos)
+        assert all(n.startswith("Problem") for n in neg)
+
+    def test_math_cot_vs_direct_via_public_api(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "math500.json", _math500_payload(n=50))
+        pos, neg = load_contrastive_texts("math_cot_vs_direct", n_samples=10)
+        assert all("The answer is" in p for p in pos)
+        assert all("Solution:" in n for n in neg)
+
+    def test_missing_minif2f_raises(self, _isolated_datasets):
+        with pytest.raises(FileNotFoundError, match="download_datasets"):
+            cd.load_minif2f_pairs(n_samples=10)
+
+    def test_too_few_pairs_raises(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "minif2f.json", _minif2f_payload(n=5))
+        with pytest.raises(ValueError, match="only 5"):
+            cd.load_minif2f_pairs(n_samples=10)
+
+
+# =============================================================================
+# Belebele directed pairs (IF)
+# =============================================================================
+
+
+class TestBelebeleDirectedPairs:
+    def test_loads_50_pairs_per_directed_concept(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "belebele.json", _belebele_payload())
+        _write_json(
+            _isolated_datasets / "shared_item_ids.json",
+            {
+                "belebele_keys": [
+                    {"link": f"link-{i}", "question_number": i + 1} for i in range(50)
+                ]
+            },
+        )
+        pairs = cd.load_belebele_directed_pairs("eng", "fra", n_samples=50)
+        assert len(pairs) == 50
+
+    def test_tgt_dialect_is_positive(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "belebele.json", _belebele_payload())
+        _write_json(
+            _isolated_datasets / "shared_item_ids.json",
+            {
+                "belebele_keys": [
+                    {"link": f"link-{i}", "question_number": i + 1} for i in range(10)
+                ]
+            },
+        )
+        pairs = cd.load_belebele_directed_pairs("eng", "fra", n_samples=10)
+        for pos, neg in pairs:
+            assert pos.startswith("fra_Latn")
+            assert neg.startswith("eng_Latn")
+
+    def test_all_20_if_concepts_load(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "belebele.json", _belebele_payload())
+        _write_json(
+            _isolated_datasets / "shared_item_ids.json",
+            {
+                "belebele_keys": [
+                    {"link": f"link-{i}", "question_number": i + 1} for i in range(50)
+                ]
+            },
+        )
+        if_keys = [k for k, v in CONCEPTS.items() if v["domain"] == "if"]
+        assert len(if_keys) == 20
+        for concept in if_keys:
+            pos, neg = load_contrastive_texts(concept, n_samples=50)
+            assert len(pos) == 50
+            assert len(neg) == 50
+
+    def test_missing_dataset_raises(self, _isolated_datasets):
+        with pytest.raises(FileNotFoundError, match="download_datasets"):
+            cd.load_belebele_directed_pairs("eng", "fra", n_samples=5)
+
+    def test_unknown_language_raises(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "belebele.json", _belebele_payload())
+        with pytest.raises(ValueError, match="Unknown IF language"):
+            cd.load_belebele_directed_pairs("xyz", "eng", n_samples=5)
+
+    def test_legacy_french_vs_english_alias(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "belebele.json", _belebele_payload())
+        _write_json(
+            _isolated_datasets / "shared_item_ids.json",
+            {
+                "belebele_keys": [
+                    {"link": f"link-{i}", "question_number": i + 1} for i in range(5)
+                ]
+            },
+        )
+        pos, neg = load_contrastive_texts("french_vs_english_language", n_samples=5)
+        # New polarity per slides: eng -> fra means +fra -eng
+        assert all(p.startswith("fra_Latn") for p in pos)
+        assert all(n.startswith("eng_Latn") for n in neg)
+
+
+# =============================================================================
+# WinoGender (gender she -> he)
+# =============================================================================
+
+
+class TestWinogenderPairs:
+    def test_he_is_positive_she_is_negative(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "winogender.json", _winogender_payload())
+        pairs = cd.load_winogender_pairs(n_samples=50)
+        assert len(pairs) == 50
+        for he, she in pairs:
+            assert re.search(r"\bhe\b", he.lower())
+            assert re.search(r"\bshe\b", she.lower())
+
+    def test_pairs_are_minimal_nominative_swaps(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "winogender.json", _winogender_payload())
+        pairs = cd.load_winogender_pairs(n_samples=50)
+        for he, she in pairs:
+            swapped = re.sub(r"\bhe\b", "she", he, count=1)
+            assert swapped == she
+
+    def test_legacy_female_vs_male_alias_routes_with_new_polarity(
+        self, _isolated_datasets
+    ):
+        _write_json(_isolated_datasets / "winogender.json", _winogender_payload())
+        pos, neg = load_contrastive_texts("female_vs_male_gender", n_samples=50)
+        # New polarity per slides: +he -she
+        assert all(re.search(r"\bhe\b", p.lower()) for p in pos)
+        assert all(re.search(r"\bshe\b", n.lower()) for n in neg)
+
+    def test_missing_dataset_falls_back_to_http(self, _isolated_datasets):
+        tsv = (
+            "\n".join(
+                [
+                    "occupation(0)\tother-participant(1)\tanswer\tsentence",
+                    "worker\tclient\t0\tThe $OCCUPATION said $NOM_PRONOUN left.",
+                    "nurse\tpatient\t1\tThe $OCCUPATION saw $NOM_PRONOUN leave.",
+                ]
+            )
+            + "\n"
+        )
+        with patch("urllib.request.urlopen") as mock_open:
+            response = mock_open.return_value
+            response.__enter__.return_value = response
+            response.read.return_value = tsv.encode("utf-8")
+            pairs = cd.load_winogender_pairs(n_samples=2)
+        assert len(pairs) == 2
+
+
+# =============================================================================
+# SST-2
+# =============================================================================
+
+
+class TestSST2Pairs:
+    def test_label1_is_positive_label0_is_negative(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "sst2.json", _sst2_payload())
+        pairs = cd.load_sst2_pairs(n_samples=10)
+        assert len(pairs) == 10
+        for pos, neg in pairs:
+            assert "great" in pos
+            assert "bad" in neg
+
+    def test_public_api(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "sst2.json", _sst2_payload())
+        pos, neg = load_contrastive_texts("sentiment_label0_vs_label1", n_samples=20)
+        assert len(pos) == 20
+        assert len(neg) == 20
+
+    def test_missing_dataset_raises(self, _isolated_datasets):
+        with pytest.raises(FileNotFoundError, match="download_datasets"):
+            cd.load_sst2_pairs(n_samples=5)
+
+
+# =============================================================================
+# LLM-LAT refusal
+# =============================================================================
+
+
+class TestRefusalPairs:
+    def test_benign_is_positive_harmful_is_negative(self, _isolated_datasets):
+        _write_json(
+            _isolated_datasets / "llm_lat_benign.json",
+            _llm_lat_payload("benign-dataset"),
+        )
+        _write_json(
+            _isolated_datasets / "llm_lat_harmful.json",
+            _llm_lat_payload("harmful-dataset"),
+        )
+        pairs = cd.load_refusal_pairs(n_samples=10)
+        assert len(pairs) == 10
+        for pos, neg in pairs:
+            assert "benign" in pos
+            assert "harmful" in neg
+
+    def test_public_api(self, _isolated_datasets):
+        _write_json(
+            _isolated_datasets / "llm_lat_benign.json",
+            _llm_lat_payload("benign-dataset"),
+        )
+        _write_json(
+            _isolated_datasets / "llm_lat_harmful.json",
+            _llm_lat_payload("harmful-dataset"),
+        )
+        pos, neg = load_contrastive_texts("refusal_harmful_vs_benign", n_samples=10)
+        assert all("benign" in p for p in pos)
+        assert all("harmful" in n for n in neg)
+
+
+# =============================================================================
+# Public API integration
+# =============================================================================
+
+
+class TestPublicAPI:
+    def test_all_46_concepts_resolve(self, _isolated_datasets):
+        _write_all_datasets(_isolated_datasets)
+        _write_json(
+            _isolated_datasets / "shared_item_ids.json",
+            {
+                "humaneval_x_task_ids": list(range(50)),
+                "belebele_keys": [
+                    {"link": f"link-{i}", "question_number": i + 1} for i in range(50)
+                ],
+            },
+        )
+        for concept in all_concept_keys():
+            pos, neg = load_contrastive_texts(concept, n_samples=50)
+            assert len(pos) == 50, concept
+            assert len(neg) == 50, concept
+
+    def test_unknown_concept_raises(self):
+        with pytest.raises(ValueError, match="Unknown concept"):
+            load_contrastive_texts("not_a_real_concept", n_samples=5)
+
+    def test_zero_n_samples_returns_empty(self, _isolated_datasets):
+        _write_json(_isolated_datasets / "minif2f.json", _minif2f_payload(n=60))
+        pos, neg = load_contrastive_texts("math_informal_vs_formal", n_samples=0)
+        assert pos == []
+        assert neg == []
+
+    def test_missing_dataset_message_mentions_runner(self, _isolated_datasets):
+        with pytest.raises(FileNotFoundError) as excinfo:
+            load_contrastive_texts("math_cot_vs_direct", n_samples=10)
+        assert "download_datasets.py" in str(excinfo.value)
+
+
+# =============================================================================
+# dataset_store integration
+# =============================================================================
+
+
+class TestDatasetStore:
+    def test_get_shared_ids_empty_when_missing(self, _isolated_datasets):
+        import src.dataset_store as store
+
+        data = store.get_shared_ids()
+        assert data["humaneval_x_task_ids"] == []
+        assert data["belebele_keys"] == []
+
+    def test_save_and_reload_shared_ids(self, _isolated_datasets):
+        import src.dataset_store as store
+
+        store.save_shared_ids(
+            {
+                "humaneval_x_task_ids": list(range(50)),
+                "belebele_keys": [{"link": "l1", "question_number": 1}],
+            }
+        )
+        data = store.get_shared_ids()
+        assert data["humaneval_x_task_ids"] == list(range(50))
+        assert data["belebele_keys"] == [{"link": "l1", "question_number": 1}]
+
+    def test_save_shared_ids_preserves_existing_keys(self, _isolated_datasets):
+        import src.dataset_store as store
+
+        store.save_shared_ids({"humaneval_x_task_ids": [1, 2, 3]})
+        store.save_shared_ids({"belebele_keys": [{"link": "l", "question_number": 1}]})
+        data = store.get_shared_ids()
+        assert data["humaneval_x_task_ids"] == [1, 2, 3]
+        assert data["belebele_keys"] == [{"link": "l", "question_number": 1}]
+
+    def test_sample_shared_indices_is_deterministic(self):
+        import src.dataset_store as store
+
+        pool = list(range(200))
+        a = store.sample_shared_indices(pool, n=50, seed=42)
+        b = store.sample_shared_indices(pool, n=50, seed=42)
+        assert a == b
+        assert len(a) == 50

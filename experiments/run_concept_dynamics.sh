@@ -16,8 +16,8 @@ Runs the Concept Dynamics experiment: DiM concept extraction across
 Olmo-3-7B post-training variants, then stability + gram analysis.
 
 Modes:
-  full     Full experiment: 7 models × 4 concepts × 10 layers × 50 samples (default)
-  quick    Smoke test:      1 model  × 2 concepts × 2 layers × 5 samples
+  full     Full experiment: 6 trajectories x N concepts x 10 layers x 50 samples (default)
+  quick    Smoke test:      1 model  x 2 concepts x 2 layers x 5 samples
 
 Options (override defaults):
   --models M1,M2,...        Comma-separated OLMO3_VARIANTS keys
@@ -26,15 +26,16 @@ Options (override defaults):
   --n-samples N             Samples per concept per class
   --output DIR              Output directory
   --max-seq-len N           Max tokenization length
+  --[no-]chat-template      Toggle tokenizer.apply_chat_template wrapping
 
 Environment:
-  OUTPUT_DIR  Output directory (full default: results/concept_dynamics_paired;
-              quick default: results/concept_dynamics_paired_quick)
+  OUTPUT_DIR  Output directory (full default: results/concept_dynamics_multi;
+              quick default: results/concept_dynamics_multi_quick)
 
 Examples:
   experiments/run_concept_dynamics.sh quick
   experiments/run_concept_dynamics.sh full --models olmo3-think-sft,olmo3-rl-zero-math
-  experiments/run_concept_dynamics.sh --concepts python_vs_cpp,female_vs_male_gender
+  experiments/run_concept_dynamics.sh --concepts code_python_vs_cpp,gender_she_vs_he
 
 USAGE
 }
@@ -56,13 +57,13 @@ main() {
 
     case "$mode" in
         full)
-            output_dir="${OUTPUT_DIR:-results/concept_dynamics_paired}"
+            output_dir="${OUTPUT_DIR:-results/concept_dynamics_multi}"
             log "Running FULL concept dynamics experiment"
             uv run python experiments/run_concept_dynamics.py \
                 --output "$output_dir" "${passthrough[@]}"
             ;;
         quick)
-            output_dir="${OUTPUT_DIR:-results/concept_dynamics_paired_quick}"
+            output_dir="${OUTPUT_DIR:-results/concept_dynamics_multi_quick}"
             log "Running QUICK concept dynamics (smoke test)"
             uv run python experiments/run_concept_dynamics.py \
                 --quick --output "$output_dir" "${passthrough[@]}"

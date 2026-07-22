@@ -23,7 +23,6 @@ from src.config import (
     EXPERIMENT_DTYPE,
     EXPERIMENT_CONCEPT_SOURCE_URL,
     EXPERIMENT_MODEL_COLLECTION_URL,
-    EXPERIMENT_LAYER_PERCENTAGES,
     EXPERIMENT_LAYERS_7B,
     compute_experiment_layers,
     MODEL_CHECKPOINTS,
@@ -113,25 +112,17 @@ class TestExperimentModels:
 
 
 class TestLayerSelection:
-    """10 layers at 10%, 20%, ..., 100% of model depth (tex line 8)."""
+    """Slide formula layer indices for j=0..n-1.
 
-    def test_percentages_are_ten_even_steps(self):
-        assert EXPERIMENT_LAYER_PERCENTAGES == [
-            0.1,
-            0.2,
-            0.3,
-            0.4,
-            0.5,
-            0.6,
-            0.7,
-            0.8,
-            0.9,
-            1.0,
-        ]
+    ell_j = round[(0.1 + 0.8 * j / (n-1)) * (n_layers - 1)]
+
+    For OLMo-3 7B (n_layers=32, n=10) this yields
+    ``[3, 6, 9, 11, 14, 17, 20, 22, 25, 28]``.
+    """
 
     def test_compute_layers_for_32_layer_model(self):
         layers = compute_experiment_layers(32)
-        assert layers == [3, 6, 9, 12, 16, 19, 22, 25, 28, 31]
+        assert layers == [3, 6, 9, 11, 14, 17, 20, 22, 25, 28]
 
     def test_compute_layers_returns_ten(self):
         assert len(compute_experiment_layers(32)) == 10
@@ -141,8 +132,19 @@ class TestLayerSelection:
         layers = compute_experiment_layers(n)
         assert all(0 <= i < n for i in layers)
 
-    def test_compute_layers_last_is_final_layer(self):
-        assert compute_experiment_layers(32)[-1] == 31
+    def test_compute_layers_first_near_ten_percent(self):
+        # ell_0 = round(0.1 * 31) = round(3.1) = 3
+        assert compute_experiment_layers(32)[0] == 3
+
+    def test_compute_layers_last_below_final(self):
+        # ell_9 = round(0.9 * 31) = round(27.9) = 28 (not 31, by design)
+        assert compute_experiment_layers(32)[-1] == 28
+
+    def test_compute_layers_n_one_returns_middle(self):
+        assert compute_experiment_layers(32, n=1) == [16]
+
+    def test_compute_layers_n_zero_returns_empty(self):
+        assert compute_experiment_layers(32, n=0) == []
 
     def test_precomputed_7b_matches_function(self):
         assert EXPERIMENT_LAYERS_7B == compute_experiment_layers(32)
@@ -151,18 +153,6 @@ class TestLayerSelection:
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(_TESTS_DIR)
 _RUNNER_PATH = os.path.join(_PROJECT_ROOT, "experiments", "run_concept_dynamics.py")
-_FOUR_NAMED_CONCEPTS = [
-    "python_vs_cpp",
-    "concise_math_reasoning_vs_verbose_math_reasoning",
-    "french_vs_english_language",
-    "female_vs_male_gender",
-]
-_FOUR_DIRECTION_LABELS = [
-    "Python - C++",
-    "Concise - Verbose",
-    "French - English",
-    "Female - Male",
-]
 
 
 def _load_runner():
@@ -191,7 +181,6 @@ def runner():
 class TestConceptDynamicsCheckpointWiring:
     _SPLIT = [
         ("olmo3-think-sft", 10),
-        ("olmo3-instruct-sft", 1),
         ("olmo3-rl-zero-math", 10),
         ("olmo3-rl-zero-code", 10),
         ("olmo3-rl-zero-if", 10),
@@ -199,22 +188,23 @@ class TestConceptDynamicsCheckpointWiring:
         ("olmo3-rl-zero-mix", 10),
     ]
 
-    def test_total_selected_checkpoints_is_59(self):
+    def test_total_selected_checkpoints_is_58(self):
         total = sum(len(MODEL_CHECKPOINTS[m]) for m, _ in self._SPLIT)
-        assert total == 59
+        assert total == 58
 
     def test_checkpoint_split_in_runner_model_order(self, runner):
         split = [len(MODEL_CHECKPOINTS[m]) for m in runner.DEFAULT_MODELS]
-        assert split == [10, 1, 10, 10, 10, 8, 10]
+        assert split == [10, 10, 10, 10, 8, 10]
 
-    def test_runner_family_is_seven_models_covering_all_checkpoints(self, runner):
-        assert len(runner.DEFAULT_MODELS) == 7
+    def test_runner_family_is_six_models_covering_selected_checkpoints(self, runner):
+        assert len(runner.DEFAULT_MODELS) == 6
         assert set(runner.DEFAULT_MODELS) == {m for m, _ in self._SPLIT}
-        assert set(MODEL_CHECKPOINTS) == {m for m, _ in self._SPLIT}
+        for m in runner.DEFAULT_MODELS:
+            assert m in MODEL_CHECKPOINTS
 
 
 class TestConceptDynamicsLayerWiring:
-    _LAYERS = [3, 6, 9, 12, 16, 19, 22, 25, 28, 31]
+    _LAYERS = [3, 6, 9, 11, 14, 17, 20, 22, 25, 28]
 
     def test_exactly_ten_layers(self):
         assert len(self._LAYERS) == 10
@@ -224,11 +214,13 @@ class TestConceptDynamicsLayerWiring:
 
 
 class TestConceptDynamicsConceptWiring:
-    def test_default_concepts_are_the_four_named_directions(self, runner):
-        assert runner.DEFAULT_CONCEPTS == _FOUR_NAMED_CONCEPTS
+    def test_default_concepts_are_full_catalogue(self, runner):
+        from src.contrastive_datasets import all_concept_keys
 
-    def test_exactly_four_concepts(self, runner):
-        assert len(runner.DEFAULT_CONCEPTS) == 4
+        assert runner.DEFAULT_CONCEPTS == all_concept_keys()
+
+    def test_exactly_forty_six_concepts(self, runner):
+        assert len(runner.DEFAULT_CONCEPTS) == 46
 
 
 class TestConceptDynamicsOutputWiring:
@@ -245,15 +237,17 @@ class TestConceptDynamicsOutputWiring:
         )
         with open(wrapper_path, encoding="utf-8") as handle:
             wrapper = handle.read()
-        assert "results/concept_dynamics_paired" in wrapper
-        assert 'OUTPUT_DIR="${OUTPUT_DIR:-results/concept_dynamics}"' not in wrapper
+        assert "results/concept_dynamics_multi" in wrapper
+        assert (
+            'OUTPUT_DIR="${OUTPUT_DIR:-results/concept_dynamics_paired}"' not in wrapper
+        )
 
     def test_quick_and_full_modes_have_distinct_default_outputs(self, runner):
         assert runner.resolve_output_directory(quick=False, output=None) == (
-            "results/concept_dynamics_paired"
+            "results/concept_dynamics_multi"
         )
         assert runner.resolve_output_directory(quick=True, output=None) == (
-            "results/concept_dynamics_paired_quick"
+            "results/concept_dynamics_multi_quick"
         )
 
     def test_explicit_output_overrides_both_mode_defaults(self, runner):
@@ -269,11 +263,11 @@ class TestConceptDynamicsOutputWiring:
         )
         with open(wrapper_path, encoding="utf-8") as handle:
             wrapper = handle.read()
-        assert "results/concept_dynamics_paired_quick" in wrapper
+        assert "results/concept_dynamics_multi_quick" in wrapper
 
 
 class TestConceptDynamicsCliHelp:
-    def test_help_exits_zero_and_exposes_four_directions(self):
+    def test_help_exits_zero_and_mentions_full_catalogue(self):
         result = subprocess.run(
             [sys.executable, _RUNNER_PATH, "--help"],
             cwd=_PROJECT_ROOT,
@@ -281,10 +275,8 @@ class TestConceptDynamicsCliHelp:
             text=True,
         )
         assert result.returncode == 0
-        for name in _FOUR_NAMED_CONCEPTS:
-            assert name in result.stdout
-        for label in _FOUR_DIRECTION_LABELS:
-            assert label in result.stdout
+        assert "46" in result.stdout
+        assert "all_concept_keys" in result.stdout
 
     def test_shell_help_does_not_claim_results_were_saved(self):
         wrapper_path = os.path.join(

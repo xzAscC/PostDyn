@@ -38,5 +38,9 @@ Thumbs.db
 # data files, will handle in hf
 data/
 
+# Materialized dataset JSONs (large, regenerable via experiments/download_datasets.py)
+datasets/*.json
+!datasets/.gitkeep
+
 # jupyter notebook
 notebook/

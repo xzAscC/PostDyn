@@ -71,12 +71,17 @@ The experiment covers three post-training method families:
 
 ## Layer Selection
 
-Per the experimental setup, the DIM pipeline is applied at 10 evenly-spaced depth positions: 10%, 20%, ..., 100% of the model's transformer layers. For OLMo-3 7B (32 layers), this yields layer indices `[3, 6, 9, 12, 16, 19, 22, 25, 28, 31]`.
+Per the experimental setup, the DiM pipeline is applied at 10 depth positions
+selected via the slide formula `ℓ_j = round[(0.1 + 0.8·j/9)·(L-1)]` for
+`j = 0..9`. For OLMo-3 7B (32 layers, `L-1 = 31`) this yields layer indices
+`[3, 6, 9, 11, 14, 17, 20, 22, 25, 28]`.
 
-The percentages and a helper function are defined in `src/config.py`:
-- `EXPERIMENT_LAYER_PERCENTAGES = [0.1, 0.2, ..., 1.0]`
-- `compute_experiment_layers(n_layers)` — maps percentages to 0-indexed layer indices
+The formula is implemented in `src/config.py`:
+
+- `compute_experiment_layers(n_layers, n=10)` — applies the slide formula
 - `EXPERIMENT_LAYERS_7B` — pre-computed for the 32-layer architecture
+- `src.concept_dynamics.select_uniform_layers(n_layers, n=10)` — the same
+  formula used inside the extraction pipeline
 
 ## Method: Difference-in-Means (DIM)
 

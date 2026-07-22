@@ -29,19 +29,24 @@ from src.concept_steering import ConceptSteeringVector
 
 
 def select_uniform_layers(n_layers: int, n: int = 10) -> list[int]:
-    """Select n layers uniformly spaced at 10%, 20%, ..., 100% of depth.
+    """Select n layer indices via the slide formula.
 
-    For OLMo-3-7B (32 layers, n=10): [3, 6, 9, 12, 16, 19, 22, 25, 28, 31].
+    For j = 0..n-1 and L layers: ell_j = round[(0.1 + 0.8*j/(n-1)) * (L-1)].
+    For OLMo-3-7B (32 layers, n=10): [3, 6, 9, 11, 14, 17, 20, 22, 25, 28].
 
     Args:
         n_layers: Total number of transformer layers.
         n: Number of layers to select (default: 10).
 
     Returns:
-        List of 0-indexed layer indices.
+        List of 0-indexed layer indices in slide range (10% to 90% of L-1).
     """
-    percentages = [i / n for i in range(1, n + 1)]
-    return [min(int(p * n_layers), n_layers - 1) for p in percentages]
+    if n <= 0:
+        return []
+    if n == 1:
+        return [int(round(0.5 * (n_layers - 1)))]
+    span = max(n_layers - 1, 0)
+    return [int(round((0.1 + 0.8 * j / (n - 1)) * span)) for j in range(n)]
 
 
 # =============================================================================
@@ -94,6 +99,7 @@ def extract_layer_activations(
     texts: list[str],
     layers: list[int],
     max_seq_len: int = 512,
+    use_chat_template: bool = True,
 ) -> dict[int, torch.Tensor]:
     """Extract last-token hidden states at specified layers.
 
@@ -112,6 +118,12 @@ def extract_layer_activations(
         texts: List of input strings.
         layers: List of 0-indexed transformer layer indices to extract.
         max_seq_len: Maximum sequence length for tokenization.
+        use_chat_template: If True (default) and the tokenizer exposes
+            ``apply_chat_template``, each text is wrapped as a single
+            ``[{"role": "user", "content": text}]`` message before
+            tokenization. Any failure inside ``apply_chat_template`` falls
+            back to the raw text so a missing or partial template cannot
+            abort the whole extraction run.
 
     Returns:
         {layer_idx: (n_texts, d_model)} tensor of last-token activations.
@@ -132,43 +144,83 @@ def extract_layer_activations(
                 f"{n_model_layers} layers"
             )
 
-    # Accumulate per-layer last-token hidden states
+    chat_template_fn = _resolve_chat_template_fn(tokenizer, use_chat_template)
+    formatted_texts = [
+        _apply_chat_template_safely(chat_template_fn, text, fallback=text)
+        for text in texts
+    ]
+
     layer_features: dict[int, list[torch.Tensor]] = {layer: [] for layer in layers}
-    d_model: int = 0
-
     device = getattr(model, "device", torch.device("cpu"))
+    batch_size = 8
+    if hasattr(model, "parameters"):
+        try:
+            device = next(model.parameters()).device
+        except StopIteration:
+            pass
 
-    for text in texts:
+    for start in range(0, len(formatted_texts), batch_size):
+        batch_texts = formatted_texts[start : start + batch_size]
         inputs = tokenizer(
-            text,
+            batch_texts,
             return_tensors="pt",
             truncation=True,
             max_length=max_seq_len,
+            padding=True,
         )
-        # Move inputs to model device
         inputs = {k: v.to(device) for k, v in inputs.items()}
 
         with torch.no_grad():
             outputs = model(**inputs, output_hidden_states=True)
 
         hidden_states = outputs.hidden_states
-        input_ids = inputs["input_ids"]
-        seq_len = input_ids.shape[1]
-        last_token_idx = seq_len - 1
+        attention_mask = inputs.get("attention_mask")
+        if attention_mask is None:
+            last_indices = torch.full(
+                (inputs["input_ids"].shape[0],),
+                inputs["input_ids"].shape[1] - 1,
+                device=inputs["input_ids"].device,
+                dtype=torch.long,
+            )
+        else:
+            last_indices = attention_mask.to(dtype=torch.long).sum(dim=1) - 1
 
+        batch_idx = torch.arange(
+            last_indices.shape[0], device=last_indices.device, dtype=torch.long
+        )
         for layer_idx in layers:
-            # hidden_states[layer_idx + 1] because index 0 = embedding
             hs = hidden_states[layer_idx + 1]
-            # Shape: (1, seq_len, d_model) → extract last token
-            last_tok = hs[0, last_token_idx, :].detach().cpu().float()
-            layer_features[layer_idx].append(last_tok)
-            if d_model == 0:
-                d_model = last_tok.shape[0]
+            last_tok = hs[batch_idx, last_indices, :].detach().cpu().float()
+            for row in range(last_tok.shape[0]):
+                layer_features[layer_idx].append(last_tok[row])
 
         del outputs, hidden_states, inputs
 
-    # Stack into (n_texts, d_model) per layer
     return {layer: torch.stack(layer_features[layer], dim=0) for layer in layers}
+
+
+def _resolve_chat_template_fn(tokenizer, use_chat_template: bool):
+    """Return ``tokenizer.apply_chat_template`` when it should be used, else None."""
+    if not use_chat_template:
+        return None
+    fn = getattr(tokenizer, "apply_chat_template", None)
+    if fn is None or not callable(fn):
+        return None
+    return fn
+
+
+def _apply_chat_template_safely(chat_template_fn, text: str, *, fallback: str) -> str:
+    """Wrap ``text`` as a user message via ``chat_template_fn`` or return ``fallback``."""
+    if chat_template_fn is None:
+        return fallback
+    try:
+        return chat_template_fn(
+            [{"role": "user", "content": text}],
+            tokenize=False,
+            add_generation_prompt=False,
+        )
+    except Exception:
+        return fallback
 
 
 def _detect_num_layers(model) -> int:
@@ -583,6 +635,7 @@ def run_model_extraction(
     max_seq_len: int = 2048,
     checkpoint: str = "final",
     revision: Optional[str] = None,
+    use_chat_template: bool = True,
 ) -> dict:
     """Extract concept vectors for one model checkpoint at specified layers."""
     import gc
@@ -600,6 +653,7 @@ def run_model_extraction(
         f"Concept extraction: {model_name} / {checkpoint} ({model_config.hf_id} rev={eff_revision})"
     )
     print(f"Concepts: {concepts}, Layers: {layers}, Samples: {n_samples}")
+    print(f"Chat template: {'on' if use_chat_template else 'off'}")
     print(f"{'=' * 60}")
 
     # Step 1: Load all contrastive texts upfront (no model needed)
@@ -627,6 +681,7 @@ def run_model_extraction(
                 pos_texts,
                 layers,
                 max_seq_len=max_seq_len,
+                use_chat_template=use_chat_template,
             )
             neg_acts = extract_layer_activations(
                 model,
@@ -634,6 +689,7 @@ def run_model_extraction(
                 neg_texts,
                 layers,
                 max_seq_len=max_seq_len,
+                use_chat_template=use_chat_template,
             )
 
             # Compute + save concept vector per layer
@@ -679,6 +735,7 @@ def run_model_extraction(
         "concepts": concepts,
         "layers": layers,
         "n_samples": n_samples,
+        "use_chat_template": use_chat_template,
         "elapsed_seconds": round(elapsed, 1),
     }
 
@@ -761,6 +818,9 @@ def run_full_experiment(
     output_dir: str,
     max_seq_len: int = 2048,
     clean_hf_cache: bool = True,
+    use_chat_template: bool = True,
+    max_checkpoints_per_model: int | None = None,
+    checkpoint_override: dict[str, list[str]] | None = None,
 ) -> dict:
     """Run concept extraction across all models × checkpoints, then dynamics."""
     import json
@@ -791,7 +851,12 @@ def run_full_experiment(
             continue
 
         config = OLMO3_VARIANTS[name]
-        checkpoints = MODEL_CHECKPOINTS.get(name, ["main"])
+        if checkpoint_override and name in checkpoint_override:
+            checkpoints = list(checkpoint_override[name])
+        else:
+            checkpoints = list(MODEL_CHECKPOINTS.get(name, ["main"]))
+            if max_checkpoints_per_model is not None:
+                checkpoints = checkpoints[: max(0, max_checkpoints_per_model)]
 
         for ckpt in checkpoints:
             ckpt_key = f"{name}/{ckpt}"
@@ -817,6 +882,7 @@ def run_full_experiment(
                     max_seq_len,
                     checkpoint=ckpt,
                     revision=ckpt,
+                    use_chat_template=use_chat_template,
                 )
                 all_results["extraction"][ckpt_key] = stats
                 if ckpt_key not in all_results["checkpoints_done"]:
