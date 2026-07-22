@@ -16,43 +16,58 @@ uv sync --group dev
 
 ## Concept dynamics (Olmo-3-7B)
 
-Trace DiM concept directions across **59 checkpoints × 10 layers × 7 models**,
-using four **aligned paired** steering concepts:
+Trace DiM concept directions across **58 checkpoints × 10 layers × 6 trajectories × 46 paired concepts**.
 
-| Concept key | Source | Direction |
-|-------------|--------|-----------|
-| `python_vs_cpp` | HumanEval-X | Python − C++ |
-| `concise_math_reasoning_vs_verbose_math_reasoning` | MATH-500 | Concise − Verbose |
-| `french_vs_english_language` | FLORES+ | French − English |
-| `female_vs_male_gender` | WinoGender | Female − Male |
+The 6 default trajectories (Think-SFT + the five RL-Zero variants) cover every
+post-training branch of Olmo-3-7B that ships a real checkpoint series. The
+46-concept catalogue (`src/contrastive_datasets.all_concept_keys()`) spans the
+four PaCE domains: code, math, instruction-following, and social/gender, plus
+sentiment and refusal add-ons.
+
+Arrow polarity is always A→B with +B − A. Representative keys:
+
+| Concept | Domain | Direction |
+|---------|--------|-----------|
+| `code_python_vs_cpp` | HumanEval-X (20 directed pairs) | Python → C++ |
+| `math_cot_vs_direct` | MATH-500 | CoT → direct answer |
+| `math_informal_vs_formal` | MiniF2F | informal → Lean |
+| `math_nl_vs_equations` | BeyondX | NL → equations |
+| `if_eng_vs_fra` | Belebele (20 directed pairs) | Eng → Fr |
+| `gender_she_vs_he` | WinoGender | she → he |
+| `sentiment_label0_vs_label1` | SST-2 | label0 → label1 |
+| `refusal_harmful_vs_benign` | LLM-LAT | harmful → benign |
 
 Details: [`docs/concept_dynamics_experiment.md`](docs/concept_dynamics_experiment.md).
 
 ### Preflight / data prep
 
 ```bash
-# Validate 50 aligned HumanEval-X canonical pairs (sandbox + JSONL report)
-uv run python experiments/validate_humaneval_x.py
+# Stream-download all concept sources into datasets/*.json
+uv run python experiments/download_datasets.py
 
-# Prepare 50 verified MATH-500 concise/verbose pairs (math-verify gate)
-uv run python experiments/prepare_math_pairs.py
+# Optional: sandbox-validate HumanEval-X python/cpp pairs
+uv run python experiments/validate_humaneval_x.py
 ```
 
-FLORES+ is gated on Hugging Face: accept terms for
-`openlanguagedata/flores_plus`, then `uv run hf auth login` or set `HF_TOKEN`.
+Some HF datasets may require `HF_TOKEN` (`uv run hf auth login` or export it).
 
 ### Run extraction + dynamics
 
 ```bash
-# Full run (default output: results/concept_dynamics_paired)
+# Full run: 6 trajectories × 46 concepts × 10 layers × 50 samples
+# Output: results/concept_dynamics_multi
 experiments/run_concept_dynamics.sh full
 
-# Quick smoke test → results/concept_dynamics_paired_quick
+# Quick smoke test → results/concept_dynamics_multi_quick
 experiments/run_concept_dynamics.sh quick
 
-# Skip gated FLORES+ while access is pending
+# Subset
 uv run python experiments/run_concept_dynamics.py \
-  --concepts python_vs_cpp,concise_math_reasoning_vs_verbose_math_reasoning,female_vs_male_gender
+  --concepts code_python_vs_cpp,math_cot_vs_direct,if_eng_vs_fra,gender_she_vs_he
+
+# Gram + stability heatmaps
+uv run python experiments/plot_concept_dynamics.py \
+  --input results/concept_dynamics_multi
 ```
 
 Optional controls / pipelines:
@@ -83,21 +98,17 @@ PostDyn/
 ├── main.py                 # effective-rank CLI
 ├── src/
 │   ├── concept_dynamics.py # DiM extraction + stability / Gram analysis
-│   ├── contrastive_datasets.py
-│   ├── humaneval_x_validator.py
-│   ├── math_pairs.py
-│   ├── gender_surface_analysis.py
-│   └── ...                 # rank / activation / steering modules
+│   ├── contrastive_datasets.py  # 46-concept loaders (local datasets/)
+│   ├── dataset_store.py
+│   └── ...
 ├── experiments/
+│   ├── download_datasets.py
 │   ├── run_concept_dynamics.{py,sh}
-│   ├── validate_humaneval_x.py
-│   ├── prepare_math_pairs.py
-│   ├── analyze_gender_surface_control.py
-│   └── run_flores_pipeline.py
-├── docs/                   # design, methodology, experiment notes
+│   ├── plot_concept_dynamics.py
+│   └── ...
+├── datasets/               # materialized JSONs (gitignored; download_datasets.py)
+├── docs/
 ├── tests/
-├── notebook/
-├── data/                   # local pair artifacts (e.g. MATH-500 JSONL)
 └── results/                # generated outputs (gitignored)
 ```
 
