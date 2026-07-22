@@ -22,12 +22,12 @@ from src.concept_dynamics import (
 from src.config import EXPERIMENT_LAYERS_7B, MODEL_CHECKPOINTS, OLMO3_VARIANTS
 from src.contrastive_datasets import load_flores_pairs
 
-CONCEPT = "french_vs_english_language"
+CONCEPT = "if_eng_vs_fra"
 ALL_CONCEPTS = [
-    "python_vs_cpp",
-    "concise_math_reasoning_vs_verbose_math_reasoning",
-    "french_vs_english_language",
-    "female_vs_male_gender",
+    "code_python_vs_cpp",
+    "math_cot_vs_direct",
+    "if_eng_vs_fra",
+    "gender_she_vs_he",
 ]
 OUTPUT_DIR = "results/concept_dynamics_paired"
 LAYERS = EXPERIMENT_LAYERS_7B
