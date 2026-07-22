@@ -80,10 +80,17 @@ class MockTokenizer:
         self.pad_token = "<pad>"
         self.eos_token = "<eos>"
 
-    def __call__(self, text, return_tensors=None, truncation=True, max_length=None):
-        # Return fixed seq_len regardless of input text
-        input_ids = torch.randint(0, 1000, (1, self._seq_len))
-        attention_mask = torch.ones(1, self._seq_len)
+    def __call__(
+        self,
+        text,
+        return_tensors=None,
+        truncation=True,
+        max_length=None,
+        padding=False,
+    ):
+        batch = 1 if isinstance(text, str) else len(text)
+        input_ids = torch.randint(0, 1000, (batch, self._seq_len))
+        attention_mask = torch.ones(batch, self._seq_len)
         return {"input_ids": input_ids, "attention_mask": attention_mask}
 
 
@@ -527,7 +534,7 @@ class TestConceptGramMatrices:
 
 
 class TestSelectUniformLayers:
-    """Test uniform layer selection."""
+    """Test uniform layer selection via the slide formula."""
 
     def test_10_layers_from_32(self):
         layers = select_uniform_layers(32, n=10)
@@ -541,9 +548,15 @@ class TestSelectUniformLayers:
         layers = select_uniform_layers(32, n=10)
         assert layers == EXPERIMENT_LAYERS_7B
 
-    def test_uniformly_spaced(self):
-        """Layers should cover 10% to 100% of depth."""
+    def test_slide_range_for_32_layers(self):
+        """ell_0 = round(0.1*31) = 3; ell_9 = round(0.9*31) = 28."""
         layers = select_uniform_layers(32, n=10)
-        # First layer ≈ 10%, last layer = last index
-        assert layers[0] == 3  # int(0.1 * 32) = 3
-        assert layers[-1] == 31  # min(int(1.0 * 32), 31) = 31
+        assert layers[0] == 3
+        assert layers[-1] == 28
+        assert layers == [3, 6, 9, 11, 14, 17, 20, 22, 25, 28]
+
+    def test_n_one_returns_middle(self):
+        assert select_uniform_layers(32, n=1) == [16]
+
+    def test_n_zero_returns_empty(self):
+        assert select_uniform_layers(32, n=0) == []

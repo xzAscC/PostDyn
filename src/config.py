@@ -418,25 +418,35 @@ RL_ZERO_FAMILY: list[str] = [
 # Early stage; will expand toward ~10 per TrainingDynamic.tex.
 EXPERIMENT_MODELS: list[str] = THINK_CHAIN + RL_ZERO_FAMILY
 
-# Layer selection: 10 layers at 10%, 20%, ..., 100% of model depth.
-# Per TrainingDynamic.tex line 8.
-EXPERIMENT_LAYER_PERCENTAGES: list[float] = [
-    0.1,
-    0.2,
-    0.3,
-    0.4,
-    0.5,
-    0.6,
-    0.7,
-    0.8,
-    0.9,
-    1.0,
-]
+# Layer selection: slide formula (per docs/concept_dynamics_experiment.md).
+# For j = 0..n-1 and L layers, the layer index is
+#     ell_j = round[(0.1 + 0.8 * j / (n-1)) * (L - 1)]
+# so the sampled depth range slides from ~10% to ~90% of (L-1). For OLMo-3
+# 7B (32 layers, n=10) this yields [3, 6, 9, 11, 14, 17, 20, 22, 25, 28].
+EXPERIMENT_LAYER_SLIDE_START: float = 0.1
+EXPERIMENT_LAYER_SLIDE_WIDTH: float = 0.8
 
 
-def compute_experiment_layers(n_layers: int) -> list[int]:
-    """Map depth percentages to 0-indexed layer indices."""
-    return [min(int(p * n_layers), n_layers - 1) for p in EXPERIMENT_LAYER_PERCENTAGES]
+def compute_experiment_layers(n_layers: int, n: int = 10) -> list[int]:
+    """Map the slide formula to 0-indexed layer indices.
+
+    For j = 0..n-1: ell_j = round[(0.1 + 0.8*j/(n-1)) * (n_layers - 1)].
+
+    Args:
+        n_layers: Total number of transformer layers in the model.
+        n: Number of layers to sample (default 10).
+
+    Returns:
+        Sorted list of 0-indexed layer indices in the slide range.
+    """
+    if n <= 0:
+        return []
+    if n == 1:
+        return [int(round(0.5 * (n_layers - 1)))]
+    start = EXPERIMENT_LAYER_SLIDE_START
+    width = EXPERIMENT_LAYER_SLIDE_WIDTH
+    span = max(n_layers - 1, 0)
+    return [int(round((start + width * j / (n - 1)) * span)) for j in range(n)]
 
 
 # Pre-computed for OLMo-3 7B (32 transformer layers)
