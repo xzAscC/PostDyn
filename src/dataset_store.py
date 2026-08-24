@@ -53,6 +53,12 @@ SST2_FILE: str = "sst2.json"
 LLM_LAT_HARMFUL_FILE: str = "llm_lat_harmful.json"
 LLM_LAT_BENIGN_FILE: str = "llm_lat_benign.json"
 
+# Diagnostic syntax-validity pairs produced by the RL-Zero-Code concept
+# builder. Lives at a nested path (built by build_rl_zero_syntax_concept.py,
+# not streamed by download_datasets.py) but resolves correctly through
+# ``dataset_path()`` since it accepts relative subpaths.
+PYTHON_SYNTAX_PAIRS_FILE: str = "allenai/Dolci-RL-Zero-Code-7B/python_syntax_pairs.json"
+
 ALL_DATASET_FILES: tuple[str, ...] = (
     HUMANEVAL_X_FILE,
     MINIF2F_FILE,
@@ -63,6 +69,7 @@ ALL_DATASET_FILES: tuple[str, ...] = (
     SST2_FILE,
     LLM_LAT_HARMFUL_FILE,
     LLM_LAT_BENIGN_FILE,
+    PYTHON_SYNTAX_PAIRS_FILE,
 )
 
 # =============================================================================

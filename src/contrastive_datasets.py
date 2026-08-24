@@ -1,7 +1,7 @@
-"""Contrastive dataset loaders for the 46-concept PaCE study.
+"""Contrastive dataset loaders for the 47-concept PaCE study.
 
 This module reads materialized JSON files under ``datasets/`` (produced by
-``experiments/download_datasets.py``) and exposes the 46 concept directions
+``experiments/download_datasets.py``) and exposes the 47 concept directions
 from the 20260724 slides:
 
 * **Code (20)**: all 5x4 directed pairs over {python, cpp, java, js, go}
@@ -13,6 +13,9 @@ from the 20260724 slides:
   50 shared Belebele items.
 * **General (3)**: ``gender_she_vs_he`` (WinoGender), ``sentiment_label0_vs_label1``
   (SST-2), ``refusal_harmful_vs_benign`` (LLM-LAT).
+* **Syntax (1)**: ``python_valid_vs_syntax_error`` (Dolci-RL-Zero-Code-7B) --
+  data-only diagnostic pairing valid Python programs with one-mutation
+  syntax errors.
 
 A small number of **legacy aliases** keep older callers working with the new
 polarity (callers must be aware that the polarity now follows the slides).
@@ -90,6 +93,7 @@ from src.dataset_store import (  # noqa: E402
     LLM_LAT_HARMFUL_FILE,
     MATH500_FILE,
     MINIF2F_FILE,
+    PYTHON_SYNTAX_PAIRS_FILE,
     SST2_FILE,
     WINOGENDER_FILE,
     dataset_path,
@@ -214,14 +218,24 @@ def _build_concepts() -> dict[str, dict[str, str]]:
         "positive": "benign",
         "negative": "harmful",
     }
+    # Diagnostic syntax-validity concept (data-only). The arrow follows the
+    # registry's negative->positive convention: +syntax_valid -syntax_error.
+    concepts["python_valid_vs_syntax_error"] = {
+        "domain": "syntax",
+        "name": "Dolci-RL-Zero-Code-7B syntax_error->syntax_valid",
+        "dataset": "Dolci-RL-Zero-Code-7B",
+        "direction": "syntax_error->syntax_valid",
+        "positive": "syntax_valid",
+        "negative": "syntax_error",
+    }
     return concepts
 
 
-#: Canonical 46 concepts (no aliases).
+#: Canonical 47 concepts (no aliases).
 CONCEPTS: dict[str, dict[str, str]] = _build_concepts()
 
 #: Legacy alias. Older code used ``PAIRED_CONCEPTS``; it now maps to the same
-#: 46-key registry. Callers that hard-coded one of the legacy keys must check
+#: 47-key registry. Callers that hard-coded one of the legacy keys must check
 #: the new polarity.
 PAIRED_CONCEPTS: dict[str, dict[str, str]] = CONCEPTS
 
@@ -251,7 +265,7 @@ def list_concepts() -> list[str]:
 
 
 def all_concept_keys() -> list[str]:
-    """Return the 46 canonical concept keys (no aliases)."""
+    """Return the 47 canonical concept keys (no aliases)."""
     return sorted(CONCEPTS.keys())
 
 
@@ -907,6 +921,62 @@ def load_refusal_pairs(
 
 
 # =============================================================================
+# Python syntax-validity diagnostic (Dolci-RL-Zero-Code-7B)
+# =============================================================================
+
+
+def load_python_syntax_pairs(
+    n_samples: int = DEFAULT_N_SAMPLES,
+) -> list[tuple[str, str]]:
+    """Load aligned ``(positive=syntax_valid, negative=syntax_error)`` pairs.
+
+    Reads the diagnostic JSON produced by
+    ``experiments/build_rl_zero_syntax_concept.py``. Each item carries a valid
+    full Python program under ``positive`` and the same program with one
+    deterministic syntax mutation under ``negative``.
+    """
+    if n_samples <= 0:
+        return []
+    path = dataset_path(PYTHON_SYNTAX_PAIRS_FILE)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing dataset {PYTHON_SYNTAX_PAIRS_FILE} for concept "
+            f"'python_valid_vs_syntax_error'. Run "
+            f"`uv run python experiments/build_rl_zero_syntax_concept.py` first."
+        )
+    data = load_dataset_json(PYTHON_SYNTAX_PAIRS_FILE)
+    items = data.get("items", [])
+    if not isinstance(items, list):
+        raise ValueError(
+            f"{PYTHON_SYNTAX_PAIRS_FILE}: expected 'items' list, got "
+            f"{type(items).__name__}."
+        )
+    pairs: list[tuple[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"{PYTHON_SYNTAX_PAIRS_FILE}: expected dict items, got "
+                f"{type(item).__name__}."
+            )
+        positive = str(item.get("positive", ""))
+        negative = str(item.get("negative", ""))
+        # Check non-empty via .strip() but return the raw code unchanged: the
+        # negatives rely on leading indentation to be syntactically invalid,
+        # so stripping the stored string would silently "fix" them.
+        if not positive.strip() or not negative.strip():
+            continue
+        pairs.append((positive, negative))
+        if len(pairs) >= n_samples:
+            break
+    if len(pairs) < n_samples:
+        raise ValueError(
+            f"python_valid_vs_syntax_error: only {len(pairs)} usable pairs "
+            f"(need {n_samples})."
+        )
+    return pairs
+
+
+# =============================================================================
 # Concept dispatcher
 # =============================================================================
 
@@ -939,6 +1009,7 @@ _LOADERS: dict[str, Callable[[int], list[tuple[str, str]]]] = {
     "gender_she_vs_he": load_winogender_pairs,
     "sentiment_label0_vs_label1": load_sst2_pairs,
     "refusal_harmful_vs_benign": load_refusal_pairs,
+    "python_valid_vs_syntax_error": load_python_syntax_pairs,
 }
 # Add code/IF directed loaders.
 for _concept_key in [k for k, v in CONCEPTS.items() if v["domain"] == "code"]:
@@ -959,7 +1030,7 @@ def load_contrastive_texts(
     """Load ``(positive, negative)`` text samples for a concept.
 
     Args:
-        concept: One of the 46 canonical keys (or a legacy alias).
+        concept: One of the 47 canonical keys (or a legacy alias).
         n_samples: Number of aligned/unpaired samples per side (default: 50).
 
     Returns:
@@ -1004,6 +1075,7 @@ __all__ = [
     "load_winogender_pairs",
     "load_sst2_pairs",
     "load_refusal_pairs",
+    "load_python_syntax_pairs",
     "load_flores_pairs",
     "list_concepts",
     "all_concept_keys",

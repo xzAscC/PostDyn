@@ -1,12 +1,13 @@
-"""Tests for the 46-concept contrastive dataset loaders.
+"""Tests for the 47-concept contrastive dataset loaders.
 
 All dataset/file/URL access is mocked — tests are fully offline. Covers:
 
-* Concept registry (46 canonical keys + 3 aliases).
+* Concept registry (47 canonical keys + 3 aliases).
 * Code domain (20 directed HumanEval-X pairs from materialized JSON).
 * Math domain (MiniF2F / BeyondX / MATH-500 CoT vs direct).
 * IF domain (20 directed Belebele pairs from materialized JSON).
 * General domain (WinoGender nominative / SST-2 / LLM-LAT refusal).
+* Syntax domain (1: ``python_valid_vs_syntax_error`` diagnostic).
 * Public API (``load_contrastive_texts``, ``list_concepts``, ``all_concept_keys``).
 * Legacy aliases and clear error messages on missing datasets.
 """
@@ -178,6 +179,48 @@ def _llm_lat_payload(kind: str, n: int = 100):
     return {"dataset": f"LLM-LAT/{kind}", "texts": texts}
 
 
+def _python_syntax_pairs_payload(n: int = 60):
+    """Build a synthetic python_syntax_pairs payload.
+
+    Each positive is a valid Python program; each negative is the same program
+    with one deterministic mutation that raises SyntaxError/IndentationError.
+    """
+    mutations = (
+        ("drop_def_colon", lambda p: p.replace("):", ")", 1)),
+        ("indent_def_header", lambda p: "    " + p),
+    )
+    items = []
+    for i in range(n):
+        positive = f"def f{i}(x):\n    return x + {i}\n"
+        kind, transform = mutations[i % len(mutations)]
+        negative = transform(positive)
+        items.append(
+            {
+                "id": f"syn_{i}",
+                "source_task_id": f"Python/{100 + i}",
+                "numeric_id": 100 + i,
+                "mutation_kind": kind,
+                "positive": positive,
+                "negative": negative,
+                "positive_sha256": f"p{i:064d}",
+                "negative_sha256": f"n{i:064d}",
+                "provenance": {},
+                "validation": {
+                    "positive_compiles": True,
+                    "positive_compile_error": None,
+                    "negative_compiles": False,
+                    "negative_compile_error_type": "SyntaxError",
+                },
+            }
+        )
+    return {
+        "dataset": "allenai/Dolci-RL-Zero-Code-7B",
+        "artifact": "python_syntax_pairs",
+        "concept": {"name": "python_valid_vs_syntax_error"},
+        "items": items,
+    }
+
+
 def _write_all_datasets(tmp_path):
     _write_json(tmp_path / "humaneval_x.json", _humaneval_payload())
     _write_json(tmp_path / "belebele.json", _belebele_payload())
@@ -188,6 +231,9 @@ def _write_all_datasets(tmp_path):
     _write_json(tmp_path / "sst2.json", _sst2_payload())
     _write_json(tmp_path / "llm_lat_harmful.json", _llm_lat_payload("harmful-dataset"))
     _write_json(tmp_path / "llm_lat_benign.json", _llm_lat_payload("benign-dataset"))
+    nested = tmp_path / "allenai" / "Dolci-RL-Zero-Code-7B"
+    nested.mkdir(parents=True, exist_ok=True)
+    _write_json(nested / "python_syntax_pairs.json", _python_syntax_pairs_payload())
 
 
 # =============================================================================
@@ -256,8 +302,8 @@ class TestStripCodeFences:
 
 
 class TestConceptRegistry:
-    def test_registry_has_46_canonical_concepts(self):
-        assert len(all_concept_keys()) == 46
+    def test_registry_has_47_canonical_concepts(self):
+        assert len(all_concept_keys()) == 47
 
     def test_paired_concepts_alias_matches_concepts(self):
         assert cd.PAIRED_CONCEPTS is CONCEPTS
@@ -350,6 +396,13 @@ class TestConceptMetadata:
         entry = CONCEPTS["math_nl_vs_equations"]
         assert entry["positive"] == "equations"
         assert entry["negative"] == "nl"
+
+    def test_python_valid_vs_syntax_error_polarity(self):
+        entry = CONCEPTS["python_valid_vs_syntax_error"]
+        # +syntax_valid (compiles) -syntax_error (raises SyntaxError)
+        assert entry["positive"] == "syntax_valid"
+        assert entry["negative"] == "syntax_error"
+        assert entry["domain"] == "syntax"
 
 
 # =============================================================================
@@ -684,12 +737,102 @@ class TestRefusalPairs:
 
 
 # =============================================================================
+# Python syntax-validity diagnostic (Dolci-RL-Zero-Code-7B)
+# =============================================================================
+
+
+def _write_python_syntax_payload(tmp_path, **payload_kwargs):
+    nested = tmp_path / "allenai" / "Dolci-RL-Zero-Code-7B"
+    nested.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        nested / "python_syntax_pairs.json",
+        _python_syntax_pairs_payload(**payload_kwargs),
+    )
+    return nested / "python_syntax_pairs.json"
+
+
+class TestPythonSyntaxPairs:
+    def test_valid_is_positive_syntax_error_is_negative(self, _isolated_datasets):
+        _write_python_syntax_payload(_isolated_datasets)
+        pairs = cd.load_python_syntax_pairs(n_samples=10)
+        assert len(pairs) == 10
+        for positive, negative in pairs:
+            compile(positive, "<pos>", "exec")
+            with pytest.raises((SyntaxError, IndentationError)):
+                compile(negative, "<neg>", "exec")
+
+    def test_loader_returns_raw_code_unstripped(self, _isolated_datasets):
+        payload = _python_syntax_pairs_payload(n=3)
+        # Force an indent_def_header negative whose leading indent must survive.
+        payload["items"][1]["negative"] = "    def indented():\n    return 1\n"
+        _write_python_syntax_payload(_isolated_datasets)
+        nested = _isolated_datasets / "allenai" / "Dolci-RL-Zero-Code-7B"
+        _write_json(nested / "python_syntax_pairs.json", payload)
+        pairs = cd.load_python_syntax_pairs(n_samples=3)
+        _, second_negative = pairs[1]
+        assert second_negative.startswith("    def indented")
+        with pytest.raises(IndentationError):
+            compile(second_negative, "<neg>", "exec")
+
+    def test_public_api_returns_50_each(self, _isolated_datasets):
+        _write_python_syntax_payload(_isolated_datasets)
+        pos, neg = load_contrastive_texts("python_valid_vs_syntax_error", n_samples=50)
+        assert len(pos) == 50
+        assert len(neg) == 50
+        assert all(p.startswith("def f") for p in pos)
+        for positive in pos:
+            compile(positive, "<pos>", "exec")
+        for negative in neg:
+            with pytest.raises((SyntaxError, IndentationError)):
+                compile(negative, "<neg>", "exec")
+
+    def test_zero_n_samples_returns_empty(self, _isolated_datasets):
+        _write_python_syntax_payload(_isolated_datasets)
+        assert cd.load_python_syntax_pairs(n_samples=0) == []
+
+    def test_missing_dataset_raises_mentioning_builder(self, _isolated_datasets):
+        with pytest.raises(FileNotFoundError, match="build_rl_zero_syntax_concept"):
+            cd.load_python_syntax_pairs(n_samples=10)
+
+    def test_insufficient_pairs_raises(self, _isolated_datasets):
+        _write_python_syntax_payload(_isolated_datasets, n=5)
+        with pytest.raises(ValueError, match="only 5"):
+            cd.load_python_syntax_pairs(n_samples=10)
+
+    def test_skips_items_with_empty_sides(self, _isolated_datasets):
+        payload = _python_syntax_pairs_payload(n=12)
+        payload["items"][0]["positive"] = "   \n"
+        payload["items"][1]["negative"] = ""
+        _write_python_syntax_payload(_isolated_datasets)
+        nested = _isolated_datasets / "allenai" / "Dolci-RL-Zero-Code-7B"
+        _write_json(nested / "python_syntax_pairs.json", payload)
+        pairs = cd.load_python_syntax_pairs(n_samples=10)
+        assert len(pairs) == 10
+
+    def test_non_list_items_raises_schema_error(self, _isolated_datasets):
+        _write_python_syntax_payload(_isolated_datasets)
+        nested = _isolated_datasets / "allenai" / "Dolci-RL-Zero-Code-7B"
+        _write_json(nested / "python_syntax_pairs.json", {"items": "not-a-list"})
+        with pytest.raises(ValueError, match="expected 'items' list"):
+            cd.load_python_syntax_pairs(n_samples=5)
+
+    def test_non_dict_item_raises_schema_error(self, _isolated_datasets):
+        _write_python_syntax_payload(_isolated_datasets)
+        nested = _isolated_datasets / "allenai" / "Dolci-RL-Zero-Code-7B"
+        payload = _python_syntax_pairs_payload(n=5)
+        payload["items"][2] = "not-a-dict"
+        _write_json(nested / "python_syntax_pairs.json", payload)
+        with pytest.raises(ValueError, match="expected dict items"):
+            cd.load_python_syntax_pairs(n_samples=5)
+
+
+# =============================================================================
 # Public API integration
 # =============================================================================
 
 
 class TestPublicAPI:
-    def test_all_46_concepts_resolve(self, _isolated_datasets):
+    def test_all_47_concepts_resolve(self, _isolated_datasets):
         _write_all_datasets(_isolated_datasets)
         _write_json(
             _isolated_datasets / "shared_item_ids.json",
