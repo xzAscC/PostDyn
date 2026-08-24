@@ -124,5 +124,6 @@ uv run pytest
 |-----|--------|
 | [`docs/concept_dynamics_experiment.md`](docs/concept_dynamics_experiment.md) | Paired-concept trajectory experiment |
 | [`docs/humaneval_x_validation.md`](docs/humaneval_x_validation.md) | HumanEval-X sandbox preflight |
+| [`docs/downstream_cache_integrity.md`](docs/downstream_cache_integrity.md) | Downstream cache integrity & threat model |
 | [`docs/design.md`](docs/design.md) | Project design |
 | [`docs/methodology.md`](docs/methodology.md) | Effective-rank methodology |
