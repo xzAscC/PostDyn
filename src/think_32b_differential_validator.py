@@ -7,6 +7,7 @@ import json
 import math
 import random
 import re
+import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -100,6 +101,15 @@ class ValidationReport:
 
     def pass_check(self, check: str) -> None:
         self.checks[check] = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "root": self.root,
+            "trajectory": self.trajectory,
+            "ok": self.ok,
+            "checks": self.checks,
+            "errors": self.errors,
+        }
 
 
 def _read(path: Path) -> Any:
@@ -429,9 +439,10 @@ def _basis_error(
         "d_eff_neg",
         "geometry_strength_pos",
         "geometry_strength_neg",
+        *CORE_METRIC_FIELDS,
     )
     if any(
-        key not in meta or not _finite(meta[key])
+        key not in meta or (key != "concept" and not _finite(meta[key]))
         if key not in {"concept"}
         else key not in meta
         for key in required
@@ -491,6 +502,380 @@ def _selection(
 
 def _nonnegative_integer(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _artifact_paths(value: Any) -> list[Path]:
+    if isinstance(value, str) and value.endswith(".safetensors"):
+        return [Path(value)]
+    if isinstance(value, dict):
+        return [path for item in value.values() for path in _artifact_paths(item)]
+    if isinstance(value, list):
+        return [path for item in value for path in _artifact_paths(item)]
+    return []
+
+
+def _histogram_error(value: Any, concepts: list[str], layers: list[int]) -> str | None:
+    if not isinstance(value, dict) or set(value) != {str(layer) for layer in layers}:
+        return "histogram layer coverage is incomplete"
+    for layer in layers:
+        block = value.get(str(layer))
+        if not isinstance(block, dict) or list(block) != concepts:
+            return f"histogram concept coverage is incomplete for layer {layer}"
+        for concept in concepts:
+            item = block[concept]
+            if (
+                not isinstance(item, dict)
+                or item.get("bins") != 32
+                or not isinstance(item.get("range"), list)
+                or len(item["range"]) != 2
+                or not all(_finite(x) for x in item["range"])
+                or not isinstance(item.get("edges"), list)
+                or len(item["edges"]) != 33
+                or not all(_finite(x) for x in item["edges"])
+            ):
+                return f"histogram payload is malformed for {concept} layer {layer}"
+    return None
+
+
+def _residual_error(value: Any) -> str | None:
+    if not isinstance(value, dict) or set(value) != {"pos", "neg"}:
+        return "residual sign coverage is incomplete"
+    for sign in ("pos", "neg"):
+        item = value[sign]
+        required = {"defined", "k_final", "d_res", "observed", "chance", "excess"}
+        if not isinstance(item, dict) or set(item) != required:
+            return f"residual {sign} payload is malformed"
+        if (
+            not isinstance(item["defined"], bool)
+            or not _nonnegative_integer(item["k_final"])
+            or not _nonnegative_integer(item["d_res"])
+        ):
+            return f"residual {sign} dimensions are invalid"
+        if item["defined"]:
+            if not all(_finite(item[key]) for key in ("observed", "chance", "excess")):
+                return f"residual {sign} values are invalid"
+            if not math.isclose(
+                item["excess"],
+                item["observed"] - item["chance"],
+                rel_tol=1e-6,
+                abs_tol=1e-6,
+            ):
+                return f"residual {sign} algebra is inconsistent"
+        elif item["k_final"] != 0 or any(
+            item[key] is not None for key in ("observed", "chance", "excess")
+        ):
+            return f"residual {sign} undefined payload is inconsistent"
+    return None
+
+
+def _resolve_output_path(root: Path, value: Any) -> Path | None:
+    if not isinstance(value, str) or not value:
+        return None
+    path = Path(value)
+    candidates = (
+        path if path.is_absolute() else None,
+        None if path.is_absolute() else Path.cwd() / path,
+        None if path.is_absolute() else root / path,
+        None if path.is_absolute() else root.parent / path,
+    )
+    for candidate in candidates:
+        if candidate is not None and candidate.exists():
+            return candidate.resolve()
+    return (path if path.is_absolute() else root / path).resolve()
+
+
+def _reference_errors(
+    root: Path,
+    model: str,
+    selected: list[str],
+    selected_layers: list[int],
+) -> list[str]:
+    errors: list[str] = []
+    expected_concepts = [
+        concept
+        for concept in (
+            "math_vs_code",
+            "math_vs_instruction_following",
+            "math_vs_general_reasoning",
+        )
+        if concept in CONCEPTS
+    ]
+    for layer in selected_layers:
+        for checkpoint in selected:
+            metrics_path = root / "metrics" / model / checkpoint / f"layer_{layer}.json"
+            try:
+                metrics = _read(metrics_path)
+                concepts = metrics["concepts"]
+                baseline = concepts["math_vs_wikitext"]
+            except (
+                OSError,
+                KeyError,
+                TypeError,
+                ValueError,
+                json.JSONDecodeError,
+            ) as exc:
+                errors.append(
+                    f"{metrics_path}: reference retained dimensions unavailable ({exc})"
+                )
+                continue
+            block = None
+            try:
+                block = _read(root / "metrics" / "stability.json")["layers"][
+                    str(layer)
+                ]["reference_robustness"][checkpoint]
+            except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(block, dict) or set(block) != set(expected_concepts):
+                errors.append(
+                    f"stability.json: reference concept coverage is invalid for {checkpoint} layer {layer}"
+                )
+                continue
+            for concept in expected_concepts:
+                item = block[concept]
+                if not isinstance(item, dict) or set(item) != {"pos", "neg"}:
+                    errors.append(
+                        f"stability.json: reference sign coverage is invalid for {checkpoint} {concept}"
+                    )
+                    continue
+                comparison = concepts.get(concept)
+                for sign in ("pos", "neg"):
+                    sign_item = item[sign]
+                    if (
+                        not isinstance(sign_item, dict)
+                        or set(sign_item) != {"subsim", "k"}
+                        or not _finite(sign_item.get("subsim"))
+                        or not 0.0 <= float(sign_item["subsim"]) <= 1.0
+                        or not _nonnegative_integer(sign_item.get("k"))
+                    ):
+                        errors.append(
+                            f"stability.json: reference {sign} payload is invalid for {checkpoint} {concept}"
+                        )
+                        continue
+                    if (
+                        not isinstance(comparison, dict)
+                        or not _nonnegative_integer(baseline.get(f"k_{sign}"))
+                        or not _nonnegative_integer(comparison.get(f"k_{sign}"))
+                    ):
+                        continue
+                    if sign_item["k"] != min(
+                        baseline[f"k_{sign}"], comparison[f"k_{sign}"]
+                    ):
+                        errors.append(
+                            f"stability.json: reference {sign} k disagrees with retained dimensions for {checkpoint} {concept}"
+                        )
+    return errors
+
+
+def _final_record_errors(
+    root: Path,
+    record: Any,
+    model: str,
+    selected_layers: list[int],
+    concepts: list[str],
+    expected_checkpoint: str,
+    expected_model_key: str,
+) -> list[str]:
+    if not isinstance(record, dict):
+        return ["summary.json: final_main is not an object"]
+    status = record.get("status")
+    if status == "skipped":
+        return []
+    if status != "ok":
+        return ["summary.json: final_main has invalid status"]
+    errors: list[str] = []
+    revision = record.get("revision")
+    setup = record.get("setup_signature")
+    expected_model = next(
+        config.hf_id for config in OLMO3_VARIANTS.values() if config.name == model
+    )
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", str(revision)):
+        errors.append("summary.json: final_main revision is not immutable")
+    if (
+        record.get("model") != expected_model
+        or record.get("model_key") != expected_model_key
+    ):
+        errors.append("summary.json: final_main model provenance mismatch")
+    if not isinstance(setup, str) or not setup:
+        errors.append("summary.json: final_main setup signature is missing")
+    if record.get("checkpoint") != expected_checkpoint:
+        errors.append("summary.json: final_main checkpoint provenance mismatch")
+    root_value = record.get("root")
+    if not isinstance(root_value, str) or not root_value:
+        errors.append("summary.json: final_main root is missing")
+    paths = record.get("artifact_paths")
+    if not isinstance(paths, dict) or list(paths) != concepts:
+        return errors + [
+            "summary.json: final_main concept artifact coverage is incomplete"
+        ]
+    expected_count = len(concepts) * len(selected_layers)
+    found = _artifact_paths(paths)
+    if len(found) != expected_count:
+        errors.append("summary.json: final_main layer artifact coverage is incomplete")
+    final_root = _resolve_output_path(root, root_value)
+    expected_final_root = (root / "final_points").resolve()
+    if final_root != expected_final_root:
+        errors.append(
+            "summary.json: final_main root is not the canonical final_points path"
+        )
+        final_root = expected_final_root
+    for concept in concepts:
+        layer_paths = paths.get(concept)
+        if not isinstance(layer_paths, dict) or set(layer_paths) != {
+            str(x) for x in selected_layers
+        }:
+            errors.append(
+                f"summary.json: final_main layer coverage is incomplete for {concept}"
+            )
+            continue
+        for layer in selected_layers:
+            path = Path(layer_paths[str(layer)])
+            resolved = _resolve_output_path(root, layer_paths[str(layer)])
+            if resolved is None:
+                errors.append(
+                    f"summary.json: final_main artifact path is invalid for {concept} layer {layer}"
+                )
+                continue
+            try:
+                resolved.relative_to(root.resolve())
+                resolved.relative_to(expected_final_root)
+            except ValueError:
+                errors.append(
+                    f"summary.json: final_main artifact path is inconsistent for {concept} layer {layer}"
+                )
+                continue
+            sidecar = resolved.with_suffix(".json")
+            if not resolved.is_file() or not sidecar.is_file():
+                errors.append(
+                    f"summary.json: final_main artifact is missing for {concept} layer {layer}"
+                )
+                continue
+            try:
+                meta = _read(sidecar)
+                error = _basis_error(
+                    resolved,
+                    sidecar,
+                    model,
+                    record["checkpoint"],
+                    str(revision).lower(),
+                    str(setup),
+                    layer,
+                    expected_concept=concept,
+                    require_full=True,
+                )
+            except (
+                KeyError,
+                TypeError,
+                ValueError,
+                OSError,
+                json.JSONDecodeError,
+            ) as exc:
+                errors.append(
+                    f"summary.json: final_main artifact sidecar is invalid ({exc})"
+                )
+                continue
+            if error:
+                errors.append(error)
+    return errors
+
+
+def _optional_record_errors(
+    root: Path,
+    summary: dict[str, Any],
+    stability: dict[str, Any],
+    model: str,
+    selected: list[str],
+    selected_layers: list[int],
+    trajectory: str,
+) -> list[str]:
+    errors: list[str] = []
+    if summary.get("concepts") != list(CONCEPTS):
+        errors.append("summary.json: concept coverage is not canonical")
+    fixed = summary.get("fixed_points")
+    if not isinstance(fixed, dict) or set(fixed) != {"base", "dpo"}:
+        errors.append("summary.json: fixed_points must contain base and dpo")
+    elif any(
+        not isinstance(fixed[name], dict) or fixed[name].get("status") != "unavailable"
+        for name in ("base", "dpo")
+    ):
+        errors.append("summary.json: 32B fixed_points must be unavailable")
+    if "final_main" not in summary:
+        errors.append("summary.json: top-level final_main is missing")
+    else:
+        final_record = summary["final_main"]
+        errors.extend(
+            _final_record_errors(
+                root,
+                final_record,
+                model,
+                selected_layers,
+                list(CONCEPTS),
+                "rlvr_main" if trajectory == "rlvr" else "sft_main",
+                MODEL_BY_TRAJECTORY[trajectory],
+            )
+        )
+        if isinstance(final_record, dict) and final_record.get("status") == "ok":
+            stability_final = stability.get("final_main")
+            if not isinstance(stability_final, dict) or any(
+                stability_final.get(key) != final_record.get(key)
+                for key in ("checkpoint", "setup_signature", "revision", "root")
+            ):
+                errors.append(
+                    "stability.json: final_main provenance disagrees with summary"
+                )
+    histogram_error = _histogram_error(
+        summary.get("histogram"), list(CONCEPTS), selected_layers
+    )
+    if histogram_error:
+        errors.append(f"summary.json: {histogram_error}")
+    if stability.get("histogram") != summary.get("histogram"):
+        errors.append("stability.json: histogram disagrees with summary")
+    for layer in selected_layers:
+        block = stability.get("layers", {}).get(str(layer), {})
+        residual = block.get("residual_to_final")
+        if not isinstance(residual, dict) or set(residual) != set(selected):
+            errors.append(
+                f"stability.json: residual coverage is incomplete for layer {layer}"
+            )
+        else:
+            for checkpoint in selected:
+                if not isinstance(residual[checkpoint], dict) or list(
+                    residual[checkpoint]
+                ) != list(CONCEPTS):
+                    errors.append(
+                        f"stability.json: residual concept coverage is incomplete for layer {layer}"
+                    )
+                else:
+                    for concept in CONCEPTS:
+                        residual_error = _residual_error(residual[checkpoint][concept])
+                        if residual_error:
+                            errors.append(
+                                f"stability.json: {residual_error} for layer {layer}"
+                            )
+        robustness = block.get("reference_robustness")
+        expected_reference_concepts = [
+            concept
+            for concept in (
+                "math_vs_code",
+                "math_vs_instruction_following",
+                "math_vs_general_reasoning",
+            )
+            if concept in CONCEPTS
+        ]
+        if not isinstance(robustness, dict) or set(robustness) != set(selected):
+            errors.append(
+                f"stability.json: reference coverage is incomplete for layer {layer}"
+            )
+        else:
+            for checkpoint in selected:
+                if (
+                    not isinstance(robustness[checkpoint], dict)
+                    or list(robustness[checkpoint]) != expected_reference_concepts
+                ):
+                    errors.append(
+                        f"stability.json: reference concept coverage is incomplete for layer {layer}"
+                    )
+    errors.extend(_reference_errors(root, model, selected, selected_layers))
+    return errors
 
 
 def _publication_error(
@@ -906,17 +1291,55 @@ def validate_result_tree(
     if not require_publications:
         report.pass_check("publications")
         return report
+    optional_errors: list[str] = []
+    try:
+        summary = _read(root / "metrics" / "summary.json")
+        stability = _read(root / "metrics" / "stability.json")
+        optional_errors.extend(
+            _optional_record_errors(
+                root, summary, stability, model, selected, selected_layers, trajectory
+            )
+        )
+    except Exception as exc:
+        optional_errors.append(f"optional publication payload is invalid ({exc})")
+    if optional_errors:
+        report.checks["optional_records"] = False
+    else:
+        report.pass_check("optional_records")
     publication_errors = _publication_error(
         root, model, selected, selected_layers, setup_sig
     )
-    if publication_errors:
-        report.fail("summary", publication_errors[0])
-        report.errors.extend(publication_errors[1:])
+    all_publication_errors = optional_errors + publication_errors
+    if all_publication_errors:
+        report.fail("summary", all_publication_errors[0])
+        report.errors.extend(all_publication_errors[1:])
         report.checks["stability"] = False
     else:
         report.pass_check("summary")
         report.pass_check("stability")
     return report
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("root", type=Path)
+    parser.add_argument(
+        "--trajectory", choices=tuple(MODEL_BY_TRAJECTORY), required=True
+    )
+    parser.add_argument("--json", action="store_true", dest="as_json")
+    args = parser.parse_args(argv)
+    report = validate_full_canonical_publication(args.root, args.trajectory)
+    if args.as_json:
+        print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+    else:
+        print("VALID" if report.ok else "INVALID")
+        for error in report.errors:
+            print(f"- {error}")
+    return 0 if report.ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 
 
 def validate_checkpoint_tree(

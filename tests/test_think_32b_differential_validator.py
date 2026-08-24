@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -139,9 +140,21 @@ def _tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
     (metrics_dir.parent.parent / "summary.json").write_text(
         json.dumps(
             {
+                "concepts": concepts,
                 "setup_signature": setup,
                 "checkpoints": [ck],
                 "layers": [6],
+                "fixed_points": {
+                    "base": {"status": "unavailable"},
+                    "dpo": {"status": "unavailable"},
+                },
+                "final_main": {"status": "skipped"},
+                "histogram": {
+                    "6": {
+                        concept: {"bins": 32, "range": [0.0, 1.0], "edges": [0.0] * 33}
+                        for concept in concepts
+                    }
+                },
                 "n_rows": 1,
                 "rows": [
                     {
@@ -169,6 +182,12 @@ def _tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
                 "checkpoint_order": [ck],
                 "layers_order": [6],
                 "reference": ck,
+                "histogram": {
+                    "6": {
+                        concept: {"bins": 32, "range": [0.0, 1.0], "edges": [0.0] * 33}
+                        for concept in concepts
+                    }
+                },
                 "layers": {
                     "6": {
                         "pos": {
@@ -200,6 +219,54 @@ def _tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
                                 ]
                                 for concept in concepts
                             },
+                            "residual_to_final": {
+                                ck: {
+                                    concept: {"pos": {}, "neg": {}}
+                                    for concept in concepts
+                                }
+                            },
+                            "reference_robustness": {
+                                ck: {
+                                    concept: {
+                                        "pos": {"subsim": 1.0, "k": 1},
+                                        "neg": {"subsim": 1.0, "k": 1},
+                                    }
+                                    for concept in (
+                                        "math_vs_code",
+                                        "math_vs_instruction_following",
+                                        "math_vs_general_reasoning",
+                                    )
+                                }
+                            },
+                        },
+                        "residual_to_final": {
+                            ck: {
+                                concept: {
+                                    sign: {
+                                        "defined": True,
+                                        "k_final": 1,
+                                        "d_res": 1,
+                                        "observed": 1.0,
+                                        "chance": 0.5,
+                                        "excess": 0.5,
+                                    }
+                                    for sign in ("pos", "neg")
+                                }
+                                for concept in concepts
+                            }
+                        },
+                        "reference_robustness": {
+                            ck: {
+                                concept: {
+                                    "pos": {"subsim": 1.0, "k": 1},
+                                    "neg": {"subsim": 1.0, "k": 1},
+                                }
+                                for concept in (
+                                    "math_vs_code",
+                                    "math_vs_instruction_following",
+                                    "math_vs_general_reasoning",
+                                )
+                            }
                         },
                     }
                 },
@@ -216,6 +283,169 @@ def test_valid_current_writer_fixture_passes(tmp_path, monkeypatch):
         root, "rlvr", expected_setup_signature=str(setup)
     )
     assert report.ok
+
+
+@pytest.mark.parametrize("mutation", ["sidecar_core", "fixed_point", "histogram"])
+def test_writer_contract_mutations_are_rejected(tmp_path, monkeypatch, mutation):
+    root, setup = _tree(tmp_path, monkeypatch)
+    if mutation == "sidecar_core":
+        path = (
+            root
+            / f"U/olmo3-32b-think-rlvr/step_050/layer_6/{validator.CONCEPTS[0]}.json"
+        )
+        data = json.loads(path.read_text())
+        del data["energy_pos"]
+        path.write_text(json.dumps(data))
+    else:
+        path = root / "metrics/summary.json"
+        data = json.loads(path.read_text())
+        if mutation == "fixed_point":
+            del data["fixed_points"]["dpo"]
+        else:
+            del data["histogram"]["6"][validator.CONCEPTS[0]]
+        path.write_text(json.dumps(data))
+    report = validator.validate_result_tree(
+        root, "rlvr", expected_setup_signature=str(setup)
+    )
+    assert not report.ok
+
+
+def test_cli_json_report_and_trajectory_are_model_free(tmp_path, monkeypatch, capsys):
+    root, setup = _tree(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        validator, "_expected_setup_signature", lambda *args: str(setup)
+    )
+    assert validator.main([str(root), "--trajectory", "rlvr", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["trajectory"] == "rlvr"
+
+
+def _add_final_main(root: Path, relative_paths: bool = False) -> None:
+    model = "olmo3-32b-think-rlvr"
+    final_root = root / "final_points"
+    for concept in validator.CONCEPTS:
+        source = root / "U" / model / "step_050" / "layer_6" / f"{concept}.safetensors"
+        target = final_root / "U" / model / "rlvr_main" / "layer_6" / source.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        sidecar = json.loads(source.with_suffix(".json").read_text())
+        sidecar.update(
+            {
+                "checkpoint": "rlvr_main",
+                "revision": "a" * 40,
+                "setup_signature": "final-setup",
+            }
+        )
+        target.with_suffix(".json").write_text(json.dumps(sidecar))
+    path_value = lambda path: (
+        str(path.relative_to(root.parent)) if relative_paths else str(path)
+    )
+    summary_path = root / "metrics" / "summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary["final_main"] = {
+        "model_key": validator.MODEL_BY_TRAJECTORY["rlvr"],
+        "model": validator.OLMO3_VARIANTS[validator.MODEL_BY_TRAJECTORY["rlvr"]].hf_id,
+        "checkpoint": "rlvr_main",
+        "revision": "a" * 40,
+        "setup_signature": "final-setup",
+        "root": path_value(final_root),
+        "status": "ok",
+        "artifact_paths": {
+            concept: {
+                "6": path_value(
+                    final_root
+                    / "U"
+                    / model
+                    / "rlvr_main"
+                    / "layer_6"
+                    / f"{concept}.safetensors"
+                )
+            }
+            for concept in validator.CONCEPTS
+        },
+    }
+    summary_path.write_text(json.dumps(summary))
+    stability_path = root / "metrics" / "stability.json"
+    stability = json.loads(stability_path.read_text())
+    stability["final_main"] = {
+        key: summary["final_main"][key]
+        for key in ("checkpoint", "setup_signature", "revision", "root")
+    }
+    stability_path.write_text(json.dumps(stability))
+
+
+def test_writer_shaped_successful_final_main_accepts_relative_output_paths(
+    tmp_path, monkeypatch
+):
+    root, setup = _tree(tmp_path, monkeypatch)
+    _add_final_main(root, relative_paths=True)
+    monkeypatch.chdir(root.parent)
+    report = validator.validate_result_tree(
+        root, "rlvr", expected_setup_signature=str(setup)
+    )
+    assert report.ok
+
+
+@pytest.mark.parametrize("mutation", ["model_key", "missing_artifact", "linkage"])
+def test_successful_final_main_provenance_mutations_are_rejected(
+    tmp_path, monkeypatch, mutation
+):
+    root, setup = _tree(tmp_path, monkeypatch)
+    _add_final_main(root)
+    summary_path = root / "metrics" / "summary.json"
+    summary = json.loads(summary_path.read_text())
+    if mutation == "model_key":
+        summary["final_main"]["model_key"] = "olmo3-32b-think-sft"
+    elif mutation == "missing_artifact":
+        path = Path(summary["final_main"]["artifact_paths"][validator.CONCEPTS[0]]["6"])
+        path.unlink()
+    else:
+        stability_path = root / "metrics" / "stability.json"
+        stability = json.loads(stability_path.read_text())
+        stability["final_main"]["setup_signature"] = "wrong"
+        stability_path.write_text(json.dumps(stability))
+    summary_path.write_text(json.dumps(summary))
+    report = validator.validate_result_tree(
+        root, "rlvr", expected_setup_signature=str(setup)
+    )
+    assert not report.ok
+
+
+@pytest.mark.parametrize("mutation", ["extra", "missing", "range", "k"])
+def test_reference_robustness_mutations_are_rejected(tmp_path, monkeypatch, mutation):
+    root, setup = _tree(tmp_path, monkeypatch)
+    path = root / "metrics" / "stability.json"
+    data = json.loads(path.read_text())
+    reference = data["layers"]["6"]["reference_robustness"]["step_050"]["math_vs_code"]
+    if mutation == "extra":
+        reference["extra"] = 1
+    elif mutation == "missing":
+        del reference["neg"]
+    elif mutation == "range":
+        reference["pos"]["subsim"] = 2.0
+    else:
+        reference["pos"]["k"] = -1
+    path.write_text(json.dumps(data))
+    report = validator.validate_result_tree(
+        root, "rlvr", expected_setup_signature=str(setup)
+    )
+    assert not report.ok
+
+
+def test_residual_algebra_mutation_is_rejected(tmp_path, monkeypatch):
+    root, setup = _tree(tmp_path, monkeypatch)
+    path = root / "metrics" / "stability.json"
+    data = json.loads(path.read_text())
+    residual = data["layers"]["6"]["residual_to_final"]["step_050"][
+        validator.CONCEPTS[0]
+    ]["pos"]
+    residual["excess"] = 0.25
+    path.write_text(json.dumps(data))
+    report = validator.validate_result_tree(
+        root, "rlvr", expected_setup_signature=str(setup)
+    )
+    assert not report.ok
 
 
 def test_large_float32_basis_uses_elementwise_gram_error(tmp_path):
