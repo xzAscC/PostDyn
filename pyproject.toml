@@ -24,6 +24,13 @@ dev = [
     "jupyter>=1.1.1",
 ]
 
+[project.optional-dependencies]
+quantization = [
+    "transformers>=4.57.1,<4.58.0",
+    "accelerate>=1.10.1,<2.0.0",
+    "bitsandbytes>=0.49.2,<1.0.0",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
