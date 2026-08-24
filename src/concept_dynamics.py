@@ -15,12 +15,49 @@ object with the HF transformers calling convention (mockable).
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
+import tempfile
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 import torch
+from safetensors import safe_open
+from safetensors.torch import save_file
 
 from src.concept_steering import ConceptSteeringVector
+
+
+# =============================================================================
+# Sidecar schema v1 — versioned concept-vector provenance
+# =============================================================================
+#
+# Legacy v0 sidecars carry only ``concepts`` / ``layer_idx`` / ``model_name``
+# with no checkpoint, revision, protocol, max_seq_len, d_model, extraction
+# contract, or source-text provenance.  Version 1 binds every field that
+# determines reproducibility so that resume and metrics loading can reject
+# sidecars whose extraction config or source texts have drifted.
+#
+# The v1 contract mirrors the hardened ``probe_activations`` sidecar pattern:
+# per-concept ``positive_text_sha256`` / ``negative_text_sha256`` arrays and an
+# aggregate ``source_fingerprint`` are recomputed from live source texts at
+# load time and compared exactly.  A v0 sidecar is always rejected by strict
+# validation (``validate_concept_sidecar``) — it must be migrated or
+# re-extracted.
+
+#: Sidecar schema identifier stamped in every v1 (and v0-tagged) JSON file.
+SIDECAR_SCHEMA: str = "olmo_concept_vectors"
+
+#: Current sidecar schema version.  v0 (legacy) is encoded as ``0``.
+SIDECAR_VERSION: int = 1
+
+#: Legacy sidecar version (no provenance fields).  Used only to *identify*
+#: legacy files so they can be rejected by strict validation and migrated.
+SIDECAR_VERSION_LEGACY: int = 0
+
+#: Expected hidden dimensionality for the OLMo-3-7B model family.
+EXPECTED_D_MODEL: int = 4096
 
 
 # =============================================================================
@@ -152,7 +189,7 @@ def extract_layer_activations(
 
     layer_features: dict[int, list[torch.Tensor]] = {layer: [] for layer in layers}
     device = getattr(model, "device", torch.device("cpu"))
-    batch_size = 8
+    batch_size = 1
     if hasattr(model, "parameters"):
         try:
             device = next(model.parameters()).device
@@ -195,6 +232,8 @@ def extract_layer_activations(
                 layer_features[layer_idx].append(last_tok[row])
 
         del outputs, hidden_states, inputs
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     return {layer: torch.stack(layer_features[layer], dim=0) for layer in layers}
 
@@ -445,6 +484,89 @@ def to_steering_vector(cv: ConceptVector) -> ConceptSteeringVector:
 
 
 # =============================================================================
+# Concept source provenance (v1 sidecar fingerprints)
+# =============================================================================
+
+
+def text_sha256(text: str) -> str:
+    """Return the SHA-256 hex digest of ``text`` encoded as UTF-8."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def compute_concept_source_fingerprint(
+    concept_name: str,
+    positive_texts: list[str],
+    negative_texts: list[str],
+) -> str:
+    """Deterministic SHA-256 over one concept's ordered paired source texts.
+
+    For each index ``i`` the entry
+    ``{concept_name, positive_text_sha256, negative_text_sha256}`` is
+    canonicalised (sorted keys, minimal separators) and fed to the hasher.
+    Changing any text, swapping order, or altering ``concept_name`` produces
+    a different digest.
+    """
+    if len(positive_texts) != len(negative_texts):
+        raise ValueError(
+            f"concept {concept_name!r}: positive ({len(positive_texts)}) and "
+            f"negative ({len(negative_texts)}) text counts differ"
+        )
+    hasher = hashlib.sha256()
+    for pos, neg in zip(positive_texts, negative_texts):
+        entry = json.dumps(
+            {
+                "concept_name": concept_name,
+                "positive_text_sha256": text_sha256(pos),
+                "negative_text_sha256": text_sha256(neg),
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        hasher.update(entry.encode("utf-8"))
+        hasher.update(b"\n")
+    return hasher.hexdigest()
+
+
+def compute_sidecar_source_fingerprint(
+    entries: list[tuple[str, str]],
+) -> str:
+    """Deterministic SHA-256 over the ordered ``(concept_name, fingerprint)`` pairs.
+
+    ``entries`` MUST be sorted by concept name so the digest is stable regardless
+    of insertion order.
+    """
+    hasher = hashlib.sha256()
+    for concept_name, per_concept_fp in entries:
+        entry = json.dumps(
+            {
+                "concept_name": concept_name,
+                "source_fingerprint": per_concept_fp,
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        hasher.update(entry.encode("utf-8"))
+        hasher.update(b"\n")
+    return hasher.hexdigest()
+
+
+def build_concept_source_entries(
+    concept_sources: dict[str, tuple[list[str], list[str]]],
+) -> list[tuple[str, str, list[str], list[str]]]:
+    """Return ``[(concept_name, fingerprint, pos_sha_list, neg_sha_list)]`` sorted by name."""
+    entries: list[tuple[str, str, list[str], list[str]]] = []
+    for name in sorted(concept_sources.keys()):
+        pos_texts, neg_texts = concept_sources[name]
+        fp = compute_concept_source_fingerprint(name, pos_texts, neg_texts)
+        pos_sha = [text_sha256(t) for t in pos_texts]
+        neg_sha = [text_sha256(t) for t in neg_texts]
+        entries.append((name, fp, pos_sha, neg_sha))
+    return entries
+
+
+# =============================================================================
 # Persistence (per model × layer)
 # =============================================================================
 
@@ -455,24 +577,84 @@ def save_concept_vectors(
     model_name: str,
     layer_idx: int,
     checkpoint: str = "final",
+    *,
+    protocol: str | None = None,
+    revision: str | None = None,
+    hf_id: str | None = None,
+    max_seq_len: int | None = None,
+    use_chat_template: bool | None = None,
+    concept_sources: dict[str, tuple[list[str], list[str]]] | None = None,
 ) -> str:
     """Save all concept vectors for one (model, checkpoint, layer) triple.
 
     Layout: {output_dir}/{model_name}/{checkpoint}/layer_{layer_idx}.{safetensors,json}
+
+    Publication is crash-safe and symlink-resistant, matching the hardened
+    ``save_layer_activations`` pattern:
+
+      * Both files are written to secure unique temp paths (``tempfile.mkstemp``
+        with O_CREAT|O_EXCL) inside the destination directory, never a
+        predictable ``.tmp`` name an attacker could pre-create as a symlink.
+      * The safetensors tensor is published (``os.replace``) BEFORE the JSON
+        sidecar, so any reader observing the sidecar is guaranteed the tensor
+        is already visible.
+      * The JSON sidecar is fsynced before publication.
+      * On any failure before publication, both temp files are removed.
+
+    **Sidecar schema** — when ``concept_sources`` is provided the sidecar is
+    written as v1 (:data:`SIDECAR_VERSION`), binding ``schema``, ``version``,
+    ``protocol``, ``checkpoint``, ``revision``, ``hf_id``, ``layer_idx``,
+    ``max_seq_len``, ``use_chat_template``, ``d_model``, an aggregate
+    ``source_fingerprint``, and per-concept ``positive_text_sha256`` /
+    ``negative_text_sha256`` / ``source_fingerprint``.  When ``concept_sources``
+    is ``None`` a legacy v0 sidecar (``version`` = 0) is written; strict
+    validation (:func:`validate_concept_sidecar`) will reject it.
+
+    Tensor keys (``concept_XXXX.{field}``), file names, and the return value
+    are unchanged from the legacy implementation.
     """
-    import json
-    import os
-
-    from safetensors.torch import save_file
-
     ckpt_dir = os.path.join(output_dir, model_name, checkpoint)
     os.makedirs(ckpt_dir, exist_ok=True)
     base_path = os.path.join(ckpt_dir, f"layer_{layer_idx}")
+    final_safetensors = base_path + ".safetensors"
+    final_json = base_path + ".json"
 
+    sorted_names = sorted(vectors.keys())
     tensor_dict: dict[str, torch.Tensor] = {}
-    metadata: dict = {"concepts": [], "layer_idx": layer_idx, "model_name": model_name}
 
-    for idx, name in enumerate(sorted(vectors.keys())):
+    is_v1 = concept_sources is not None
+    source_entries_by_name: dict[str, tuple[str, str, list[str], list[str]]] = {}
+    aggregate_fp: str = ""
+
+    if is_v1:
+        cs: dict[str, tuple[list[str], list[str]]] = concept_sources
+        filtered_sources = {name: cs[name] for name in sorted_names if name in cs}
+        source_entries = build_concept_source_entries(filtered_sources)
+        source_entries_by_name = {e[0]: e for e in source_entries}
+        aggregate_fp = compute_sidecar_source_fingerprint(
+            [(e[0], e[1]) for e in source_entries]
+        )
+
+    metadata: dict[str, Any] = {
+        "schema": SIDECAR_SCHEMA,
+        "version": SIDECAR_VERSION if is_v1 else SIDECAR_VERSION_LEGACY,
+        "concepts": [],
+        "layer_idx": layer_idx,
+        "model_name": model_name,
+    }
+    if is_v1:
+        metadata["checkpoint"] = checkpoint
+        metadata["protocol"] = protocol if protocol is not None else "raw"
+        metadata["revision"] = revision
+        metadata["hf_id"] = hf_id
+        metadata["max_seq_len"] = max_seq_len
+        metadata["use_chat_template"] = (
+            use_chat_template if use_chat_template is not None else False
+        )
+        metadata["source_fingerprint"] = aggregate_fp
+        metadata["provenance_origin"] = "extraction"
+
+    for idx, name in enumerate(sorted_names):
         cv = vectors[name]
         prefix = f"concept_{idx:04d}"
         for field in (
@@ -486,20 +668,72 @@ def save_concept_vectors(
             tensor = getattr(cv, field)
             tensor_dict[f"{prefix}.{field}"] = tensor.contiguous().to(torch.float32)
 
-        metadata["concepts"].append(
-            {
-                "name": name,
-                "n_positive": cv.n_positive,
-                "n_negative": cv.n_negative,
-                "d_model": cv.d_model,
-            }
-        )
+        entry: dict[str, Any] = {
+            "name": name,
+            "n_positive": cv.n_positive,
+            "n_negative": cv.n_negative,
+            "d_model": cv.d_model,
+        }
+        if is_v1:
+            se = source_entries_by_name.get(name)
+            if se is not None:
+                _, fp, pos_sha, neg_sha = se
+                entry["positive_text_sha256"] = pos_sha
+                entry["negative_text_sha256"] = neg_sha
+                entry["source_fingerprint"] = fp
+        metadata["concepts"].append(entry)
 
-    save_file(tensor_dict, base_path + ".safetensors")
-    with open(base_path + ".json", "w") as f:
-        json.dump(metadata, f, indent=2)
+    if is_v1 and sorted_names:
+        metadata["d_model"] = vectors[sorted_names[0]].d_model
+
+    tmp_safetensors = _secure_temp_path(ckpt_dir, suffix=".safetensors.tmp")
+    tmp_json = _secure_temp_path(ckpt_dir, suffix=".json.tmp")
+    try:
+        save_file(tensor_dict, tmp_safetensors)
+        _write_json_file(tmp_json, metadata)
+        os.replace(tmp_safetensors, final_safetensors)
+        tmp_safetensors = None
+        os.replace(tmp_json, final_json)
+        tmp_json = None
+    finally:
+        if tmp_safetensors is not None:
+            _safe_remove(tmp_safetensors)
+        if tmp_json is not None:
+            _safe_remove(tmp_json)
 
     return base_path
+
+
+def _secure_temp_path(directory: str, *, suffix: str = ".tmp") -> str:
+    """Return a unique, unpredictable temp file path inside ``directory``.
+
+    Uses ``tempfile.mkstemp`` (O_CREAT|O_EXCL, mode 0600, randomized name) so
+    each call gets a fresh path even under concurrent extraction, defeating
+    symlink-injection attacks where an attacker pre-places a symlink at a
+    predictable temp name. The placeholder fd is closed and removed so the
+    caller can write the path itself.
+    """
+    fd, tmp_path = tempfile.mkstemp(prefix=".cd_", suffix=suffix, dir=directory)
+    os.close(fd)
+    os.remove(tmp_path)
+    return tmp_path
+
+
+def _write_json_file(path: str, payload: dict[str, Any]) -> None:
+    """Write JSON to a caller-chosen path with fsync (no rename)."""
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+        f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def _safe_remove(path: str) -> None:
+    """Remove a path, swallowing OSError (best-effort cleanup)."""
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 def load_concept_vectors(
@@ -553,9 +787,262 @@ def load_concept_vectors(
     return vectors
 
 
+def load_concept_sidecar(
+    input_dir: str,
+    model_name: str,
+    layer_idx: int,
+    checkpoint: str = "final",
+) -> dict[str, Any]:
+    """Load the raw JSON sidecar dict for a (model, checkpoint, layer) triple."""
+    base_path = os.path.join(input_dir, model_name, checkpoint, f"layer_{layer_idx}")
+    json_path = base_path + ".json"
+    if not os.path.exists(json_path):
+        raise FileNotFoundError(f"Not found: {json_path}")
+    with open(json_path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _read_concept_tensor_shapes(
+    safetensors_path: str,
+    n_concepts: int,
+) -> list[tuple[int, ...]] | None:
+    """Return the ``raw_direction`` shape for each concept index, or ``None``.
+
+    Shapes are read metadata-only (no tensor data loaded) so the check is
+    cheap even for large ``d_model``.
+    """
+    try:
+        shapes: list[tuple[int, ...]] = []
+        with safe_open(safetensors_path, framework="pt", device="cpu") as f:
+            for idx in range(n_concepts):
+                key = f"concept_{idx:04d}.raw_direction"
+                shapes.append(tuple(f.get_slice(key).get_shape()))
+        return shapes
+    except Exception:
+        return None
+
+
+def validate_concept_sidecar(
+    sidecar: dict[str, Any],
+    *,
+    expected_model_name: str | None = None,
+    expected_checkpoint: str | None = None,
+    expected_layer_idx: int | None = None,
+    expected_d_model: int | None = None,
+    expected_max_seq_len: int | None = None,
+    expected_protocol: str | None = None,
+    expected_use_chat_template: bool | None = None,
+    expected_hf_id: str | None = None,
+    expected_revision: str | None = None,
+    expected_concept_sources: dict[str, tuple[list[str], list[str]]] | None = None,
+    allow_migrated_provenance: bool = True,
+    require_exact_concept_set: bool = True,
+) -> bool:
+    """Return ``True`` iff a v1 sidecar matches every provided expectation.
+
+    A v0 (legacy) sidecar always returns ``False`` — it lacks provenance.
+    When ``expected_concept_sources`` is provided, the per-concept source
+    fingerprints and text-SHA arrays are re-derived from the live source texts
+    and compared exactly. With ``require_exact_concept_set=True`` (default) the
+    sidecar concept set must equal the expected set; set False for single-concept
+    completeness checks against a multi-concept sidecar.
+    """
+    if sidecar.get("schema") != SIDECAR_SCHEMA:
+        return False
+    if sidecar.get("version") != SIDECAR_VERSION:
+        return False
+
+    origin = sidecar.get("provenance_origin", "extraction")
+    if origin not in ("extraction", "migrated_v0_assumed_canonical_sources"):
+        return False
+    if origin != "extraction" and not allow_migrated_provenance:
+        return False
+
+    if expected_protocol is not None:
+        if sidecar.get("protocol") != expected_protocol:
+            return False
+    if expected_model_name is not None:
+        if sidecar.get("model_name") != expected_model_name:
+            return False
+    if expected_checkpoint is not None:
+        if sidecar.get("checkpoint") != expected_checkpoint:
+            return False
+    if expected_layer_idx is not None:
+        if int(sidecar.get("layer_idx", -1)) != expected_layer_idx:
+            return False
+    if expected_hf_id is not None:
+        if sidecar.get("hf_id") != expected_hf_id:
+            return False
+    if expected_revision is not None:
+        if sidecar.get("revision") != expected_revision:
+            return False
+
+    sidecar_d_model = sidecar.get("d_model")
+    if sidecar_d_model is not None:
+        sidecar_d_model = int(sidecar_d_model)
+    if expected_d_model is not None:
+        if sidecar_d_model != expected_d_model:
+            return False
+
+    if expected_max_seq_len is not None:
+        recorded = sidecar.get("max_seq_len")
+        if recorded is None or int(recorded) != expected_max_seq_len:
+            return False
+
+    if expected_use_chat_template is not None:
+        recorded = sidecar.get("use_chat_template")
+        if recorded is None or bool(recorded) != bool(expected_use_chat_template):
+            return False
+
+    if expected_concept_sources is not None:
+        concepts_list = sidecar.get("concepts", [])
+        if not isinstance(concepts_list, list):
+            return False
+        names = [
+            c.get("name")
+            for c in concepts_list
+            if isinstance(c, dict) and isinstance(c.get("name"), str)
+        ]
+        if len(names) != len(set(names)):
+            return False
+        concepts_in_sidecar: dict[str, dict[str, Any]] = {
+            c["name"]: c
+            for c in concepts_list
+            if isinstance(c, dict) and isinstance(c.get("name"), str)
+        }
+        expected_concept_names = set(expected_concept_sources.keys())
+        sidecar_concept_names = set(concepts_in_sidecar.keys())
+        if require_exact_concept_set:
+            if sidecar_concept_names != expected_concept_names:
+                return False
+        elif not expected_concept_names.issubset(sidecar_concept_names):
+            return False
+
+        expected_entries: list[tuple[str, str]] = []
+        for name in sorted(expected_concept_sources.keys()):
+            pos_texts, neg_texts = expected_concept_sources[name]
+            per_fp = compute_concept_source_fingerprint(name, pos_texts, neg_texts)
+            expected_pos_sha = [text_sha256(t) for t in pos_texts]
+            expected_neg_sha = [text_sha256(t) for t in neg_texts]
+            expected_entries.append((name, per_fp))
+
+            sc_concept = concepts_in_sidecar[name]
+            if sc_concept.get("source_fingerprint") != per_fp:
+                return False
+            if sc_concept.get("positive_text_sha256") != expected_pos_sha:
+                return False
+            if sc_concept.get("negative_text_sha256") != expected_neg_sha:
+                return False
+            if int(sc_concept.get("n_positive", -1)) != len(pos_texts):
+                return False
+            if int(sc_concept.get("n_negative", -1)) != len(neg_texts):
+                return False
+
+        if require_exact_concept_set or sidecar_concept_names == expected_concept_names:
+            aggregate_fp = compute_sidecar_source_fingerprint(expected_entries)
+            if sidecar.get("source_fingerprint") != aggregate_fp:
+                return False
+
+    return True
+
+
+def is_concept_layer_v1_complete(
+    input_dir: str,
+    model_name: str,
+    checkpoint: str,
+    layer_idx: int,
+    concept: str,
+    n_samples: int,
+    *,
+    expected_d_model: int | None = None,
+    expected_max_seq_len: int | None = None,
+    expected_protocol: str | None = None,
+    expected_use_chat_template: bool | None = None,
+    expected_concept_sources: dict[str, tuple[list[str], list[str]]] | None = None,
+) -> bool:
+    """Return ``True`` iff a concept's v1 sidecar is present, valid, and compatible.
+
+    Combines :func:`validate_concept_sidecar` with:
+      * safetensors + JSON both exist and parse;
+      * the concept is present with ``n_positive >= n_samples`` and
+        ``n_negative >= n_samples``;
+      * each ``raw_direction`` tensor is rank-1 with ``d_model`` matching the
+        sidecar (coordinate check).
+    """
+    base_path = os.path.join(input_dir, model_name, checkpoint, f"layer_{layer_idx}")
+    safetensors_path = base_path + ".safetensors"
+    json_path = base_path + ".json"
+    if not os.path.exists(safetensors_path) or not os.path.exists(json_path):
+        return False
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            sidecar = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return False
+
+    if not validate_concept_sidecar(
+        sidecar,
+        expected_model_name=model_name,
+        expected_checkpoint=checkpoint,
+        expected_layer_idx=layer_idx,
+        expected_d_model=expected_d_model,
+        expected_max_seq_len=expected_max_seq_len,
+        expected_protocol=expected_protocol,
+        expected_use_chat_template=expected_use_chat_template,
+        expected_concept_sources=expected_concept_sources,
+        # Completeness is checked one concept at a time against a multi-concept
+        # layer sidecar; require subset match, not exact set equality.
+        require_exact_concept_set=False,
+    ):
+        return False
+
+    concepts_list = sidecar.get("concepts", [])
+    concept_entry: dict[str, Any] | None = None
+    concept_index = -1
+    for idx, entry in enumerate(concepts_list):
+        if isinstance(entry, dict) and entry.get("name") == concept:
+            concept_entry = entry
+            concept_index = idx
+            break
+    if concept_entry is None:
+        return False
+    if int(concept_entry.get("n_positive", -1)) < n_samples:
+        return False
+    if int(concept_entry.get("n_negative", -1)) < n_samples:
+        return False
+
+    shapes = _read_concept_tensor_shapes(safetensors_path, len(concepts_list))
+    if shapes is None:
+        return False
+    if concept_index < 0 or concept_index >= len(shapes):
+        return False
+    rd_shape = shapes[concept_index]
+    if len(rd_shape) != 1:
+        return False
+    sidecar_d = sidecar.get("d_model")
+    if sidecar_d is not None and rd_shape[0] != int(sidecar_d):
+        return False
+    if expected_d_model is not None and rd_shape[0] != expected_d_model:
+        return False
+
+    return True
+
+
 # =============================================================================
 # Model Loading (bfloat16, device_map="auto")
 # =============================================================================
+
+
+def _reject_generic_32b_loading(model_config) -> None:
+    if (
+        getattr(model_config, "architecture", None) == "olmo3"
+        and getattr(model_config, "total_params", None) == "32B"
+    ):
+        raise ValueError(
+            "Generic concept dynamics does not support OLMo-3 32B loading; "
+            "use the canonical NF4 experiment loader "
+            "src.quantized_model_loader.load_olmo3_32b_think instead."
+        )
 
 
 def _clean_hf_cache(hf_id: str):
@@ -572,6 +1059,7 @@ def _clean_hf_cache(hf_id: str):
 
 def _load_model_and_tokenizer(model_config, revision=None):
     """Load model (bfloat16) and tokenizer for a ModelConfig at a given revision."""
+    _reject_generic_32b_loading(model_config)
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -586,6 +1074,7 @@ def _load_model_and_tokenizer(model_config, revision=None):
         print(f"  Tokenizer load failed, falling back to Olmo-3 base tokenizer")
         tokenizer = AutoTokenizer.from_pretrained(
             "allenai/Olmo-3-1025-7B",
+            revision="a81bae42db3975be1671e27b9c9a56da1a9f980f",
         )
 
     if tokenizer.pad_token is None:
@@ -636,7 +1125,7 @@ def run_model_extraction(
     checkpoint: str = "final",
     revision: Optional[str] = None,
     use_chat_template: bool = True,
-) -> dict:
+) -> dict[str, Any]:
     """Extract concept vectors for one model checkpoint at specified layers."""
     import gc
     import time
@@ -746,7 +1235,7 @@ def run_model_extraction(
 
 
 def _manifest_covers(
-    manifest: dict | None,
+    manifest: dict[str, Any] | None,
     concepts: list[str],
     layers: list[int],
     n_samples: int,
@@ -784,11 +1273,11 @@ def _manifest_covers(
 
 
 def _merge_manifest(
-    existing: dict | None,
+    existing: dict[str, Any] | None,
     concepts: list[str],
     layers: list[int],
     n_samples: int,
-) -> dict:
+) -> dict[str, Any]:
     prior = existing or {}
     concept_samples = dict(prior.get("concept_samples") or {})
     for concept in concepts:
@@ -821,7 +1310,7 @@ def run_full_experiment(
     use_chat_template: bool = True,
     max_checkpoints_per_model: int | None = None,
     checkpoint_override: dict[str, list[str]] | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Run concept extraction across all models × checkpoints, then dynamics."""
     import json
     import os
@@ -838,7 +1327,7 @@ def run_full_experiment(
             all_results = json.load(f)
         print(f"Resuming: {len(all_results.get('checkpoints_done', []))} ckpts done")
     else:
-        all_results = {
+        all_results: dict[str, Any] = {
             "checkpoints_done": [],
             "extraction": {},
             "checkpoint_manifests": {},
@@ -929,7 +1418,7 @@ def compute_dynamics_analysis(
     model_names: list[str],
     concepts: list[str],
     layers: list[int],
-) -> dict:
+) -> dict[str, Any]:
     """Compute per-model checkpoint stability and per-checkpoint gram matrices.
 
     Stability: for each (model, concept, layer), cosine matrix across
@@ -960,7 +1449,7 @@ def compute_dynamics_analysis(
     ]
 
     # --- Stability: per model, per concept, per layer, across checkpoints ---
-    stability: dict[str, dict[str, dict[int, dict]]] = {}
+    stability: dict[str, dict[str, dict[int, dict[str, Any]]]] = {}
     for model in available_models:
         stability[model] = {}
         ckpts = MODEL_CHECKPOINTS.get(model, ["main"])
@@ -994,7 +1483,7 @@ def compute_dynamics_analysis(
         json.dump(stability, f, indent=2)
 
     # --- Gram: per model, per checkpoint, per layer, across concepts ---
-    gram: dict[str, dict[str, dict[int, dict]]] = {}
+    gram: dict[str, dict[str, dict[int, dict[str, Any]]]] = {}
     for model in available_models:
         gram[model] = {}
         ckpts = MODEL_CHECKPOINTS.get(model, ["main"])

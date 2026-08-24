@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 import sys
 from types import SimpleNamespace
 from typing import Optional
@@ -28,8 +29,11 @@ from src.concept_dynamics import (
     concept_gram_matrices,
     select_uniform_layers,
     _load_model_and_tokenizer,
+    load_model_and_tokenizer,
     compute_dynamics_analysis,
     run_full_experiment,
+    save_concept_vectors,
+    load_concept_vectors,
 )
 
 
@@ -95,6 +99,67 @@ class MockTokenizer:
 
 
 class TestModelLoading:
+    @pytest.mark.parametrize(
+        "model_name",
+        ["olmo3-32b-think-sft", "olmo3-32b-think-rlvr"],
+    )
+    @pytest.mark.parametrize(
+        "loader", [_load_model_and_tokenizer, load_model_and_tokenizer]
+    )
+    def test_generic_32b_loading_rejected_before_dependency_imports(
+        self, model_name, loader, monkeypatch
+    ):
+        from src.config import OLMO3_VARIANTS
+
+        imported = []
+        real_import = __import__
+
+        def tracking_import(name, *args, **kwargs):
+            if name in {"torch", "transformers"}:
+                imported.append(name)
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.__import__", tracking_import)
+
+        with pytest.raises(
+            ValueError,
+            match=r"src\.quantized_model_loader\.load_olmo3_32b_think",
+        ):
+            loader(OLMO3_VARIANTS[model_name], "configured-revision")
+
+        assert imported == []
+
+    def test_7b_generic_loading_remains_supported(self, monkeypatch):
+        calls = {}
+
+        class TokenizerFactory:
+            @classmethod
+            def from_pretrained(cls, model_id, **kwargs):
+                calls["tokenizer"] = (model_id, kwargs)
+                return SimpleNamespace(pad_token="<pad>", eos_token="<eos>")
+
+        class ModelFactory:
+            @classmethod
+            def from_pretrained(cls, model_id, **kwargs):
+                calls["model"] = (model_id, kwargs)
+                return SimpleNamespace(eval=lambda: calls.__setitem__("eval", True))
+
+        monkeypatch.setitem(
+            sys.modules,
+            "transformers",
+            SimpleNamespace(
+                AutoModelForCausalLM=ModelFactory,
+                AutoTokenizer=TokenizerFactory,
+            ),
+        )
+        from src.config import OLMO3_VARIANTS
+
+        _load_model_and_tokenizer(OLMO3_VARIANTS["olmo3-think-sft"], "step_1000")
+
+        assert calls["model"][1]["dtype"] is torch.bfloat16
+        assert calls["model"][1]["device_map"] == "auto"
+        assert calls["eval"] is True
+
     def test_native_olmo3_uses_dtype_without_remote_code(self, monkeypatch):
         calls = {}
 
@@ -132,6 +197,43 @@ class TestModelLoading:
         assert "trust_remote_code" not in calls["model"]
         assert "trust_remote_code" not in calls["tokenizer"]
         assert calls["eval"] is True
+
+    def test_tokenizer_fallback_uses_pinned_revision(self, monkeypatch):
+        tokenizer_calls = []
+
+        class TokenizerFactory:
+            @classmethod
+            def from_pretrained(cls, model_id, **kwargs):
+                tokenizer_calls.append((model_id, kwargs))
+                if len(tokenizer_calls) == 1:
+                    raise KeyError("missing tokenizer")
+                return SimpleNamespace(pad_token=None, eos_token="<eos>")
+
+        class ModelFactory:
+            @classmethod
+            def from_pretrained(cls, model_id, **kwargs):
+                return SimpleNamespace(eval=lambda: None)
+
+        monkeypatch.setitem(
+            sys.modules,
+            "transformers",
+            SimpleNamespace(
+                AutoModelForCausalLM=ModelFactory,
+                AutoTokenizer=TokenizerFactory,
+            ),
+        )
+        config = SimpleNamespace(
+            hf_id="allenai/Olmo-3-7B-RL-Zero-Math",
+            revision="main",
+            architecture="olmo3",
+        )
+
+        _load_model_and_tokenizer(config, "step_1900")
+
+        assert tokenizer_calls[1] == (
+            "allenai/Olmo-3-1025-7B",
+            {"revision": "a81bae42db3975be1671e27b9c9a56da1a9f980f"},
+        )
 
 
 class TestExperimentResume:
@@ -560,3 +662,217 @@ class TestSelectUniformLayers:
 
     def test_n_zero_returns_empty(self):
         assert select_uniform_layers(32, n=0) == []
+
+
+# =============================================================================
+# save_concept_vectors / load_concept_vectors — crash-safe, symlink-resistant
+# =============================================================================
+
+
+class TestSaveConceptVectorsAtomicity:
+    """save_concept_vectors must publish tensor+sidecar crash-safe and
+    symlink-resistant, matching the hardened save_layer_activations pattern:
+
+      * both files are written to secure unique temp paths (tempfile.mkstemp)
+        inside the destination directory — never a predictable ``.tmp`` name,
+      * the safetensors tensor is published (os.replace) BEFORE the JSON sidecar,
+        so any reader observing the sidecar is guaranteed the tensor is visible,
+      * on any failure before publication, all temp artifacts are removed,
+      * file names, JSON schema, tensor keys, and the return value are unchanged.
+    """
+
+    def _make_cv(self, vec, name="k", model="m", layer=0):
+        return ConceptVector(
+            concept_name=name,
+            model_name=model,
+            layer_idx=layer,
+            steering_vector=vec,
+            raw_direction=vec.clone(),
+            positive_mean=vec.clone(),
+            negative_mean=torch.zeros_like(vec),
+            positive_std=torch.ones_like(vec),
+            negative_std=torch.ones_like(vec),
+            n_positive=10,
+            n_negative=10,
+            d_model=vec.shape[0],
+        )
+
+    def _vectors(self):
+        return {
+            "code_python_vs_cpp": self._make_cv(torch.randn(8), "code_python_vs_cpp"),
+            "math_cot_vs_direct": self._make_cv(torch.randn(8), "math_cot_vs_direct"),
+        }
+
+    # ------------------------------------------------------------------
+    # Success path: schema, names, roundtrip all preserved
+    # ------------------------------------------------------------------
+
+    def test_roundtrip_preserves_vectors_and_metadata(self, tmp_path):
+        vectors = self._vectors()
+        base = save_concept_vectors(
+            vectors, str(tmp_path), "olmo3-think-sft", 17, "step_100"
+        )
+
+        # File names and return value unchanged.
+        assert base == os.path.join(
+            str(tmp_path), "olmo3-think-sft", "step_100", "layer_17"
+        )
+        assert os.path.exists(base + ".safetensors")
+        assert os.path.exists(base + ".json")
+
+        loaded = load_concept_vectors(str(tmp_path), "olmo3-think-sft", 17, "step_100")
+        assert set(loaded.keys()) == set(vectors.keys())
+        for name, cv in vectors.items():
+            got = loaded[name]
+            assert torch.allclose(got.steering_vector, cv.steering_vector)
+            assert torch.allclose(got.raw_direction, cv.raw_direction)
+            assert got.n_positive == cv.n_positive
+            assert got.n_negative == cv.n_negative
+            assert got.d_model == cv.d_model
+
+        # JSON schema unchanged.
+        with open(base + ".json") as f:
+            meta = json.load(f)
+        assert meta["model_name"] == "olmo3-think-sft"
+        assert meta["layer_idx"] == 17
+        assert [c["name"] for c in meta["concepts"]] == sorted(vectors.keys())
+
+    # ------------------------------------------------------------------
+    # Crash-safety: no leftover temp files after a successful write
+    # ------------------------------------------------------------------
+
+    def test_no_temp_files_after_save(self, tmp_path):
+        save_concept_vectors(self._vectors(), str(tmp_path), "m", 3, "c")
+        for _dirpath, _dirnames, filenames in os.walk(str(tmp_path)):
+            for fn in filenames:
+                assert ".tmp" not in fn, f"leftover temp file: {fn}"
+
+    # ------------------------------------------------------------------
+    # Ordering: tensor is published BEFORE the JSON sidecar
+    # ------------------------------------------------------------------
+
+    def test_tensor_published_before_sidecar(self, tmp_path, monkeypatch):
+        """Interpose between the two os.replace calls and assert the tensor is
+        already on disk when the sidecar lands."""
+        import src.concept_dynamics as cd
+
+        events: list[str] = []
+        real_replace = os.replace
+
+        def tracked_replace(src, dst):
+            events.append(f"replace:{os.path.basename(dst)}")
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(cd.os, "replace", tracked_replace)
+
+        save_concept_vectors(self._vectors(), str(tmp_path), "m", 3, "c")
+
+        pub = [e for e in events if e.startswith("replace:")]
+        assert len(pub) == 2, pub
+        assert pub[0].endswith(".safetensors"), pub
+        assert pub[1].endswith(".json"), pub
+
+    # ------------------------------------------------------------------
+    # Crash BEFORE tensor publish: save_file fails -> no temp, no final files
+    # ------------------------------------------------------------------
+
+    def test_failure_before_tensor_publish_cleans_temp(self, tmp_path, monkeypatch):
+        import src.concept_dynamics as cd
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("simulated tensor write failure")
+
+        monkeypatch.setattr(cd, "save_file", boom)
+
+        with pytest.raises(RuntimeError, match="simulated tensor write failure"):
+            save_concept_vectors(self._vectors(), str(tmp_path), "m", 3, "c")
+
+        # No temp residue anywhere.
+        for _dirpath, _dirnames, filenames in os.walk(str(tmp_path)):
+            for fn in filenames:
+                assert ".tmp" not in fn, f"leftover temp after failure: {fn}"
+        # Neither final artifact was published.
+        base = os.path.join(str(tmp_path), "m", "c", "layer_3")
+        assert not os.path.exists(base + ".safetensors")
+        assert not os.path.exists(base + ".json")
+
+    # ------------------------------------------------------------------
+    # Crash BETWEEN tensor and JSON publish: sidecar never appears, temp cleaned
+    # ------------------------------------------------------------------
+
+    def test_failure_between_tensor_and_json_cleans_temp(self, tmp_path, monkeypatch):
+        """The tensor's os.replace succeeds; the sidecar's os.replace raises.
+        Outcome: tensor may be on disk, but the sidecar is NOT, so no loader
+        can ever observe a sidecar referencing an unpublished tensor. All temp
+        files are cleaned."""
+        import src.concept_dynamics as cd
+
+        real_replace = os.replace
+        call = {"n": 0}
+
+        def fail_on_second_replace(src, dst):
+            call["n"] += 1
+            if call["n"] == 2:
+                raise OSError("simulated sidecar publish failure")
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(cd.os, "replace", fail_on_second_replace)
+
+        with pytest.raises(OSError, match="simulated sidecar publish failure"):
+            save_concept_vectors(self._vectors(), str(tmp_path), "m", 3, "c")
+
+        # No temp residue.
+        for _dirpath, _dirnames, filenames in os.walk(str(tmp_path)):
+            for fn in filenames:
+                assert ".tmp" not in fn, f"leftover temp after mid-failure: {fn}"
+        # Crucially, the sidecar (JSON) was never published, so no consumer can
+        # be fooled into thinking a complete layer exists.
+        base = os.path.join(str(tmp_path), "m", "c", "layer_3")
+        assert not os.path.exists(base + ".json")
+
+    # ------------------------------------------------------------------
+    # Symlink / predictable-.tmp avoidance: temp paths are unique & unpredictable
+    # ------------------------------------------------------------------
+
+    def test_uses_unique_unpredictable_temp_paths(self, tmp_path, monkeypatch):
+        """A predictable temp name (e.g. ``layer_3.safetensors.tmp``) is a
+        symlink-injection vector: an attacker who pre-places a symlink at that
+        path can redirect or corrupt the write. The hardened pattern must use
+        ``tempfile.mkstemp`` (O_CREAT|O_EXCL, randomized name) so the temp path
+        is neither predictable nor pre-createable.
+
+        We capture every path ``save_file`` and ``_write_json_file`` receive and
+        assert none of them is the predictable base+extension name.
+        """
+        import src.concept_dynamics as cd
+
+        seen_paths: list[str] = []
+        real_save = cd.save_file
+        real_write_json = cd._write_json_file
+
+        def capture_save(tensor_dict, path, *args, **kwargs):
+            seen_paths.append(path)
+            return real_save(tensor_dict, path, *args, **kwargs)
+
+        def capture_write_json(path, payload, *args, **kwargs):
+            seen_paths.append(path)
+            return real_write_json(path, payload, *args, **kwargs)
+
+        monkeypatch.setattr(cd, "save_file", capture_save)
+        monkeypatch.setattr(cd, "_write_json_file", capture_write_json)
+
+        save_concept_vectors(self._vectors(), str(tmp_path), "m", 3, "c")
+
+        # mkstemp must supply a randomized prefix (``.cd_<8 chars>``) so the
+        # temp basename is never the predictable base name a symlink attacker
+        # could pre-create. We assert the basename is neither predictable nor
+        # lacking the random component.
+        predictable = {"layer_3.safetensors.tmp", "layer_3.json.tmp"}
+        for p in seen_paths:
+            name = os.path.basename(p)
+            assert name not in predictable, (
+                f"predictable temp basename (symlink risk): {name}"
+            )
+            assert name.startswith(".cd_"), (
+                f"temp path lacks mkstemp random prefix: {name}"
+            )
