@@ -23,7 +23,7 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable, Mapping, Optional, cast
+from typing import Any, Iterable, Mapping, Optional, cast
 
 import torch
 from tqdm import tqdm
@@ -41,12 +41,18 @@ from src.config import (
 # Data Loading
 # =============================================================================
 
+
 def load_mmlu_questions(num_samples: Optional[int] = None) -> list[str]:
     """Load MMLU Pro questions. Returns list of raw question strings."""
     from datasets import load_dataset
+
     ds = load_dataset("TIGER-Lab/MMLU-Pro", split="test")
     examples = cast(Iterable[Mapping[str, object]], ds)
-    questions = [question for example in examples if isinstance((question := example.get("question")), str)]
+    questions = [
+        question
+        for example in examples
+        if isinstance((question := example.get("question")), str)
+    ]
     if num_samples is not None:
         questions = questions[:num_samples]
     print(f"Loaded {len(questions)} MMLU Pro questions")
@@ -57,11 +63,15 @@ def load_mmlu_questions(num_samples: Optional[int] = None) -> list[str]:
 # Result Data Classes
 # =============================================================================
 
+
 @dataclass
 class ActivationResult:
     """Result from extracting hidden states from a model."""
+
     model_name: str
-    layer_results: dict[int, dict]  # layer_idx -> {rankme, rankme_ratio, alpha_req, d_model, n_samples}
+    layer_results: dict[
+        int, dict[str, float | int]
+    ]  # layer_idx -> {rankme, rankme_ratio, alpha_req, d_model, n_samples}
     num_questions: int
     elapsed_seconds: float
 
@@ -70,7 +80,10 @@ class ActivationResult:
 # RankMe Computation (activation matrices)
 # =============================================================================
 
-def compute_activation_rankme(features: torch.Tensor, eps: float = 1e-10) -> tuple[float, float]:
+
+def compute_activation_rankme(
+    features: torch.Tensor, eps: float = 1e-10
+) -> tuple[float, float]:
     """
     Compute RankMe of an activation feature matrix.
 
@@ -101,7 +114,7 @@ def compute_activation_rankme(features: torch.Tensor, eps: float = 1e-10) -> tup
     if len(sigma) == 0:
         return 1.0, 1.0 / d_model
 
-    covariance_eigenvalues = sigma ** 2
+    covariance_eigenvalues = sigma**2
     p = covariance_eigenvalues / covariance_eigenvalues.sum()
 
     # Shannon entropy
@@ -116,6 +129,7 @@ def compute_activation_rankme(features: torch.Tensor, eps: float = 1e-10) -> tup
 # =============================================================================
 # alpha-ReQ Computation (activation matrices)
 # =============================================================================
+
 
 def compute_activation_alpha_req(
     features: torch.Tensor,
@@ -150,7 +164,9 @@ def compute_activation_alpha_req(
     if len(indices) < 2:
         return 0.0
 
-    log_eigenvalues = torch.log(covariance_eigenvalues[lo - 1 : hi - 1].to(torch.float64).clamp(min=eps))
+    log_eigenvalues = torch.log(
+        covariance_eigenvalues[lo - 1 : hi - 1].to(torch.float64).clamp(min=eps)
+    )
     log_indices = torch.log(indices)
 
     x_mean = log_indices.mean()
@@ -169,9 +185,21 @@ def compute_activation_alpha_req(
 # Model and Tokenizer Loading
 # =============================================================================
 
+
+def _reject_generic_32b_loading(model_config: ModelConfig) -> None:
+    if model_config.architecture == "olmo3" and model_config.total_params == "32B":
+        raise ValueError(
+            "Generic activation analysis does not support OLMo-3 32B loading; "
+            "use the canonical NF4 experiment loader "
+            "src.quantized_model_loader.load_olmo3_32b_think instead."
+        )
+
+
 def _get_tokenizer(model_config: ModelConfig):
     """Load tokenizer for the model."""
+    _reject_generic_32b_loading(model_config)
     from transformers import AutoTokenizer
+
     trust = model_config.architecture == "olmo3"
     tokenizer = AutoTokenizer.from_pretrained(
         model_config.hf_id,
@@ -185,7 +213,9 @@ def _get_tokenizer(model_config: ModelConfig):
 
 def _load_model(model_config: ModelConfig):
     """Load model with memory-efficient settings."""
+    _reject_generic_32b_loading(model_config)
     from transformers import AutoModelForCausalLM
+
     trust = model_config.architecture == "olmo3"
     model = AutoModelForCausalLM.from_pretrained(
         model_config.hf_id,
@@ -202,6 +232,7 @@ def _load_model(model_config: ModelConfig):
 # =============================================================================
 # Core: Extract and Analyze Activations
 # =============================================================================
+
 
 def extract_and_analyze_activations(
     model_config: ModelConfig,
@@ -233,10 +264,10 @@ def extract_and_analyze_activations(
     """
     start_time = time.time()
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Activation Analysis: {model_config.name} ({model_config.hf_id})")
     print(f"Questions: {len(questions)}, max_seq_len: {max_seq_len}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     tokenizer = _get_tokenizer(model_config)
     model = _load_model(model_config)
@@ -293,7 +324,7 @@ def extract_and_analyze_activations(
     print(f"  Extracted hidden states: {num_layers} layers, d_model={d_model}")
     print(f"  Computing per-layer RankMe and alpha-ReQ...")
 
-    layer_results: dict[int, dict] = {}
+    layer_results: dict[int, dict[str, float | int]] = {}
     for layer_idx in range(num_layers):
         # Stack into (N, d_model) matrix
         features = torch.stack(layer_features[layer_idx], dim=0)
@@ -354,11 +385,12 @@ def _detect_num_layers(model, model_config: ModelConfig) -> int:
 # Helpers
 # =============================================================================
 
+
 def _ensure_dirs():
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
 
-def _save_results(data: dict, filename: str):
+def _save_results(data: dict[str, Any], filename: str):
     path = os.path.join(RESULTS_DIR, filename)
     with open(path, "w") as f:
         json.dump(data, f, indent=2, default=str)
@@ -366,7 +398,9 @@ def _save_results(data: dict, filename: str):
     return path
 
 
-def _activation_result_to_dict(result: ActivationResult) -> dict[str, dict]:
+def _activation_result_to_dict(
+    result: ActivationResult,
+) -> dict[str, dict[str, float | int]]:
     """Convert ActivationResult.layer_results to a JSON-serializable dict with string keys."""
     return {str(k): v for k, v in result.layer_results.items()}
 
@@ -375,12 +409,13 @@ def _activation_result_to_dict(result: ActivationResult) -> dict[str, dict]:
 # Analysis: Cross-Model Comparison
 # =============================================================================
 
+
 def analyze_activation_cross_model(
     models: dict[str, ModelConfig],
     num_samples: Optional[int] = None,
     max_seq_len: int = 512,
     fit_range: tuple[int, int] = (10, 100),
-) -> dict:
+) -> dict[str, Any]:
     """
     Compare activation RankMe across multiple models.
 
@@ -395,16 +430,16 @@ def analyze_activation_cross_model(
     """
     _ensure_dirs()
 
-    print(f"\n{'#'*60}")
+    print(f"\n{'#' * 60}")
     print(f"# Activation Analysis: Cross-Model Comparison")
     print(f"# Models: {list(models.keys())}")
     print(f"# Samples: {num_samples or 'all'}")
-    print(f"{'#'*60}")
+    print(f"{'#' * 60}")
 
     questions = load_mmlu_questions(num_samples=num_samples)
 
     output_path = os.path.join(RESULTS_DIR, "activation_cross_model.json")
-    existing_models: dict[str, dict] = {}
+    existing_models: dict[str, Any] = {}
     if os.path.exists(output_path):
         try:
             with open(output_path) as f:
@@ -414,7 +449,7 @@ def analyze_activation_cross_model(
         except Exception:
             pass
 
-    all_results: dict[str, dict] = dict(existing_models)
+    all_results: dict[str, Any] = dict(existing_models)
 
     for name, config in models.items():
         if name in all_results and "error" not in all_results[name]:
@@ -423,24 +458,31 @@ def analyze_activation_cross_model(
 
         try:
             result = extract_and_analyze_activations(
-                config, questions, max_seq_len=max_seq_len, fit_range=fit_range,
+                config,
+                questions,
+                max_seq_len=max_seq_len,
+                fit_range=fit_range,
             )
             all_results[name] = _activation_result_to_dict(result)
         except Exception as e:
             print(f"  ERROR ({name}): {e}")
             import traceback
+
             traceback.print_exc()
             all_results[name] = {"error": str(e)}
 
         # Incremental save
         summary = _build_cross_model_summary(all_results)
-        _save_results({
-            "analysis": "activation_cross_model",
-            "description": "Compare activation RankMe across model scales",
-            "models": all_results,
-            "summary": summary,
-            "timestamp": datetime.now().isoformat(),
-        }, "activation_cross_model.json")
+        _save_results(
+            {
+                "analysis": "activation_cross_model",
+                "description": "Compare activation RankMe across model scales",
+                "models": all_results,
+                "summary": summary,
+                "timestamp": datetime.now().isoformat(),
+            },
+            "activation_cross_model.json",
+        )
 
     summary = _build_cross_model_summary(all_results)
     output = {
@@ -454,7 +496,7 @@ def analyze_activation_cross_model(
     return output
 
 
-def _build_cross_model_summary(all_results: dict) -> dict:
+def _build_cross_model_summary(all_results: dict[str, Any]) -> dict[str, Any]:
     """Build summary with last-layer stats for each model."""
     summary = {}
     for name, layer_data in all_results.items():
@@ -492,13 +534,14 @@ def _build_cross_model_summary(all_results: dict) -> dict:
 # Analysis: Training Dynamics
 # =============================================================================
 
+
 def analyze_activation_training_dynamics(
     model_name: str = "pythia-70m",
     checkpoints: Optional[list[str]] = None,
     num_samples: Optional[int] = None,
     max_seq_len: int = 512,
     fit_range: tuple[int, int] = (10, 100),
-) -> dict:
+) -> dict[str, Any]:
     """
     Track activation RankMe over training checkpoints.
 
@@ -515,15 +558,17 @@ def analyze_activation_training_dynamics(
     _ensure_dirs()
     config = PYTHIA_CONFIGS[model_name]
 
-    print(f"\n{'#'*60}")
+    print(f"\n{'#' * 60}")
     print(f"# Activation Analysis: Training Dynamics ({model_name})")
     print(f"# Checkpoints: {len(checkpoints)}")
-    print(f"{'#'*60}")
+    print(f"{'#' * 60}")
 
     questions = load_mmlu_questions(num_samples=num_samples)
 
-    output_path = os.path.join(RESULTS_DIR, f"activation_training_dynamics_{model_name}.json")
-    existing_results: dict[str, dict] = {}
+    output_path = os.path.join(
+        RESULTS_DIR, f"activation_training_dynamics_{model_name}.json"
+    )
+    existing_results: dict[str, Any] = {}
     if os.path.exists(output_path):
         try:
             with open(output_path) as f:
@@ -533,7 +578,7 @@ def analyze_activation_training_dynamics(
         except Exception:
             pass
 
-    all_results: dict[str, dict] = dict(existing_results)
+    all_results: dict[str, Any] = dict(existing_results)
 
     for ckpt in tqdm(checkpoints, desc=f"Training dynamics ({model_name})"):
         if ckpt in all_results and "error" not in all_results[ckpt]:
@@ -555,23 +600,30 @@ def analyze_activation_training_dynamics(
 
         try:
             result = extract_and_analyze_activations(
-                ckpt_config, questions, max_seq_len=max_seq_len, fit_range=fit_range,
+                ckpt_config,
+                questions,
+                max_seq_len=max_seq_len,
+                fit_range=fit_range,
             )
             all_results[ckpt] = _activation_result_to_dict(result)
         except Exception as e:
             print(f"  ERROR ({ckpt}): {e}")
             import traceback
+
             traceback.print_exc()
             all_results[ckpt] = {"error": str(e)}
 
         # Incremental save
-        _save_results({
-            "analysis": f"activation_training_dynamics_{model_name}",
-            "model": model_name,
-            "checkpoints": checkpoints,
-            "results": all_results,
-            "timestamp": datetime.now().isoformat(),
-        }, f"activation_training_dynamics_{model_name}.json")
+        _save_results(
+            {
+                "analysis": f"activation_training_dynamics_{model_name}",
+                "model": model_name,
+                "checkpoints": checkpoints,
+                "results": all_results,
+                "timestamp": datetime.now().isoformat(),
+            },
+            f"activation_training_dynamics_{model_name}.json",
+        )
 
     output = {
         "analysis": f"activation_training_dynamics_{model_name}",
@@ -588,11 +640,12 @@ def analyze_activation_training_dynamics(
 # Analysis: OLMo-3 Post-Training Comparison
 # =============================================================================
 
+
 def analyze_activation_post_training(
     num_samples: Optional[int] = None,
     max_seq_len: int = 512,
     fit_range: tuple[int, int] = (10, 100),
-) -> dict:
+) -> dict[str, Any]:
     """
     Compare activation RankMe across OLMo-3 post-training variants.
 
@@ -600,16 +653,16 @@ def analyze_activation_post_training(
     """
     _ensure_dirs()
 
-    print(f"\n{'#'*60}")
+    print(f"\n{'#' * 60}")
     print(f"# Activation Analysis: OLMo-3 Post-Training Comparison")
     print(f"# Variants: {len(OLMO3_VARIANTS)}")
     print(f"# Samples: {num_samples or 'all'}")
-    print(f"{'#'*60}")
+    print(f"{'#' * 60}")
 
     questions = load_mmlu_questions(num_samples=num_samples)
 
     output_path = os.path.join(RESULTS_DIR, "activation_post_training.json")
-    existing_results: dict[str, dict] = {}
+    existing_results: dict[str, Any] = {}
     if os.path.exists(output_path):
         try:
             with open(output_path) as f:
@@ -619,7 +672,7 @@ def analyze_activation_post_training(
         except Exception:
             pass
 
-    all_results: dict[str, dict] = dict(existing_results)
+    all_results: dict[str, Any] = dict(existing_results)
 
     for name, config in OLMO3_VARIANTS.items():
         if name in all_results and "error" not in all_results[name]:
@@ -628,7 +681,10 @@ def analyze_activation_post_training(
 
         try:
             result = extract_and_analyze_activations(
-                config, questions, max_seq_len=max_seq_len, fit_range=fit_range,
+                config,
+                questions,
+                max_seq_len=max_seq_len,
+                fit_range=fit_range,
             )
             variant_data: dict[str, object] = dict(_activation_result_to_dict(result))
             variant_data["pathway"] = config.pathway
@@ -637,17 +693,21 @@ def analyze_activation_post_training(
         except Exception as e:
             print(f"  ERROR ({name}): {e}")
             import traceback
+
             traceback.print_exc()
             all_results[name] = {"error": str(e)}
 
         pathway_comparison = _build_pathway_summary(all_results)
-        _save_results({
-            "analysis": "activation_post_training",
-            "description": "Compare activation RankMe across OLMo-3 post-training variants",
-            "variants": all_results,
-            "pathway_comparison": pathway_comparison,
-            "timestamp": datetime.now().isoformat(),
-        }, "activation_post_training.json")
+        _save_results(
+            {
+                "analysis": "activation_post_training",
+                "description": "Compare activation RankMe across OLMo-3 post-training variants",
+                "variants": all_results,
+                "pathway_comparison": pathway_comparison,
+                "timestamp": datetime.now().isoformat(),
+            },
+            "activation_post_training.json",
+        )
 
     pathway_comparison = _build_pathway_summary(all_results)
     output = {
@@ -661,7 +721,7 @@ def analyze_activation_post_training(
     return output
 
 
-def _build_pathway_summary(all_results: dict) -> dict:
+def _build_pathway_summary(all_results: dict[str, Any]) -> dict[str, Any]:
     pathways = {}
     for name, layer_data in all_results.items():
         if "error" in layer_data:
@@ -677,16 +737,27 @@ def _build_pathway_summary(all_results: dict) -> dict:
         pathways[pathway][stage] = last_layer.get("rankme_ratio", 0)
     return pathways
 
+
 if __name__ == "__main__":
     # Quick test: analyze pythia-70m with 100 samples
     questions = load_mmlu_questions(num_samples=100)
     result = extract_and_analyze_activations(PYTHIA_CONFIGS["pythia-70m"], questions)
     last_layer = max(result.layer_results.keys())
-    print(f"\nPythia-70m results ({result.num_questions} questions, {result.elapsed_seconds:.1f}s):")
-    print(f"  Last layer (idx={last_layer}) RankMe: {result.layer_results[last_layer]['rankme']:.4f}")
-    print(f"  Last layer RankMe ratio: {result.layer_results[last_layer]['rankme_ratio']:.4f}")
-    print(f"  Last layer alpha-ReQ: {result.layer_results[last_layer]['alpha_req']:.4f}")
+    print(
+        f"\nPythia-70m results ({result.num_questions} questions, {result.elapsed_seconds:.1f}s):"
+    )
+    print(
+        f"  Last layer (idx={last_layer}) RankMe: {result.layer_results[last_layer]['rankme']:.4f}"
+    )
+    print(
+        f"  Last layer RankMe ratio: {result.layer_results[last_layer]['rankme_ratio']:.4f}"
+    )
+    print(
+        f"  Last layer alpha-ReQ: {result.layer_results[last_layer]['alpha_req']:.4f}"
+    )
     print(f"\nAll layers:")
     for idx in sorted(result.layer_results.keys()):
         lr = result.layer_results[idx]
-        print(f"  Layer {idx}: RankMe={lr['rankme']:.4f}, ratio={lr['rankme_ratio']:.4f}, alpha={lr['alpha_req']:.4f}")
+        print(
+            f"  Layer {idx}: RankMe={lr['rankme']:.4f}, ratio={lr['rankme_ratio']:.4f}, alpha={lr['alpha_req']:.4f}"
+        )
