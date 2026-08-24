@@ -378,6 +378,32 @@ OLMO3_VARIANTS: dict[str, ModelConfig] = {
         pathway="rl-zero",
         stage="rlvr-mix",
     ),
+    "olmo3-32b-think-sft": ModelConfig(
+        name="olmo3-32b-think-sft",
+        hf_id="allenai/Olmo-3-32B-Think-SFT",
+        architecture="olmo3",
+        layers=64,
+        d_model=5120,
+        intermediate_size=27648,
+        n_heads=40,
+        n_kv_heads=8,
+        total_params="32B",
+        pathway="think",
+        stage="sft",
+    ),
+    "olmo3-32b-think-rlvr": ModelConfig(
+        name="olmo3-32b-think-rlvr",
+        hf_id="allenai/Olmo-3-32B-Think",
+        architecture="olmo3",
+        layers=64,
+        d_model=5120,
+        intermediate_size=27648,
+        n_heads=40,
+        n_kv_heads=8,
+        total_params="32B",
+        pathway="think",
+        stage="rlvr",
+    ),
 }
 
 # =============================================================================
@@ -451,6 +477,7 @@ def compute_experiment_layers(n_layers: int, n: int = 10) -> list[int]:
 
 # Pre-computed for OLMo-3 7B (32 transformer layers)
 EXPERIMENT_LAYERS_7B: list[int] = compute_experiment_layers(32)
+EXPERIMENT_LAYERS_32B: list[int] = compute_experiment_layers(64)
 
 
 # =============================================================================
@@ -512,6 +539,90 @@ _ALL_STEPS: dict[str, list[str]] = {
 MODEL_CHECKPOINTS: dict[str, list[str]] = {
     model: select_uniform_checkpoints(steps, n=10)
     for model, steps in _ALL_STEPS.items()
+}
+
+# Immutable refs for the Think differential-subspace trajectories.  Keep these
+# separate from MODEL_CHECKPOINTS: that table is also consumed by the older
+# concept-dynamics pipeline, whose branch names are part of its provenance.
+THINK_7B_RLVR_CHECKPOINTS: tuple[str, ...] = (
+    "step_0025",
+    "step_0175",
+    "step_0325",
+    "step_0475",
+    "step_0625",
+    "step_0775",
+    "step_0925",
+    "step_1075",
+    "step_1225",
+    "step_1375",
+)
+THINK_7B_RLVR_REVISIONS: dict[str, str] = {
+    "step_0025": "817b9d38d9cf462c90fcf56cad08563abd0054a0",
+    "step_0175": "6e194a68558f3d12eba2621c8d78c0d4fb02c3f8",
+    "step_0325": "1d2cac9292b9563eeb2bdb22fd1ea2fc715a7559",
+    "step_0475": "75457adb829cf89b11761a07b70e37e7b94e2b56",
+    "step_0625": "7775e7896cbc5f172f8a6b47511e9971c8684d25",
+    "step_0775": "969e8dddf0964f5d773a20935998d2a11c392ac9",
+    "step_0925": "47e8c516710104b64b65f178ad3e7f235b461a94",
+    "step_1075": "0ed4d267c8cfc9eeb0ebd5bd6bb9177e6d6d278b",
+    "step_1225": "1a405ee4082975905ea97bd180ed66128dbba400",
+    "step_1375": "031240693eb33d302cfa8d2df76af15d2da4b579",
+}
+
+THINK_32B_RLVR_CHECKPOINTS: tuple[str, ...] = (
+    "step_050",
+    "step_150",
+    "step_200",
+    "step_300",
+    "step_350",
+    "step_450",
+    "step_500",
+    "step_600",
+    "step_650",
+    "step_750",
+)
+THINK_32B_RLVR_REVISIONS: dict[str, str] = {
+    "step_050": "21bde53e148691a52b798b511582bc6cbae2410f",
+    "step_150": "d3c912be05aa60199ea18cf3f3ee217c5d056561",
+    "step_200": "b51b66a28ccb233207a88346aca28bebcc979920",
+    "step_300": "2597cebb30a44ac6d2e80b2ed4e4817d3e498696",
+    "step_350": "c4b8188180dba9cdf2a64c279a29c98318046751",
+    "step_450": "d420429238898d77144d8ec32a6dbca85969bc00",
+    "step_500": "3a0f68d80b924900f4c2b1ce5ec3de47cd374a7f",
+    "step_600": "2595196049d4f802d8daa7b198d560dad7feccc8",
+    "step_650": "ab5ad6eaf3209bf8eeac15a6e58dea5f4368c7fe",
+    "step_750": "f395de048595db659a2562913961b2ec5585eb42",
+}
+
+THINK_32B_SFT_CHECKPOINTS: tuple[str, ...] = tuple(
+    f"step{step}"
+    for step in (1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10790)
+)
+THINK_32B_SFT_REVISIONS: dict[str, dict[str, str]] = {
+    "1e-4": {
+        "step1000": "487dae941d0d10e7d65138557c7142176b30c922",
+        "step2000": "ddfabfec3af2807f1db8290bcc8e9bfc59762b65",
+        "step3000": "7913c71735aa5635f532f44e22637f686cc5d353",
+        "step4000": "938776c83402e1cf374786c54020fbb8a3a5eff7",
+        "step5000": "10e1786cc8274b2e2e3facb7867939c8a275d376",
+        "step6000": "0f48aa78b5b2815db8159c4f242435899055a28e",
+        "step7000": "b62dbae0efbed1e370b751ad70976bcbc5ceea4f",
+        "step8000": "858ec204542ef426ee3f2ab88cda1a497700a4ee",
+        "step9000": "9807a1f8c641785bfc1e2e5aa718efc6801a4363",
+        "step10790": "ce596536f60d1c402cd49c3a7a3cf3687397ef2d",
+    },
+    "5e-5": {
+        "step1000": "76ec097cac18b062d08789ab5fc6ffc3ba189eb0",
+        "step2000": "e7f6631c6152800634b5d72ec458ba71917c8549",
+        "step3000": "3e8907016b8e7fad7055325a870ce6e55f2f21de",
+        "step4000": "c41c2924b6b3b3e1ad659b815a2630497c42b991",
+        "step5000": "945dbd890de110858c1bad3b3559fc90d454f764",
+        "step6000": "061971c700132395739498e8280150e133ab78f9",
+        "step7000": "6851a37159e86e358eb542d99041f3cca9f0ed68",
+        "step8000": "83ac724fd18a2fce57f1b445789ffe8a105a4456",
+        "step9000": "825bebf1efb884f4edded7396a1729520989ea66",
+        "step10790": "d6db8d37b71e9acb61509b0d69264cc96d2a9929",
+    },
 }
 
 

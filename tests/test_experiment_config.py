@@ -219,8 +219,8 @@ class TestConceptDynamicsConceptWiring:
 
         assert runner.DEFAULT_CONCEPTS == all_concept_keys()
 
-    def test_exactly_forty_six_concepts(self, runner):
-        assert len(runner.DEFAULT_CONCEPTS) == 46
+    def test_exactly_forty_seven_concepts(self, runner):
+        assert len(runner.DEFAULT_CONCEPTS) == 47
 
 
 class TestConceptDynamicsOutputWiring:
@@ -275,7 +275,7 @@ class TestConceptDynamicsCliHelp:
             text=True,
         )
         assert result.returncode == 0
-        assert "46" in result.stdout
+        assert "47" in result.stdout
         assert "all_concept_keys" in result.stdout
 
     def test_shell_help_does_not_claim_results_were_saved(self):
