@@ -32,11 +32,13 @@ def test_missing_signed_artifact_is_rejected(tmp_path):
         3,
     )
     assert error is not None
-    assert "unreadable artifact" in error
+    assert "unreadable sidecar" in error
 
 
 def test_corrupt_sidecar_shape_is_rejected(tmp_path):
     source = SFT_ROOT / "U/olmo3-think-sft/step1000/layer_3/math_vs_wikitext"
+    if not source.with_suffix(".json").is_file():
+        pytest.skip("canonical generated SFT tree is unavailable")
     sidecar = json.loads(source.with_suffix(".json").read_text(encoding="utf-8"))
     sidecar["u_pos_shape"] = [4096, 999]
     corrupt_sidecar = tmp_path / "math_vs_wikitext.json"
@@ -55,8 +57,10 @@ def test_corrupt_sidecar_shape_is_rejected(tmp_path):
 
 
 def test_summary_checkpoint_order_is_rejected(monkeypatch):
-    original = validator._read_json
     summary_path = SFT_ROOT / "metrics/summary.json"
+    if not summary_path.is_file():
+        pytest.skip("canonical generated SFT tree is unavailable")
+    original = validator._read_json
 
     def reordered(path):
         value = original(path)
@@ -92,8 +96,10 @@ def test_optional_skipped_records_are_accepted():
     ],
 )
 def test_manifest_provenance_is_rejected(monkeypatch, field, expected_value):
-    original = validator._read_json
     manifest_path = SFT_ROOT / "manifests/olmo3-think-sft__step1000.json"
+    if not manifest_path.is_file():
+        pytest.skip("canonical generated SFT tree is unavailable")
+    original = validator._read_json
 
     def altered(path):
         value = original(path)
@@ -453,7 +459,7 @@ def test_sft_sha_revisions_are_shared_by_all_checkpoint_artifacts(
                     "layer": layer,
                     "setup_signature": setup,
                     "tau": 0.95,
-                    "n_samples": 1000,
+                    "n_samples": 40960,
                     "concepts": {concept: concept_metrics},
                 }
             ),

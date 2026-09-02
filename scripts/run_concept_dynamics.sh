@@ -59,13 +59,13 @@ main() {
         full)
             output_dir="${OUTPUT_DIR:-logs/concept_dynamics_multi}"
             log "Running FULL concept dynamics experiment"
-            uv run python scripts/run_concept_dynamics.py \
+            uv run python -m scripts.run_concept_dynamics \
                 --output "$output_dir" "${passthrough[@]}"
             ;;
         quick)
             output_dir="${OUTPUT_DIR:-logs/concept_dynamics_multi_quick}"
             log "Running QUICK concept dynamics (smoke test)"
-            uv run python scripts/run_concept_dynamics.py \
+            uv run python -m scripts.run_concept_dynamics \
                 --quick --output "$output_dir" "${passthrough[@]}"
             ;;
         help|--help|-h)

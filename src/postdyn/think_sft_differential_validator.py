@@ -33,7 +33,13 @@ from postdyn.domain_datasets import (
     WIKITEXT_HF_ID,
     WIKITEXT_SPLIT,
 )
-from postdyn.think_sft_differential_experiment import CONCEPT_PAIRS
+from postdyn.think_sft_differential_experiment import (
+    CONCEPT_PAIRS,
+    SCALE_7B,
+    covariance_n_samples,
+)
+
+EXPECTED_N_SAMPLES = covariance_n_samples(SCALE_7B)
 
 
 CHECKPOINTS_SFT: tuple[str, ...] = tuple(MODEL_CHECKPOINTS["olmo3-think-sft"])
@@ -157,9 +163,13 @@ def _expected_setup_signature(
         if not isinstance(data, dict) or not isinstance(data.get("prompts"), list):
             raise ValueError(f"invalid prompts/{domain}.json")
         prompts = data["prompts"]
-        if len(prompts) < 1000 or any(not isinstance(p, str) for p in prompts):
-            raise ValueError(f"prompts/{domain}.json does not contain 1000 strings")
-        if data.get("domain") != domain or data.get("n_samples") != 1000:
+        if len(prompts) < EXPECTED_N_SAMPLES or any(
+            not isinstance(p, str) for p in prompts
+        ):
+            raise ValueError(
+                f"prompts/{domain}.json does not contain {EXPECTED_N_SAMPLES} strings"
+            )
+        if data.get("domain") != domain or data.get("n_samples") != EXPECTED_N_SAMPLES:
             raise ValueError(f"prompt metadata mismatch for {domain}")
         if (
             data.get("use_chat_template") is not False
@@ -192,7 +202,7 @@ def _expected_setup_signature(
             or not _is_commit_sha(source.get("revision"))
         ):
             raise ValueError(f"prompt source mismatch for {domain}")
-        fingerprint = _prompt_fingerprint(prompts[:1000])
+        fingerprint = _prompt_fingerprint(prompts[:EXPECTED_N_SAMPLES])
         if data.get("prompt_fingerprint") != fingerprint:
             raise ValueError(f"prompt fingerprint mismatch for {domain}")
         prompt_fingerprints.append((domain, fingerprint))
@@ -208,7 +218,7 @@ def _expected_setup_signature(
         "model_ids": {model_key: OLMO3_VARIANTS[model_key].hf_id},
         "dataset_sources": dataset_sources,
         "prompt_fingerprints": prompt_fingerprints,
-        "n_samples": 1000,
+        "n_samples": EXPECTED_N_SAMPLES,
         "tau": 0.95,
         "max_seq_len": 2048,
         "use_chat_template": False,
@@ -458,11 +468,16 @@ def _basis_error(
 ) -> str | None:
     try:
         meta = _read_json(meta_path)
-        tensors = load_file(str(st_path))
-    except (OSError, ValueError, RuntimeError, TypeError, json.JSONDecodeError) as exc:
-        return f"{st_path}: unreadable artifact ({exc})"
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        return f"{meta_path}: unreadable sidecar ({exc})"
     if not isinstance(meta, dict):
         return f"{meta_path}: sidecar is not an object"
+    if meta.get("tensors_saved", True) is False:
+        return None
+    try:
+        tensors = load_file(str(st_path))
+    except (OSError, ValueError, RuntimeError, TypeError) as exc:
+        return f"{st_path}: unreadable artifact ({exc})"
     required_tensors = {"U_pos", "U_neg", "eigenvalues_pos", "eigenvalues_neg"}
     if require_full:
         required_tensors.update(
@@ -697,7 +712,7 @@ def validate_result_tree(root: Path, trajectory: str | None = None) -> Validatio
                     or metrics.get("layer") != layer
                     or metrics.get("setup_signature") != setup_signature
                     or metrics.get("tau") != 0.95
-                    or metrics.get("n_samples") != 1000
+                    or metrics.get("n_samples") != EXPECTED_N_SAMPLES
                 ):
                     errors.append(f"{metrics_path}: provenance mismatch")
                 if "revision" in metrics and not _revision_matches(

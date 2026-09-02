@@ -1,7 +1,9 @@
 """Think-SFT vs Think differential-subspace experiment configuration.
 
 Same math-vs-text protocol as the RL-Zero-Math analysis:
-  * Dolci Math vs Dolci General, 1,000 prompts / domain
+  * Dolci Math vs Dolci General, 10 x d_model prompts / domain
+    (full-rank covariance; avoids the mass of zero eigenvalues that a
+    sample-starved Gram matrix produces)
   * last prompt token (raw, no chat template)
   * 10 slide-formula layers
   * both positive (math-dominant) and negative (text-dominant) eigenspaces
@@ -45,13 +47,21 @@ MODEL_KEYS_BY_SCALE: dict[str, tuple[str, str]] = {
     SCALE_32B: ("olmo3-32b-think-sft", "olmo3-32b-think-rlvr"),
 }
 
-N_SAMPLES: int = 1000
+COVARIANCE_SAMPLES_PER_DIM: int = 10
 SAMPLE_SEED: int = SHARED_SAMPLE_SEED
 TAU: float = DEFAULT_TAU
 MAX_SEQ_LEN: int = 2048
 USE_CHAT_TEMPLATE: bool = False
 EXTRACTION_CONTRACT: str = "raw_prompt_final_attention_token_v1"
 DTYPE: str = "bfloat16"
+
+
+def covariance_n_samples(scale: str) -> int:
+    """Prompts per domain: 10 x d_model, so covariance can reach full rank."""
+    keys = MODEL_KEYS_BY_SCALE.get(scale)
+    if keys is None:
+        raise ValueError(f"unknown scale: {scale!r}")
+    return COVARIANCE_SAMPLES_PER_DIM * OLMO3_VARIANTS[keys[0]].d_model
 
 
 def extraction_protocol_payload(
@@ -76,9 +86,9 @@ def extraction_protocol_payload(
     }
 
 
-def canonical_extraction_protocol() -> dict[str, object]:
+def canonical_extraction_protocol(scale: str) -> dict[str, object]:
     return extraction_protocol_payload(
-        n_samples=N_SAMPLES,
+        n_samples=covariance_n_samples(scale),
         tau=TAU,
         max_seq_len=MAX_SEQ_LEN,
         use_chat_template=USE_CHAT_TEMPLATE,
@@ -88,11 +98,13 @@ def canonical_extraction_protocol() -> dict[str, object]:
     )
 
 
-def validate_extraction_protocol(protocol: object, *, canonical: bool = True) -> None:
+def validate_extraction_protocol(
+    protocol: object, *, canonical: bool = True, scale: str = SCALE_7B
+) -> None:
     """Reject missing, mistyped, or noncanonical extraction protocol fields."""
     if not isinstance(protocol, dict):
         raise ValueError("extraction protocol must be an object")
-    expected = canonical_extraction_protocol()
+    expected = canonical_extraction_protocol(scale)
     if not canonical:
         return
     if set(protocol) != set(expected):

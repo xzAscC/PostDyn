@@ -72,7 +72,6 @@ from postdyn.think_sft_differential_experiment import (
     MANIFESTS_SUBDIR,
     MAX_SEQ_LEN,
     METRICS_SUBDIR,
-    N_SAMPLES,
     PROMPTS_SUBDIR,
     SAMPLE_SEED,
     SCALE_32B,
@@ -82,6 +81,7 @@ from postdyn.think_sft_differential_experiment import (
     TRAJECTORY_SFT,
     U_SUBDIR,
     USE_CHAT_TEMPLATE,
+    covariance_n_samples,
     extraction_protocol_payload,
     extraction_protocols_equal,
     fixed_point_configs,
@@ -592,34 +592,39 @@ def save_signed_subspace(
     revision: str | None = None,
     loader_provenance: dict[str, Any] | None = None,
     extraction_protocol: dict[str, object] | None = None,
+    save_tensors: bool = False,
 ) -> None:
     st_path, js_path = _u_paths(root, model_name, checkpoint, layer, sub.concept)
     st_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "U_pos": sub.u_pos.contiguous().float(),
-        "U_neg": sub.u_neg.contiguous().float(),
-        "eigenvalues_pos": sub.eigenvalues_pos.contiguous().float(),
-        "eigenvalues_neg": sub.eigenvalues_neg.contiguous().float(),
-    }
-    tensor_fields = {
-        "U_pos_full": _core_value(sub, "u_pos_full"),
-        "U_neg_full": _core_value(sub, "u_neg_full"),
-        "residual_U_pos": _core_value(sub, "residual_u_pos"),
-        "residual_U_neg": _core_value(sub, "residual_u_neg"),
-        "eigenvalues_signed": _core_value(sub, "eigenvalues_signed"),
-        "eigenvectors_signed": _core_value(sub, "eigenvectors_signed"),
-    }
-    for name, value in tensor_fields.items():
-        tensor = _tensor_value(value)
-        if tensor is not None:
-            payload[name] = tensor
-    fd, tmp_name = tempfile.mkstemp(
-        prefix=f".{st_path.name}.", suffix=".tmp", dir=st_path.parent
-    )
-    os.close(fd)
-    tmp_st_path = Path(tmp_name)
+    tmp_st_path: Path | None = None
+    payload: dict[str, Any] = {}
+    if save_tensors:
+        payload = {
+            "U_pos": sub.u_pos.contiguous().float(),
+            "U_neg": sub.u_neg.contiguous().float(),
+            "eigenvalues_pos": sub.eigenvalues_pos.contiguous().float(),
+            "eigenvalues_neg": sub.eigenvalues_neg.contiguous().float(),
+        }
+        tensor_fields = {
+            "U_pos_full": _core_value(sub, "u_pos_full"),
+            "U_neg_full": _core_value(sub, "u_neg_full"),
+            "residual_U_pos": _core_value(sub, "residual_u_pos"),
+            "residual_U_neg": _core_value(sub, "residual_u_neg"),
+            "eigenvalues_signed": _core_value(sub, "eigenvalues_signed"),
+            "eigenvectors_signed": _core_value(sub, "eigenvectors_signed"),
+        }
+        for name, value in tensor_fields.items():
+            tensor = _tensor_value(value)
+            if tensor is not None:
+                payload[name] = tensor
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{st_path.name}.", suffix=".tmp", dir=st_path.parent
+        )
+        os.close(fd)
+        tmp_st_path = Path(tmp_name)
     try:
-        save_file(payload, str(tmp_st_path))
+        if tmp_st_path is not None:
+            save_file(payload, str(tmp_st_path))
         meta = signed_subspace_to_serializable(sub)
         meta.update(_new_core_metrics(sub))
         meta["core_api_fields"] = sorted(_new_core_metrics(sub))
@@ -639,6 +644,7 @@ def save_signed_subspace(
                 "layer": layer,
                 "setup_signature": setup_sig,
                 "revision": revision,
+                "tensors_saved": save_tensors,
             }
         )
         if loader_provenance is not None:
@@ -646,9 +652,11 @@ def save_signed_subspace(
         if extraction_protocol is not None:
             meta["extraction_protocol"] = dict(extraction_protocol)
         _atomic_write_json(js_path, meta)
-        os.replace(tmp_st_path, st_path)
+        if tmp_st_path is not None:
+            os.replace(tmp_st_path, st_path)
     except BaseException:
-        tmp_st_path.unlink(missing_ok=True)
+        if tmp_st_path is not None:
+            tmp_st_path.unlink(missing_ok=True)
         raise
 
 
@@ -656,6 +664,11 @@ def load_signed_subspace(
     root: Path, model_name: str, checkpoint: str, layer: int, concept: str
 ) -> SignedDifferentialSubspace:
     st_path, js_path = _u_paths(root, model_name, checkpoint, layer, concept)
+    if not st_path.exists():
+        raise FileNotFoundError(
+            f"{st_path}: tensors were not saved for this subspace "
+            "(JSON-only run); re-run with --save-tensors to enable tensor reuse"
+        )
     tensors = load_file(str(st_path))
     meta = json.loads(js_path.read_text(encoding="utf-8"))
     return SignedDifferentialSubspace(
@@ -910,6 +923,7 @@ def _run_checkpoint(
     trajectory: str | None = None,
     project_root: Path | None = None,
     validate_32b_checkpoint: bool = True,
+    save_tensors: bool = False,
 ) -> dict[str, Any]:
     allowed_model_keys = model_keys_for_scale(scale) + tuple(
         model_key for model_key, _revision in fixed_point_configs(scale).values()
@@ -936,7 +950,9 @@ def _run_checkpoint(
         signed=True,
     )
     if scale == SCALE_32B:
-        validate_extraction_protocol(extraction_protocol, canonical=canonical_protocol)
+        validate_extraction_protocol(
+            extraction_protocol, canonical=canonical_protocol, scale=scale
+        )
     active_pairs = tuple(
         pair
         for pair in CONCEPT_PAIRS
@@ -1010,6 +1026,7 @@ def _run_checkpoint(
                 revision,
                 loader_provenance=(NF4_PROVENANCE if scale == SCALE_32B else None),
                 extraction_protocol=extraction_protocol if scale == SCALE_32B else None,
+                save_tensors=save_tensors,
             )
             subs[concept_name] = sub
             print(
@@ -1355,7 +1372,12 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     p.add_argument("--checkpoints", type=str, default=None)
     p.add_argument("--layers", type=str, default=None)
-    p.add_argument("--samples", type=int, default=N_SAMPLES)
+    p.add_argument("--samples", type=int, default=None)
+    p.add_argument(
+        "--save-tensors",
+        action="store_true",
+        help="Also dump subspace tensors (.safetensors); default is JSON metrics only",
+    )
     p.add_argument("--max-seq-len", type=int, default=MAX_SEQ_LEN)
     p.add_argument("--tau", type=float, default=TAU)
     p.add_argument("--seed", type=int, default=SAMPLE_SEED)
@@ -1386,7 +1408,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     checkpoints = list(config.checkpoints)
     revisions = dict(config.revisions)
     layers = layers_for_scale(args.scale)
-    n_samples = args.samples
+    n_samples = (
+        args.samples if args.samples is not None else covariance_n_samples(args.scale)
+    )
     root = (
         Path(args.output)
         if args.output
@@ -1408,7 +1432,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         )
         checkpoints = checkpoints[:1]
         layers = layers[:2]
-        n_samples = quick_sample_count(args.samples)
+        n_samples = quick_sample_count(n_samples)
     if args.checkpoints:
         requested = [c.strip() for c in args.checkpoints.split(",") if c.strip()]
         validate_selection(
@@ -1488,7 +1512,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                     extraction_contract=EXTRACTION_CONTRACT,
                     dtype=DTYPE,
                     signed=True,
-                )
+                ),
+                scale=args.scale,
             )
         _require_canonical_7b(project_root=args.project_root)
 
@@ -1565,6 +1590,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             canonical_protocol=not args.quick,
             trajectory=args.trajectory,
             project_root=args.project_root,
+            save_tensors=args.save_tensors,
         )
         if not args.keep_hf_cache:
             from postdyn.concept_dynamics import _clean_hf_cache
@@ -1621,6 +1647,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             canonical_protocol=not args.quick,
             trajectory=f"fixed:{label}",
             project_root=args.project_root,
+            save_tensors=args.save_tensors,
         )
         fixed_point_records[label] = {
             "model_key": fixed_model_key,
@@ -1667,6 +1694,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         trajectory=f"{args.trajectory}:main",
         project_root=args.project_root,
         validate_32b_checkpoint=False,
+        save_tensors=args.save_tensors,
     )
     final_main_record = {
         "model_key": model_key,

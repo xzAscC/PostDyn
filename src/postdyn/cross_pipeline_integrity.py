@@ -40,7 +40,7 @@ def preflight_canonical_7b(
     complete schedules.  This function does not create directories, rebuild
     aggregates, load models, or access the network.
     """
-    base = Path(project_root) if project_root is not None else Path(__file__).parents[1]
+    base = Path(project_root) if project_root is not None else Path(__file__).parents[2]
     extraction_report = preflight_canonical_7b_extraction(project_root=base)
     extraction_errors = list(extraction_report.errors)
     math_errors: list[str] = []
@@ -72,7 +72,7 @@ def preflight_canonical_7b_extraction(
     *, project_root: Path | None = None
 ) -> Canonical7BPreflightReport:
     """Validate only the canonical 7B SFT+RLVR extraction trees."""
-    base = Path(project_root) if project_root is not None else Path(__file__).parents[1]
+    base = Path(project_root) if project_root is not None else Path(__file__).parents[2]
     extraction_errors: list[str] = []
     for trajectory in ("sft", "rlvr"):
         root = root_for_trajectory(

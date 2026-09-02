@@ -81,7 +81,7 @@ def _tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
         "layer": 6,
         "setup_signature": setup,
         "tau": 0.95,
-        "n_samples": 1000,
+        "n_samples": 51200,
         "extraction_protocol": validator.EXPECTED_PROTOCOL,
         "concepts": {
             concept: {

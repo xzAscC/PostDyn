@@ -61,10 +61,10 @@ Arrow polarity is always A→B with +B − A. Representative keys:
 
 ```bash
 # Stream-download all concept sources into data/*.json
-uv run python scripts/download_datasets.py
+uv run python -m scripts.download_datasets
 
 # Optional: sandbox-validate HumanEval-X python/cpp pairs
-uv run python scripts/validate_humaneval_x.py
+uv run python -m scripts.validate_humaneval_x
 ```
 
 Some HF datasets may require `HF_TOKEN` (`uv run hf auth login` or export it).
@@ -80,11 +80,11 @@ bash scripts/run_concept_dynamics.sh full
 bash scripts/run_concept_dynamics.sh quick
 
 # Subset
-uv run python scripts/run_concept_dynamics.py \
+uv run python -m scripts.run_concept_dynamics \
   --concepts code_python_vs_cpp,math_cot_vs_direct,if_eng_vs_fra,gender_she_vs_he
 
 # Gram + stability heatmaps (PDF → figs/)
-uv run python scripts/plot_concept_dynamics.py \
+uv run python -m scripts.plot_concept_dynamics \
   --input logs/concept_dynamics_multi
 ```
 
@@ -92,11 +92,11 @@ Optional controls / pipelines:
 
 ```bash
 # Gender surface-pronoun control vs full WinoGender direction
-uv run python scripts/analyze_gender_surface_control.py \
+uv run python -m scripts.analyze_gender_surface_control \
   --model olmo3-rl-zero-math --checkpoint step_1900
 
 # Prefetch-overlapped FLORES+ extraction
-uv run python scripts/run_flores_pipeline.py
+uv run python -m scripts.run_flores_pipeline
 ```
 
 ## Effective-rank pipelines

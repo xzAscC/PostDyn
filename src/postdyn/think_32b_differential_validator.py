@@ -30,7 +30,11 @@ from postdyn.domain_datasets import (
     WIKITEXT_HF_ID,
     WIKITEXT_SPLIT,
 )
-from postdyn.think_sft_differential_experiment import CONCEPT_PAIRS
+from postdyn.think_sft_differential_experiment import (
+    CONCEPT_PAIRS,
+    SCALE_32B,
+    canonical_extraction_protocol,
+)
 from postdyn.quantized_model_loader import (
     CANONICAL_NF4_PROVENANCE,
     validate_nf4_load_diagnostics,
@@ -64,15 +68,7 @@ SAMPLED_ADJACENT_PAIRS = 16
 SAMPLED_STRIDED_PAIRS = 16
 SAMPLED_RANDOM_PAIRS = 64
 SAMPLED_PAIR_SEED = 0x504F535444594E
-EXPECTED_PROTOCOL = {
-    "n_samples": 1000,
-    "tau": 0.95,
-    "max_seq_len": 2048,
-    "use_chat_template": False,
-    "extraction_contract": "raw_prompt_final_attention_token_v1",
-    "dtype": "bfloat16",
-    "signed": True,
-}
+EXPECTED_PROTOCOL = canonical_extraction_protocol(SCALE_32B)
 STATIC_NF4_PROVENANCE = CANONICAL_NF4_PROVENANCE
 STABILITY_TOLERANCE = 1e-6
 CORE_METRIC_FIELDS = {
@@ -304,7 +300,7 @@ def _expected_setup_signature(
         "model_ids": {model_key: OLMO3_VARIANTS[model_key].hf_id},
         "dataset_sources": sources,
         "prompt_fingerprints": fingerprints,
-        "n_samples": 1000,
+        "n_samples": EXPECTED_PROTOCOL["n_samples"],
         "tau": 0.95,
         "max_seq_len": 2048,
         "use_chat_template": False,
@@ -335,7 +331,15 @@ def _basis_error(
     require_full: bool = False,
 ) -> str | None:
     try:
-        tensors, meta = load_file(str(path)), _read(meta_path)
+        meta = _read(meta_path)
+    except Exception as exc:
+        return f"{meta_path}: unreadable sidecar ({exc})"
+    if not isinstance(meta, dict):
+        return f"{meta_path}: sidecar is not an object"
+    if meta.get("tensors_saved", True) is False:
+        return None
+    try:
+        tensors = load_file(str(path))
     except Exception as exc:
         return f"{path}: unreadable artifact ({exc})"
     required_tensors = {
@@ -1222,7 +1226,7 @@ def validate_result_tree(
                     "layer": layer,
                     "setup_signature": setup_sig,
                     "tau": 0.95,
-                    "n_samples": 1000,
+                    "n_samples": EXPECTED_PROTOCOL["n_samples"],
                     "extraction_protocol": EXPECTED_PROTOCOL,
                 }
                 if (

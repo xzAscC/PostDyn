@@ -35,7 +35,7 @@ from pathlib import Path
 # Paths
 # =============================================================================
 
-PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
+PROJECT_ROOT: Path = Path(__file__).resolve().parents[2]
 DATASETS_DIR: Path = PROJECT_ROOT / "data"
 SHARED_IDS_PATH: Path = DATASETS_DIR / "shared_item_ids.json"
 

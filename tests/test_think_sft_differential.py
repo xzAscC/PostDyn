@@ -17,10 +17,10 @@ from postdyn.differential_subspace import (
 from postdyn.think_sft_differential_experiment import (
     CONCEPT_PAIRS,
     FAMILY_THINK,
-    N_SAMPLES,
     SCALE_7B,
     SCALE_32B,
     checkpoints_for_scale,
+    covariance_n_samples,
     layers_for_scale,
     model_config,
     sft_model_key,
@@ -177,7 +177,10 @@ def test_experiment_config_7b():
         ("math_vs_instruction_following", "math", "instruction_following"),
         ("math_vs_general_reasoning", "math", "general_reasoning"),
     )
-    assert N_SAMPLES == 1000
+    assert covariance_n_samples(SCALE_7B) == 40960
+    assert covariance_n_samples(SCALE_32B) == 51200
+    with pytest.raises(ValueError, match="unknown scale"):
+        covariance_n_samples("9b")
     assert layers_for_scale(SCALE_7B) == [3, 6, 9, 11, 14, 17, 20, 22, 25, 28]
     assert checkpoints_for_scale(SCALE_7B) == [
         "step1000",
@@ -444,8 +447,8 @@ def test_32b_fixed_points_are_reported_unavailable_without_substitution(tmp_path
 
 
 def test_canonical_extraction_protocol_payload_is_exact():
-    assert canonical_extraction_protocol() == extraction_protocol_payload(
-        n_samples=1000,
+    assert canonical_extraction_protocol(SCALE_7B) == extraction_protocol_payload(
+        n_samples=40960,
         tau=0.95,
         max_seq_len=2048,
         use_chat_template=False,
@@ -453,7 +456,21 @@ def test_canonical_extraction_protocol_payload_is_exact():
         dtype="bfloat16",
         signed=True,
     )
-    validate_extraction_protocol(canonical_extraction_protocol())
+    assert canonical_extraction_protocol(SCALE_32B) == extraction_protocol_payload(
+        n_samples=51200,
+        tau=0.95,
+        max_seq_len=2048,
+        use_chat_template=False,
+        extraction_contract="raw_prompt_final_attention_token_v1",
+        dtype="bfloat16",
+        signed=True,
+    )
+    validate_extraction_protocol(
+        canonical_extraction_protocol(SCALE_7B), scale=SCALE_7B
+    )
+    validate_extraction_protocol(
+        canonical_extraction_protocol(SCALE_32B), scale=SCALE_32B
+    )
 
 
 @pytest.mark.parametrize(
@@ -469,12 +486,12 @@ def test_canonical_extraction_protocol_payload_is_exact():
     ],
 )
 def test_canonical_extraction_protocol_rejects_mutated_or_missing_field(field):
-    payload = canonical_extraction_protocol()
+    payload = canonical_extraction_protocol(SCALE_7B)
     payload.pop(field)
     with pytest.raises(ValueError, match="canonical extraction protocol"):
         validate_extraction_protocol(payload)
 
-    payload = canonical_extraction_protocol()
+    payload = canonical_extraction_protocol(SCALE_7B)
     payload[field] = {
         "n_samples": 999,
         "tau": 0.9,
@@ -665,7 +682,9 @@ def test_32b_loader_passes_immutable_revision_and_records_diagnostics(monkeypatc
         calls.append((model_id, revision))
         return LoadedQuantizedModel(object(), tokenizer, diagnostics)
 
-    monkeypatch.setattr("postdyn.quantized_model_loader.load_olmo3_32b_think", fake_load)
+    monkeypatch.setattr(
+        "postdyn.quantized_model_loader.load_olmo3_32b_think", fake_load
+    )
     runtime = {}
     load = runner.build_model_loader("32b", runtime_provenance=runtime)
     cfg = runner.model_config("olmo3-32b-think-sft")
@@ -797,7 +816,9 @@ def test_think_subspace_complete_rejects_checkpoint_sidecar_mismatch(tmp_path):
     sub = compute_signed_differential_subspace(
         torch.randn(4, 3), torch.randn(4, 3), concept="math_vs_text"
     )
-    runner.save_signed_subspace(tmp_path, "model", "step1000", 3, sub, "sig", "rev")
+    runner.save_signed_subspace(
+        tmp_path, "model", "step1000", 3, sub, "sig", "rev", save_tensors=True
+    )
     path = runner._u_paths(tmp_path, "model", "step1000", 3, "math_vs_text")[1]
     data = json.loads(path.read_text())
     data["checkpoint"] = "step6000"
@@ -815,7 +836,14 @@ def test_save_load_signed_roundtrip(tmp_path):
         torch.randn(8, 5), torch.randn(8, 5), concept="math_vs_text"
     )
     runner.save_signed_subspace(
-        tmp_path, "olmo3-think-sft", "step1000", 3, sub, "sig", "step1000"
+        tmp_path,
+        "olmo3-think-sft",
+        "step1000",
+        3,
+        sub,
+        "sig",
+        "step1000",
+        save_tensors=True,
     )
     assert runner.subspace_complete(
         tmp_path, "olmo3-think-sft", "step1000", 3, "math_vs_text", "sig", "step1000"
@@ -856,6 +884,46 @@ def test_save_load_signed_roundtrip(tmp_path):
     assert "eigenvectors_signed" not in sidecar
 
 
+def test_save_signed_subspace_defaults_to_json_only(tmp_path):
+    from scripts import run_think_sft_differential_subspace as runner
+
+    sub = compute_signed_differential_subspace(
+        torch.randn(8, 5), torch.randn(8, 5), concept="math_vs_text"
+    )
+    runner.save_signed_subspace(tmp_path, "m", "step1000", 3, sub, "sig", "rev")
+    st_path, js_path = runner._u_paths(tmp_path, "m", "step1000", 3, "math_vs_text")
+    assert not st_path.exists()
+    meta = json.loads(js_path.read_text(encoding="utf-8"))
+    assert meta["tensors_saved"] is False
+    assert "k_pos" in meta and "d_eff_pos" in meta and "k_neg" in meta
+
+
+def test_json_only_sidecar_skips_tensor_validation(tmp_path):
+    from postdyn import think_sft_differential_validator as validator
+    from scripts import run_think_sft_differential_subspace as runner
+
+    sub = compute_signed_differential_subspace(
+        torch.randn(8, 5), torch.randn(8, 5), concept="math_vs_text"
+    )
+    runner.save_signed_subspace(tmp_path, "m", "step1000", 3, sub, "sig", "rev")
+    st_path, js_path = runner._u_paths(tmp_path, "m", "step1000", 3, "math_vs_text")
+    assert (
+        validator._basis_error(st_path, js_path, "m", "step1000", "step1000", "sig", 3)
+        is None
+    )
+
+
+def test_load_signed_subspace_without_tensors_raises_clear_error(tmp_path):
+    from scripts import run_think_sft_differential_subspace as runner
+
+    sub = compute_signed_differential_subspace(
+        torch.randn(8, 5), torch.randn(8, 5), concept="math_vs_text"
+    )
+    runner.save_signed_subspace(tmp_path, "m", "step1000", 3, sub, "sig", "rev")
+    with pytest.raises(FileNotFoundError, match="--save-tensors"):
+        runner.load_signed_subspace(tmp_path, "m", "step1000", 3, "math_vs_text")
+
+
 def test_finalize_stability_writes_both_signs(tmp_path):
     from scripts import run_think_sft_differential_subspace as runner
 
@@ -864,10 +932,19 @@ def test_finalize_stability_writes_both_signs(tmp_path):
         torch.randn(10, 6), torch.randn(10, 6), concept="math_vs_text"
     )
     for ck in ("step1000", "step6000"):
-        runner.save_signed_subspace(tmp_path, "olmo3-think-sft", ck, 3, sub, "sig", ck)
+        runner.save_signed_subspace(
+            tmp_path, "olmo3-think-sft", ck, 3, sub, "sig", ck, save_tensors=True
+        )
     final_root = tmp_path / "final_points"
     runner.save_signed_subspace(
-        final_root, "olmo3-think-sft", "sft_main", 3, sub, "final-sig", "final-rev"
+        final_root,
+        "olmo3-think-sft",
+        "sft_main",
+        3,
+        sub,
+        "final-sig",
+        "final-rev",
+        save_tensors=True,
     )
     out = runner.finalize_stability(
         tmp_path,
@@ -931,6 +1008,7 @@ def test_reference_robustness_and_histograms_are_per_concept(tmp_path):
                 sub,
                 "sig",
                 checkpoint,
+                save_tensors=True,
             )
             runner.save_signed_subspace(
                 tmp_path / "final_points",
@@ -940,6 +1018,7 @@ def test_reference_robustness_and_histograms_are_per_concept(tmp_path):
                 sub,
                 "final-sig",
                 "final-rev",
+                save_tensors=True,
             )
     result = runner.finalize_stability(
         tmp_path,
