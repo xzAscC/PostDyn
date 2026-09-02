@@ -171,8 +171,13 @@ def load_domain_prompt_selection(
     *,
     seed: int = SHARED_SAMPLE_SEED,
     prefer_local: bool = True,
+    allow_short: bool = False,
 ) -> DomainPromptSelection:
-    """Stream a memo source and return a deterministic provenance-bound draw."""
+    """Stream a memo source and return a deterministic provenance-bound draw.
+
+    ``allow_short`` clamps the draw to the available unique prompts when the
+    corpus is smaller than ``n_samples`` (deterministic: the same top-N heap
+    selection, just fewer candidates)."""
     domain = _canonical_domain(domain)
     if n_samples <= 0:
         raise ValueError(f"n_samples must be positive, got {n_samples}")
@@ -208,9 +213,14 @@ def load_domain_prompt_selection(
             "revision": revision,
         }
     selected = _select_prompts(stream, domain, n_samples, seed)
-    if len(selected) < n_samples:
+    if len(selected) < n_samples and not allow_short:
         raise ValueError(
             f"Domain {domain!r}: need {n_samples} unique prompts, only found {len(selected)}"
+        )
+    if len(selected) < n_samples:
+        print(
+            f"WARNING: Domain {domain!r}: clamped to {len(selected)} unique "
+            f"prompts (requested {n_samples})"
         )
     return _make_selection(domain, selected, source)
 

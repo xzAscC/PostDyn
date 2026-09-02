@@ -63,6 +63,39 @@ def test_streaming_selection_is_unique_deterministic_and_fingerprinted(
     assert calls[0]["revision"] == domain_datasets.DOLCI_HF_REVISIONS["math"]
 
 
+def test_selection_raises_when_short_and_strict(monkeypatch) -> None:
+    def fake_load_dataset(*_args, **_kwargs):
+        return (
+            {"messages": [{"role": "user", "content": f"user: prompt {i}"}]}
+            for i in range(1500)
+        )
+
+    monkeypatch.setattr(datasets, "load_dataset", fake_load_dataset)
+    with pytest.raises(ValueError, match="only found 1500"):
+        domain_datasets.load_domain_prompt_selection(
+            "math", n_samples=40960, seed=17, prefer_local=False
+        )
+
+
+def test_selection_clamps_to_available_when_short_allowed(monkeypatch) -> None:
+    def fake_load_dataset(*_args, **_kwargs):
+        return (
+            {"messages": [{"role": "user", "content": f"user: prompt {i}"}]}
+            for i in range(1500)
+        )
+
+    monkeypatch.setattr(datasets, "load_dataset", fake_load_dataset)
+    first = domain_datasets.load_domain_prompt_selection(
+        "math", n_samples=40960, seed=17, prefer_local=False, allow_short=True
+    )
+    second = domain_datasets.load_domain_prompt_selection(
+        "math", n_samples=40960, seed=17, prefer_local=False, allow_short=True
+    )
+    assert len(first.prompts) == 1500
+    assert len(set(first.prompts)) == 1500
+    assert first.prompts == second.prompts
+
+
 def test_all_canonical_streamed_sources_use_resolved_sha_revisions(monkeypatch) -> None:
     resolved = {
         domain: f"{index:040x}"

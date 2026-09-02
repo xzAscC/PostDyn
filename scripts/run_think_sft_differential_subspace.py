@@ -234,7 +234,8 @@ def prepare_domain_prompts(
                 and data.get("n_samples") == n_samples
                 and data.get("seed") == seed
                 and isinstance(prompts, list)
-                and len(prompts) == n_samples
+                and len(prompts) == data.get("fetched", n_samples)
+                and len(prompts) <= n_samples
                 and data.get("prompt_fingerprint") == _prompt_fingerprint(prompts)
                 and _cached_prompt_source_is_immutable(domain, data.get("source"))
                 and data.get("extraction_contract") == EXTRACTION_CONTRACT
@@ -249,7 +250,7 @@ def prepare_domain_prompts(
                 "memo domain protocol requires streaming HuggingFace sources"
             )
         selection = load_domain_prompt_selection(
-            domain, n_samples=n_samples, seed=seed, prefer_local=False
+            domain, n_samples=n_samples, seed=seed, prefer_local=False, allow_short=True
         )
         prompts = selection.as_list()
         source = dict(selection.source)
@@ -261,6 +262,7 @@ def prepare_domain_prompts(
             {
                 "domain": domain,
                 "n_samples": n_samples,
+                "fetched": len(prompts),
                 "seed": seed,
                 "source": source,
                 "prompt_fingerprint": _prompt_fingerprint(prompts),
@@ -270,6 +272,12 @@ def prepare_domain_prompts(
                 "prompts": prompts,
             },
         )
+    for domain, prompts in sorted(prompts_by_domain.items()):
+        if len(prompts) < n_samples:
+            print(
+                f"Domain {domain!r}: using {len(prompts)} unique prompts "
+                f"(requested {n_samples}, corpus-limited)"
+            )
     return prompts_by_domain
 
 

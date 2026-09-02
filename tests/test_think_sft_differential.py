@@ -251,8 +251,8 @@ def test_prepare_domain_prompts_uses_streaming_memo_selection(monkeypatch, tmp_p
         lambda repo_id, revision: "a" * 40,
     )
 
-    def fake_selection(domain, n_samples, *, seed, prefer_local):
-        calls.append((domain, n_samples, seed, prefer_local))
+    def fake_selection(domain, n_samples, *, seed, prefer_local, allow_short=False):
+        calls.append((domain, n_samples, seed, prefer_local, allow_short))
         source = runner._expected_prompt_source(domain)
         return SimpleNamespace(
             source=source,
@@ -276,7 +276,8 @@ def test_prepare_domain_prompts_uses_streaming_memo_selection(monkeypatch, tmp_p
         "wikitext",
     }
     assert len(calls) == 5
-    assert all(call[-1] is False for call in calls)
+    assert all(call[3] is False for call in calls)
+    assert all(call[4] is True for call in calls)
     wiki = json.loads((tmp_path / "prompts/wikitext.json").read_text())
     assert wiki["source"]["config"] == "wikitext-103-raw-v1"
 
