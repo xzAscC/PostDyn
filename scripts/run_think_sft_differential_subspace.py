@@ -37,7 +37,7 @@ from safetensors.torch import load_file, save_file
 
 
 from scripts.run_math_differential_subspace import (
-    extract_raw_layer_activations,
+    _token_lengths,
     preflight_tokenizer_prompts,
     quick_sample_count,
 )
@@ -102,7 +102,18 @@ ModelLoader = Callable[[Any, Optional[str]], tuple[Any, Any]]
 NF4_PROVENANCE = CANONICAL_NF4_PROVENANCE
 
 
+_SKIP_7B_GATE = False
+
+
+def set_skip_7b_gate(value: bool) -> None:
+    global _SKIP_7B_GATE
+    _SKIP_7B_GATE = value
+
+
 def _require_canonical_7b(*, project_root: Path | None = None) -> None:
+    if _SKIP_7B_GATE:
+        print("WARNING: canonical 7B preflight gate skipped (--skip-7b-gate)")
+        return
     import importlib
 
     require = importlib.import_module(
@@ -112,6 +123,18 @@ def _require_canonical_7b(*, project_root: Path | None = None) -> None:
         require()
     else:
         require(project_root=project_root)
+
+
+def apply_concept_filter(selection: str) -> None:
+    global CONCEPT_PAIRS
+    wanted = {name.strip() for name in selection.split(",") if name.strip()}
+    if not wanted:
+        raise ValueError("--concepts selection is empty")
+    valid = {name for name, _, _ in CONCEPT_PAIRS}
+    unknown = sorted(wanted - valid)
+    if unknown:
+        raise ValueError(f"unknown concept(s) {unknown}; valid: {sorted(valid)}")
+    CONCEPT_PAIRS = tuple(pair for pair in CONCEPT_PAIRS if pair[0] in wanted)
 
 
 def _atomic_write_json(path: Path, obj: Any) -> None:
@@ -379,53 +402,90 @@ def _layer_module(model: Any, layer: int) -> Any | None:
 
 
 def extract_raw_layer_activations(
-    model: Any, tokenizer: Any, texts: list[str], layers: list[int]
+    model: Any,
+    tokenizer: Any,
+    texts: list[str],
+    layers: list[int],
+    *,
+    token_budget: int = 8192,
+    lengths: list[int] | None = None,
 ) -> dict[int, torch.Tensor]:
     """Extract selected residual layers without retaining the full layer tuple."""
     device = _input_device(model)
-    features: dict[int, list[torch.Tensor]] = {layer: [] for layer in layers}
+    total = len(texts)
+    features: dict[int, list[torch.Tensor | None]] = {
+        layer: [None] * total for layer in layers
+    }
     modules = {layer: _layer_module(model, layer) for layer in layers}
     if any(module is None for module in modules.values()):
         raise ValueError("model does not expose all requested transformer layers")
-    for text in texts:
-        inputs = tokenizer([text], return_tensors="pt", truncation=False, padding=True)
-        inputs = {key: value.to(device) for key, value in inputs.items()}
-        captured: dict[int, torch.Tensor] = {}
-        handles = []
+    if lengths is None:
+        lengths = _token_lengths(tokenizer, texts)
+    order = sorted(range(total), key=lambda index: lengths[index])
+    captured: dict[int, torch.Tensor] = {}
+    handles = []
 
-        def capture(layer: int):
-            def hook(_module: Any, _args: tuple[Any, ...], output: Any) -> None:
-                value = output[0] if isinstance(output, (tuple, list)) else output
-                if isinstance(value, torch.Tensor):
-                    captured[layer] = value
+    def capture(layer: int):
+        def hook(_module: Any, _args: tuple[Any, ...], output: Any) -> None:
+            value = output[0] if isinstance(output, (tuple, list)) else output
+            if isinstance(value, torch.Tensor):
+                captured[layer] = value
 
-            return hook
+        return hook
 
-        try:
-            for layer, module in modules.items():
-                if module is None:
-                    raise ValueError(f"selected layer {layer} is unavailable")
-                handles.append(module.register_forward_hook(capture(layer)))
+    model.config.use_cache = False
+    if hasattr(model.config, "attn_implementation"):
+        model.config.attn_implementation = "sdpa"
+    try:
+        for layer, module in modules.items():
+            handles.append(module.register_forward_hook(capture(layer)))
+        position = 0
+        while position < len(order):
+            take = 1
+            padded = lengths[order[position]]
+            while position + take < len(order):
+                candidate = max(padded, lengths[order[position + take]])
+                if (take + 1) * candidate > token_budget:
+                    break
+                padded = candidate
+                take += 1
+            batch_indices = order[position : position + take]
+            position += take
+            encoded = tokenizer(
+                [texts[index] for index in batch_indices],
+                return_tensors="pt",
+                truncation=False,
+                padding=True,
+            )
+            inputs = {key: value.to(device) for key, value in encoded.items()}
+            captured.clear()
             with torch.no_grad():
-                model.config.use_cache = False
-                if hasattr(model.config, "attn_implementation"):
-                    model.config.attn_implementation = "sdpa"
                 model(**inputs, use_cache=False, output_hidden_states=False)
-        finally:
-            for handle in handles:
-                handle.remove()
-        attention_mask = inputs.get("attention_mask")
-        last_index = (
-            int(attention_mask[0].sum().item()) - 1
-            if attention_mask is not None
-            else inputs["input_ids"].shape[1] - 1
-        )
-        for layer in layers:
-            value = captured.get(layer)
-            if value is None:
-                raise ValueError(f"selected layer {layer} produced no activation")
-            features[layer].append(value[0, last_index].detach().cpu().float())
-    return {layer: torch.stack(values) for layer, values in features.items()}
+            attention_mask = inputs.get("attention_mask")
+            for row, index in enumerate(batch_indices):
+                if attention_mask is None:
+                    last_index = inputs["input_ids"].shape[1] - 1
+                else:
+                    last_index = int(attention_mask[row].sum().item()) - 1
+                for layer in layers:
+                    value = captured.get(layer)
+                    if value is None:
+                        raise ValueError(
+                            f"selected layer {layer} produced no activation"
+                        )
+                    features[layer][index] = (
+                        value[row, last_index].detach().cpu().float()
+                    )
+    finally:
+        for handle in handles:
+            handle.remove()
+    extracted: dict[int, torch.Tensor] = {}
+    for layer, values in features.items():
+        present = [value for value in values if value is not None]
+        if len(present) != total:
+            raise ValueError(f"layer {layer} is missing extracted activations")
+        extracted[layer] = torch.stack(present)
+    return extracted
 
 
 def validate_scale(scale: str, allow_32b: bool) -> None:
@@ -924,6 +984,7 @@ def _run_checkpoint(
     project_root: Path | None = None,
     validate_32b_checkpoint: bool = True,
     save_tensors: bool = False,
+    token_budget: int = 8192,
 ) -> dict[str, Any]:
     allowed_model_keys = model_keys_for_scale(scale) + tuple(
         model_key for model_key, _revision in fixed_point_configs(scale).values()
@@ -995,9 +1056,14 @@ def _run_checkpoint(
         for domain in needed_domains:
             texts = domain_prompts[domain][:n_samples]
             print(f"  Extracting domain={domain} n={len(texts)} ...")
-            preflight_tokenizer_prompts(tokenizer, texts, max_seq_len)
+            prompt_lengths = preflight_tokenizer_prompts(tokenizer, texts, max_seq_len)
             domain_acts[domain] = extract_raw_layer_activations(
-                model, tokenizer, texts, layers
+                model,
+                tokenizer,
+                texts,
+                layers,
+                token_budget=token_budget,
+                lengths=prompt_lengths,
             )
     finally:
         del model
@@ -1374,6 +1440,18 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p.add_argument("--layers", type=str, default=None)
     p.add_argument("--samples", type=int, default=None)
     p.add_argument(
+        "--extract-token-budget",
+        type=int,
+        default=8192,
+        help="Max padded tokens per forward batch during extraction",
+    )
+    p.add_argument(
+        "--concepts",
+        type=str,
+        default=None,
+        help="Comma-separated concept names to run (default: all concept pairs)",
+    )
+    p.add_argument(
         "--save-tensors",
         action="store_true",
         help="Also dump subspace tensors (.safetensors); default is JSON metrics only",
@@ -1384,6 +1462,14 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p.add_argument("--keep-hf-cache", action="store_true")
     p.add_argument("--no-hf", action="store_true")
     p.add_argument("--allow-32b", action="store_true")
+    p.add_argument(
+        "--skip-7b-gate",
+        action="store_true",
+        help=(
+            "Skip the canonical 7B preflight gate (for subset/verification runs; "
+            "recorded in the run manifest)"
+        ),
+    )
     p.add_argument("--quick", action="store_true")
     p.add_argument("--dry-run", "--preflight-only", action="store_true")
     p.add_argument(
@@ -1403,6 +1489,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
     validate_scale(args.scale, args.allow_32b)
+    if args.concepts:
+        apply_concept_filter(args.concepts)
+    set_skip_7b_gate(args.skip_7b_gate)
     config = trajectory_config(args.family, args.scale, args.trajectory)
     model_key = config.model_key
     checkpoints = list(config.checkpoints)
@@ -1591,6 +1680,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             trajectory=args.trajectory,
             project_root=args.project_root,
             save_tensors=args.save_tensors,
+            token_budget=args.extract_token_budget,
         )
         if not args.keep_hf_cache:
             from postdyn.concept_dynamics import _clean_hf_cache
@@ -1648,6 +1738,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             trajectory=f"fixed:{label}",
             project_root=args.project_root,
             save_tensors=args.save_tensors,
+            token_budget=args.extract_token_budget,
         )
         fixed_point_records[label] = {
             "model_key": fixed_model_key,
@@ -1695,6 +1786,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         project_root=args.project_root,
         validate_32b_checkpoint=False,
         save_tensors=args.save_tensors,
+        token_budget=args.extract_token_budget,
     )
     final_main_record = {
         "model_key": model_key,

@@ -336,7 +336,7 @@ def test_checkpoint_worker_is_private_and_routes_pinned_model_and_revision(
     monkeypatch.setattr(
         runner,
         "extract_raw_layer_activations",
-        lambda *args: {3: torch.ones(2, 2)},
+        lambda *args, **kwargs: {3: torch.ones(2, 2)},
     )
     monkeypatch.setattr(
         runner, "compute_signed_differential_subspace", lambda *args, **kwargs: fake_sub
@@ -775,6 +775,10 @@ def test_activation_inputs_follow_dispatched_model_parameter_device():
         def __init__(self, value):
             self.value = value
 
+        @property
+        def shape(self):
+            return self.value.shape
+
         def to(self, device):
             moved.append(device)
             return self.value
@@ -808,6 +812,197 @@ def test_activation_inputs_follow_dispatched_model_parameter_device():
     result = extract_raw_layer_activations(Model(), Tokenizer(), ["raw"], [0])
     assert moved == ["cuda:0", "cuda:0"]
     assert result[0].shape == (1, 3)
+
+
+class _PaddedTokenizer:
+    """Tokenizes batches with right padding; token value encodes the text id."""
+
+    def __call__(self, texts, **_kwargs):
+        if isinstance(texts, str):
+            texts = [texts]
+        seqs = []
+        for text in texts:
+            text_id = int(text.split("-")[0])
+            length = int(text.split("-")[1])
+            seqs.append([1000 + text_id] * length)
+        max_len = max(len(seq) for seq in seqs)
+        input_ids = torch.zeros(len(seqs), max_len, dtype=torch.long)
+        attention_mask = torch.zeros(len(seqs), max_len, dtype=torch.long)
+        for row, seq in enumerate(seqs):
+            input_ids[row, : len(seq)] = torch.tensor(seq)
+            attention_mask[row, : len(seq)] = 1
+        return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+
+class _PositionalModel:
+    """Hidden state at (row, position, layer) depends only on token id and layer,
+    so batched and single-text forwards must agree exactly."""
+
+    def __init__(self, n_layers, calls=None):
+        self.n_layers = n_layers
+        self.calls = calls if calls is not None else []
+
+    def parameters(self):
+        yield SimpleNamespace(device=torch.device("cpu"))
+
+    def __call__(self, input_ids=None, attention_mask=None, **_kwargs):
+        self.calls.append(tuple(input_ids.shape))
+        hidden = []
+        for layer in range(self.n_layers + 1):
+            per_pos = (input_ids.float() + 0.5 * layer) / 1000.0
+            hidden.append(per_pos.unsqueeze(-1).expand(-1, -1, 4))
+        return SimpleNamespace(hidden_states=hidden)
+
+
+def test_batched_extraction_matches_single_text_results():
+    from scripts.run_math_differential_subspace import extract_raw_layer_activations
+
+    texts = [f"{i}-{length}" for i, length in enumerate([7, 3, 9, 5, 4])]
+    layers = [0, 2]
+    single_model = _PositionalModel(n_layers=3)
+    reference = extract_raw_layer_activations(
+        single_model, _PaddedTokenizer(), list(texts), layers, token_budget=1
+    )
+    batched_model = _PositionalModel(n_layers=3)
+    batched = extract_raw_layer_activations(
+        batched_model, _PaddedTokenizer(), texts, layers, token_budget=8
+    )
+    assert len(batched_model.calls) < len(single_model.calls)
+    for layer in layers:
+        assert torch.allclose(reference[layer], batched[layer], atol=1e-6)
+
+
+def test_batched_extraction_keeps_original_order():
+    from scripts.run_math_differential_subspace import extract_raw_layer_activations
+
+    texts = [f"{i}-{length}" for i, length in enumerate([9, 2, 6, 3])]
+    result = extract_raw_layer_activations(
+        _PositionalModel(n_layers=2), _PaddedTokenizer(), texts, [1], token_budget=3
+    )
+    for index, text in enumerate(texts):
+        text_id = int(text.split("-")[0])
+        expected = (1000 + text_id + 0.5 * 2) / 1000.0
+        assert torch.allclose(result[1][index], torch.full((4,), expected))
+
+
+def test_token_budget_caps_batch_shape():
+    from scripts.run_math_differential_subspace import extract_raw_layer_activations
+
+    texts = [f"{i}-5" for i in range(6)]
+    model = _PositionalModel(n_layers=1)
+    extract_raw_layer_activations(
+        model, _PaddedTokenizer(), texts, [0], token_budget=10
+    )
+    assert model.calls
+    assert all(rows <= 2 for rows, _seq_len in model.calls)
+
+
+class _HookedLayer:
+    def __init__(self, layer_index):
+        self.layer_index = layer_index
+        self._hooks = []
+
+    def register_forward_hook(self, hook):
+        self._hooks.append(hook)
+        return SimpleNamespace(remove=lambda: None)
+
+    def fire(self, value):
+        for hook in self._hooks:
+            hook(self, (), value)
+
+
+class _HookedModel:
+    """Layer output at (row, position) depends only on the token id and layer."""
+
+    def __init__(self, n_layers=3, calls=None):
+        self.n_layers = n_layers
+        self.calls = calls if calls is not None else []
+        self.layers = [_HookedLayer(i) for i in range(n_layers)]
+        self.config = SimpleNamespace(use_cache=True)
+
+    def named_modules(self):
+        for index, layer in enumerate(self.layers):
+            yield f"model.layers.{index}", layer
+
+    def parameters(self):
+        yield SimpleNamespace(device=torch.device("cpu"))
+
+    def __call__(self, input_ids=None, **_kwargs):
+        self.calls.append(tuple(input_ids.shape))
+        for index, layer in enumerate(self.layers):
+            per_pos = (input_ids.float() + 0.5 * index) / 1000.0
+            layer.fire(per_pos.unsqueeze(-1).expand(-1, -1, 4))
+
+
+def test_hooked_batched_extraction_matches_single_text_results():
+    from scripts import run_think_sft_differential_subspace as runner
+
+    texts = [f"{i}-{length}" for i, length in enumerate([7, 3, 9, 5, 4])]
+    layers = [0, 2]
+    single = runner.extract_raw_layer_activations(
+        _HookedModel(), _PaddedTokenizer(), list(texts), layers, token_budget=1
+    )
+    batched_model = _HookedModel()
+    batched = runner.extract_raw_layer_activations(
+        batched_model, _PaddedTokenizer(), texts, layers, token_budget=8
+    )
+    assert len(batched_model.calls) < 5
+    for layer in layers:
+        assert torch.allclose(single[layer], batched[layer], atol=1e-6)
+
+
+def test_hooked_batched_extraction_keeps_original_order():
+    from scripts import run_think_sft_differential_subspace as runner
+
+    texts = [f"{i}-{length}" for i, length in enumerate([9, 2, 6, 3])]
+    result = runner.extract_raw_layer_activations(
+        _HookedModel(), _PaddedTokenizer(), texts, [1], token_budget=8
+    )
+    for index, text in enumerate(texts):
+        text_id = int(text.split("-")[0])
+        expected = (1000 + text_id + 0.5 * 1) / 1000.0
+        assert torch.allclose(result[1][index], torch.full((4,), expected))
+
+
+def test_concepts_flag_filters_global_pairs(monkeypatch):
+    from scripts import run_think_sft_differential_subspace as runner
+
+    monkeypatch.setattr(
+        runner,
+        "CONCEPT_PAIRS",
+        (("math_vs_wikitext", "math", "wikitext"), ("math_vs_code", "math", "code")),
+    )
+    runner.apply_concept_filter("math_vs_wikitext")
+    assert runner.CONCEPT_PAIRS == (("math_vs_wikitext", "math", "wikitext"),)
+
+
+def test_concepts_flag_rejects_unknown_names(monkeypatch):
+    from scripts import run_think_sft_differential_subspace as runner
+
+    monkeypatch.setattr(
+        runner,
+        "CONCEPT_PAIRS",
+        (("math_vs_wikitext", "math", "wikitext"),),
+    )
+    with pytest.raises(ValueError, match="unknown concept"):
+        runner.apply_concept_filter("math_vs_greek")
+
+
+def test_skip_7b_gate_flag_bypasses_canonical_preflight(monkeypatch):
+    from postdyn import cross_pipeline_integrity as integrity
+    from scripts import run_think_sft_differential_subspace as runner
+
+    def fail(**_kwargs):
+        raise AssertionError("canonical 7B gate must not run when skipped")
+
+    monkeypatch.setattr(integrity, "require_canonical_7b_extraction", fail)
+    runner.set_skip_7b_gate(True)
+    try:
+        runner._require_canonical_7b(project_root=None)
+    finally:
+        runner.set_skip_7b_gate(False)
+    with pytest.raises(AssertionError, match="must not run"):
+        runner._require_canonical_7b(project_root=None)
 
 
 def test_think_subspace_complete_rejects_checkpoint_sidecar_mismatch(tmp_path):

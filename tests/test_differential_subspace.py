@@ -342,7 +342,7 @@ def test_raw_extraction_uses_untruncated_final_attention_token():
     result = runner.extract_raw_layer_activations(
         FakeModel(), FakeTokenizer(), ["abc"], [0]
     )
-    assert calls == [False]
+    assert calls == [False, False]
     assert result[0].tolist() == [[4.0, 5.0]]
 
 
@@ -356,6 +356,10 @@ def test_raw_extraction_prefers_concrete_embedding_over_parameters():
     class Input:
         def __init__(self, value):
             self.value = value
+
+        @property
+        def shape(self):
+            return self.value.shape
 
         def to(self, device):
             moved.append(device)
@@ -394,6 +398,10 @@ def test_raw_extraction_uses_concrete_embedding_map_when_embedding_is_meta():
     class Input:
         def __init__(self, value):
             self.value = value
+
+        @property
+        def shape(self):
+            return self.value.shape
 
         def to(self, device):
             moved.append(device)

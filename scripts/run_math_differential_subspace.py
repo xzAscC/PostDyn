@@ -172,32 +172,72 @@ def extract_raw_layer_activations(
     tokenizer: Any,
     texts: list[str],
     layers: list[int],
+    *,
+    token_budget: int = 8192,
+    lengths: list[int] | None = None,
 ) -> dict[int, torch.Tensor]:
     device = _input_device(model)
-    features: dict[int, list[torch.Tensor]] = {layer: [] for layer in layers}
-    for text in texts:
-        inputs = tokenizer(
-            [text],
+    total = len(texts)
+    features: dict[int, list[torch.Tensor | None]] = {
+        layer: [None] * total for layer in layers
+    }
+    if lengths is None:
+        lengths = _token_lengths(tokenizer, texts)
+    order = sorted(range(total), key=lambda index: lengths[index])
+    position = 0
+    while position < len(order):
+        take = 1
+        padded = lengths[order[position]]
+        while position + take < len(order):
+            candidate = max(padded, lengths[order[position + take]])
+            if (take + 1) * candidate > token_budget:
+                break
+            padded = candidate
+            take += 1
+        batch_indices = order[position : position + take]
+        position += take
+        encoded = tokenizer(
+            [texts[index] for index in batch_indices],
             return_tensors="pt",
             truncation=False,
             padding=True,
         )
-        inputs = {key: value.to(device) for key, value in inputs.items()}
+        inputs = {key: value.to(device) for key, value in encoded.items()}
         with torch.no_grad():
             outputs = model(**inputs, output_hidden_states=True)
         attention_mask = inputs.get("attention_mask")
-        if attention_mask is None:
-            last_index = inputs["input_ids"].shape[1] - 1
+        for row, index in enumerate(batch_indices):
+            if attention_mask is None:
+                last_index = inputs["input_ids"].shape[1] - 1
+            else:
+                last_index = int(attention_mask[row].sum().item()) - 1
+            for layer in layers:
+                features[layer][index] = (
+                    outputs.hidden_states[layer + 1][row, last_index, :]
+                    .detach()
+                    .cpu()
+                    .float()
+                )
+    extracted: dict[int, torch.Tensor] = {}
+    for layer, values in features.items():
+        present = [value for value in values if value is not None]
+        if len(present) != total:
+            raise ValueError(f"layer {layer} is missing extracted activations")
+        extracted[layer] = torch.stack(present)
+    return extracted
+
+
+def _token_lengths(tokenizer: Any, texts: list[str]) -> list[int]:
+    lengths: list[int] = []
+    for text in texts:
+        encoded = tokenizer([text], return_tensors="pt", truncation=False)
+        attention_mask = encoded.get("attention_mask")
+        if attention_mask is not None and torch.is_tensor(attention_mask):
+            length = int(attention_mask[0].sum().item())
         else:
-            last_index = int(attention_mask[0].sum().item()) - 1
-        for layer in layers:
-            features[layer].append(
-                outputs.hidden_states[layer + 1][0, last_index, :]
-                .detach()
-                .cpu()
-                .float()
-            )
-    return {layer: torch.stack(values) for layer, values in features.items()}
+            length = int(encoded["input_ids"].shape[-1])
+        lengths.append(length)
+    return lengths
 
 
 def load_preflight_tokenizer(checkpoint: str) -> Any:
