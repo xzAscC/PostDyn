@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from src.differential_subspace import (
+from postdyn.differential_subspace import (
     DifferentialSubspace,
     compute_differential_subspace,
     compute_signed_differential_subspace,
@@ -23,7 +23,7 @@ from src.differential_subspace import (
     select_k_from_positive_spectrum,
     subspace_stability,
 )
-from src.domain_datasets import (
+from postdyn.domain_datasets import (
     DEFAULT_CONCEPT_PAIRS,
     DOLCI_HF_IDS,
     DOLCI_HF_REVISIONS,
@@ -31,7 +31,7 @@ from src.domain_datasets import (
     load_dolci_domain_prompts,
     load_domain_prompts,
 )
-from src.math_differential_experiment import (
+from postdyn.math_differential_experiment import (
     EXPERIMENT_CHECKPOINTS,
     EXPERIMENT_LAYERS,
     N_SAMPLES,
@@ -290,14 +290,14 @@ def test_experiment_config_ten_checkpoints():
 
 
 def test_raw_extraction_configuration():
-    from src.math_differential_experiment import MAX_SEQ_LEN, USE_CHAT_TEMPLATE
+    from postdyn.math_differential_experiment import MAX_SEQ_LEN, USE_CHAT_TEMPLATE
 
     assert MAX_SEQ_LEN == 2048
     assert USE_CHAT_TEMPLATE is False
 
 
 def test_tokenizer_preflight_passes_and_rejects_overlong():
-    from experiments import run_math_differential_subspace as runner
+    from scripts import run_math_differential_subspace as runner
 
     class FakeTokenizer:
         def __call__(self, texts, **kwargs):
@@ -315,7 +315,7 @@ def test_tokenizer_preflight_passes_and_rejects_overlong():
 def test_raw_extraction_uses_untruncated_final_attention_token():
     from types import SimpleNamespace
 
-    from experiments import run_math_differential_subspace as runner
+    from scripts import run_math_differential_subspace as runner
 
     calls: list[bool] = []
 
@@ -349,7 +349,7 @@ def test_raw_extraction_uses_untruncated_final_attention_token():
 def test_raw_extraction_prefers_concrete_embedding_over_parameters():
     from types import SimpleNamespace
 
-    from experiments import run_math_differential_subspace as runner
+    from scripts import run_math_differential_subspace as runner
 
     moved = []
 
@@ -387,7 +387,7 @@ def test_raw_extraction_prefers_concrete_embedding_over_parameters():
 def test_raw_extraction_uses_concrete_embedding_map_when_embedding_is_meta():
     from types import SimpleNamespace
 
-    from experiments import run_math_differential_subspace as runner
+    from scripts import run_math_differential_subspace as runner
 
     moved = []
 
@@ -424,7 +424,7 @@ def test_raw_extraction_uses_concrete_embedding_map_when_embedding_is_meta():
 def test_raw_extraction_rejects_all_meta_devices_before_input_movement():
     from types import SimpleNamespace
 
-    from experiments import run_math_differential_subspace as runner
+    from scripts import run_math_differential_subspace as runner
 
     moved = []
 
@@ -456,7 +456,7 @@ def test_raw_extraction_rejects_all_meta_devices_before_input_movement():
 
 
 def test_quick_sample_count_is_capped_at_sixteen():
-    from experiments.run_math_differential_subspace import quick_sample_count
+    from scripts.run_math_differential_subspace import quick_sample_count
 
     assert quick_sample_count(N_SAMPLES) == 16
     assert quick_sample_count(8) == 8
@@ -478,7 +478,7 @@ def test_load_all_default_pairs_shares_math():
 
 
 def test_runner_importable():
-    from experiments import run_math_differential_subspace as runner
+    from scripts import run_math_differential_subspace as runner
 
     assert hasattr(runner, "main")
     assert hasattr(runner, "run_checkpoint")
@@ -491,7 +491,7 @@ def test_strict_dolci_loader_uses_pinned_sources(monkeypatch):
         calls.append((domain, revision))
         return [f"{domain}-{i}" for i in range(4)]
 
-    import src.domain_datasets as domain_datasets
+    import postdyn.domain_datasets as domain_datasets
 
     monkeypatch.setattr(domain_datasets, "_load_dolci_hf", fake_loader)
     assert load_dolci_domain_prompts("math", n_samples=2, seed=1)
@@ -500,7 +500,7 @@ def test_strict_dolci_loader_uses_pinned_sources(monkeypatch):
 
 
 def test_domain_sampling_is_stable(monkeypatch):
-    import src.domain_datasets as domain_datasets
+    import postdyn.domain_datasets as domain_datasets
 
     monkeypatch.setattr(
         domain_datasets,
@@ -513,7 +513,7 @@ def test_domain_sampling_is_stable(monkeypatch):
 
 
 def test_prompt_cache_rejects_incompatible_metadata(tmp_path, monkeypatch):
-    from experiments import run_math_differential_subspace as runner
+    from scripts import run_math_differential_subspace as runner
 
     calls: list[str] = []
 
@@ -529,7 +529,7 @@ def test_prompt_cache_rejects_incompatible_metadata(tmp_path, monkeypatch):
 
 
 def test_malformed_prompt_cache_is_rejected(tmp_path):
-    from experiments import run_math_differential_subspace as runner
+    from scripts import run_math_differential_subspace as runner
 
     cache = tmp_path / "prompts" / "math.json"
     cache.parent.mkdir()
@@ -539,7 +539,7 @@ def test_malformed_prompt_cache_is_rejected(tmp_path):
 
 
 def test_setup_signature_changes_with_prompts_and_revision():
-    from experiments import run_math_differential_subspace as runner
+    from scripts import run_math_differential_subspace as runner
 
     def make_signature(prompt: str, revision: str) -> str:
         return runner.setup_signature(
@@ -589,7 +589,7 @@ def test_stability_has_all_unordered_checkpoint_pairs():
 
 
 def test_tensor_sidecar_mismatch_is_not_complete(tmp_path):
-    from experiments import run_math_differential_subspace as runner
+    from scripts import run_math_differential_subspace as runner
 
     sub = compute_differential_subspace(torch.randn(4, 3), torch.randn(4, 3))
     runner.save_subspace(tmp_path, "model", "step_100", 3, sub, "sig")
@@ -605,7 +605,7 @@ def test_tensor_sidecar_mismatch_is_not_complete(tmp_path):
 def test_structurally_malformed_completion_metadata_returns_false(
     tmp_path, monkeypatch
 ):
-    from experiments import run_math_differential_subspace as runner
+    from scripts import run_math_differential_subspace as runner
 
     sub = compute_differential_subspace(torch.randn(4, 3), torch.randn(4, 3))
     runner.save_subspace(tmp_path, "model", "step_100", 3, sub, "sig", "rev")
@@ -634,7 +634,7 @@ def test_structurally_malformed_completion_metadata_returns_false(
 
 
 def test_incomplete_stability_aggregation_fails(tmp_path):
-    from experiments import run_math_differential_subspace as runner
+    from scripts import run_math_differential_subspace as runner
 
     with pytest.raises(ValueError, match="incomplete"):
         runner.finalize_stability(
@@ -643,7 +643,7 @@ def test_incomplete_stability_aggregation_fails(tmp_path):
 
 
 def test_empty_checkpoint_selection_is_rejected():
-    from experiments import run_math_differential_subspace as runner
+    from scripts import run_math_differential_subspace as runner
 
     with pytest.raises(ValueError, match="checkpoint"):
         runner.validate_selection([], [3], 1, None)
@@ -658,14 +658,14 @@ def test_empty_checkpoint_selection_is_rejected():
     ],
 )
 def test_noncanonical_selection_is_rejected(checkpoints, layers):
-    from experiments import run_math_differential_subspace as runner
+    from scripts import run_math_differential_subspace as runner
 
     with pytest.raises(ValueError, match="selection"):
         runner.validate_selection(checkpoints, layers, 1, None)
 
 
 def test_math_checkpoint_complete_rejects_wrong_metrics_identity(tmp_path, monkeypatch):
-    from experiments import run_math_differential_subspace as runner
+    from scripts import run_math_differential_subspace as runner
 
     monkeypatch.setattr(runner, "subspace_complete", lambda *args: True)
     metrics = tmp_path / "metrics/model/step_100/layer_3.json"
@@ -692,7 +692,7 @@ def test_math_checkpoint_complete_rejects_wrong_metrics_identity(tmp_path, monke
 def test_math_run_checkpoint_cleans_hf_cache_on_extraction_failure(
     monkeypatch, tmp_path
 ):
-    from experiments import run_math_differential_subspace as runner
+    from scripts import run_math_differential_subspace as runner
 
     monkeypatch.setattr(runner, "checkpoint_complete", lambda *args: False)
     monkeypatch.setattr(runner, "preflight_tokenizer_prompts", lambda *args: None)
@@ -722,7 +722,7 @@ def test_math_run_checkpoint_cleans_hf_cache_on_extraction_failure(
 
 
 def test_stability_uses_first_provided_checkpoint(monkeypatch, tmp_path):
-    from experiments import run_math_differential_subspace as runner
+    from scripts import run_math_differential_subspace as runner
 
     observed: dict[str, str | None] = {}
     monkeypatch.setattr(runner, "subspace_complete", lambda *args: True)

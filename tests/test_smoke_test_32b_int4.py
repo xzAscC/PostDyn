@@ -3,8 +3,8 @@ from __future__ import annotations
 from unittest.mock import Mock
 from pathlib import Path
 
-from experiments import smoke_test_32b_int4 as smoke
-from src.think_sft_differential_experiment import trajectory_config
+from scripts import smoke_test_32b_int4 as smoke
+from postdyn.think_sft_differential_experiment import trajectory_config
 
 
 def test_load_requires_canonical_7b_preflight_before_dependencies(monkeypatch, capsys):

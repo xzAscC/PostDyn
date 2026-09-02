@@ -7,7 +7,7 @@ Three domains used as concept / reference groups (PostDyn.tex):
 * ``text``  — general natural-language prompts
 
 Sources (in priority order per domain):
-1. Local JSON under ``datasets/`` (offline, preferred)
+1. Local JSON under ``data/`` (offline, preferred)
 2. HuggingFace Dolci RL-Zero datasets when local materialization is missing
 
 Sampling is deterministic via ``SHARED_SAMPLE_SEED``.
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Optional
 
-from src.dataset_store import (
+from postdyn.dataset_store import (
     DATASETS_DIR,
     HUMANEVAL_X_FILE,
     MATH500_FILE,
@@ -280,7 +280,7 @@ def materialize_domain_cache(
     domain: str,
     prompts: list[str],
 ) -> Path:
-    """Write prompts to ``datasets/domain_prompts/{domain}.json``."""
+    """Write prompts to ``data/domain_prompts/{domain}.json``."""
     _LOCAL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = _LOCAL_CACHE_DIR / f"{domain}.json"
     payload = {

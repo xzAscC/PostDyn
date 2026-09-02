@@ -26,7 +26,7 @@ import torch
 from safetensors import safe_open
 from safetensors.torch import save_file
 
-from src.concept_steering import ConceptSteeringVector
+from postdyn.concept_steering import ConceptSteeringVector
 
 
 # =============================================================================
@@ -468,7 +468,7 @@ def to_steering_vector(cv: ConceptVector) -> ConceptSteeringVector:
     """Convert ConceptVector to the existing ConceptSteeringVector type.
 
     This allows reuse of save_steering_vectors / load_steering_vectors
-    from src.concept_steering for persistence.
+    from postdyn.concept_steering for persistence.
     """
     return ConceptSteeringVector(
         concept_name=cv.concept_name,
@@ -1041,7 +1041,7 @@ def _reject_generic_32b_loading(model_config) -> None:
         raise ValueError(
             "Generic concept dynamics does not support OLMo-3 32B loading; "
             "use the canonical NF4 experiment loader "
-            "src.quantized_model_loader.load_olmo3_32b_think instead."
+            "postdyn.quantized_model_loader.load_olmo3_32b_think instead."
         )
 
 
@@ -1130,7 +1130,7 @@ def run_model_extraction(
     import gc
     import time
 
-    from src.contrastive_datasets import load_contrastive_texts
+    from postdyn.contrastive_datasets import load_contrastive_texts
 
     model_name = model_config.name
     start = time.time()
@@ -1315,7 +1315,7 @@ def run_full_experiment(
     import json
     import os
 
-    from src.config import OLMO3_VARIANTS, MODEL_CHECKPOINTS
+    from postdyn.config import OLMO3_VARIANTS, MODEL_CHECKPOINTS
 
     os.makedirs(output_dir, exist_ok=True)
     vectors_dir = os.path.join(output_dir, "vectors")
@@ -1429,7 +1429,7 @@ def compute_dynamics_analysis(
     import json
     import os
 
-    from src.config import MODEL_CHECKPOINTS
+    from postdyn.config import MODEL_CHECKPOINTS
 
     vectors_dir = os.path.join(results_dir, "vectors")
     stability_dir = os.path.join(results_dir, "stability")

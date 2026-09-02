@@ -38,7 +38,7 @@ Isolation contract
 ------------------
 This module MUST NOT:
 
-* write into ``results/concept_dynamics_multi`` (the primary / old-chat store).
+* write into ``logs/concept_dynamics_multi`` (the primary / old-chat store).
 * write into any ``metrics`` location.
 * recompute unrelated old vectors.
 * run a real model unless the caller explicitly invokes the gated extraction
@@ -46,7 +46,7 @@ This module MUST NOT:
   tokenizer are actually available.
 
 The old chat ``related``/``control`` vectors are read READ-ONLY via
-``src.concept_dynamics.load_concept_vectors``. The chat ``target`` direction is
+``postdyn.concept_dynamics.load_concept_vectors``. The chat ``target`` direction is
 the ONLY thing this module ever extracts, and only into its own
 ``chat_target_vectors`` subdirectory.
 
@@ -74,8 +74,8 @@ from typing import Any, Callable, Optional
 
 import torch
 
-from src.concept_dynamics import ConceptVector, load_concept_vectors
-from src.config import EXPERIMENT_LAYERS_7B, OLMO3_VARIANTS
+from postdyn.concept_dynamics import ConceptVector, load_concept_vectors
+from postdyn.config import EXPERIMENT_LAYERS_7B, OLMO3_VARIANTS
 
 # =============================================================================
 # Protocol constants (hard-coded scope of this secondary analysis)
@@ -158,7 +158,7 @@ PROTOCOL: dict[str, Any] = {
         "chat": {
             "use_chat_template": True,
             "related_control_source": (
-                "old chat results (results/concept_dynamics_multi/vectors), "
+                "old chat results (logs/concept_dynamics_multi/vectors), "
                 "READ-ONLY reuse"
             ),
             "target_source": (
@@ -172,7 +172,7 @@ PROTOCOL: dict[str, Any] = {
 #: Limitations written into every output payload (honest labelling).
 LIMITATIONS: list[str] = [
     "Secondary analysis only; sensitivity numbers NEVER enter the primary "
-    "metrics pipeline (results/concept_dynamics_multi) and must be read "
+    "metrics pipeline (logs/concept_dynamics_multi) and must be read "
     "explicitly from sensitivity/sensitivity.json.",
     "The old chat vector JSON metadata does not record the use_chat_template "
     "flag; chat-template-on is INFERRED from the default of "
@@ -388,7 +388,7 @@ def compare_vectors(raw_cv: ConceptVector, chat_cv: ConceptVector) -> dict[str, 
 
 
 def _vector_path(base_dir: str, model: str, checkpoint: str, layer_idx: int) -> str:
-    """Mirror src.concept_dynamics' on-disk layout for a (model, ckpt, layer)."""
+    """Mirror postdyn.concept_dynamics' on-disk layout for a (model, ckpt, layer)."""
     return os.path.join(base_dir, model, checkpoint, f"layer_{layer_idx}")
 
 
@@ -795,7 +795,7 @@ def _assert_path_isolation(output_dir: str, *forbidden_roots: str) -> None:
     """Refuse to write sensitivity output inside any primary store.
 
     Each forbidden root and its PARENT directory (the primary store root, e.g.
-    ``results/concept_dynamics_multi`` for the ``.../vectors`` subdir) are both
+    ``logs/concept_dynamics_multi`` for the ``.../vectors`` subdir) are both
     blocked, so a caller cannot smuggle sensitivity output into a primary store
     by writing to a sibling of ``vectors/``. The literal name ``metrics`` is
     also blocked anywhere along the canonical output path.
@@ -832,7 +832,7 @@ def _assert_path_isolation(output_dir: str, *forbidden_roots: str) -> None:
 #: Designated root for ALL sensitivity outputs (``sensitivity.json`` AND the
 #: chat-target extraction subdir). Mirrors the CLI default; library callers
 #: may override via ``extract_missing_chat_target(sensitivity_output_root=...)``.
-DEFAULT_SENSITIVITY_OUTPUT_ROOT: str = os.path.join("results", "sensitivity")
+DEFAULT_SENSITIVITY_OUTPUT_ROOT: str = os.path.join("logs", "sensitivity")
 
 
 def _assert_chat_target_isolation(
@@ -986,9 +986,9 @@ def extract_missing_chat_target(
         n_samples, max_seq_len: Extraction hyper-parameters.
         model_name: Model to extract (defaults to the sensitivity model).
         load_model_and_tokenizer: Injectable loader (defaults to
-            ``src.concept_dynamics.load_model_and_tokenizer``) for testing.
+            ``postdyn.concept_dynamics.load_model_and_tokenizer``) for testing.
         extract_fn: Injectable single-model extraction function (defaults to
-            ``src.concept_dynamics.run_model_extraction``) for testing.
+            ``postdyn.concept_dynamics.run_model_extraction``) for testing.
 
     Returns:
         A dict summarizing what was extracted / skipped per checkpoint.
@@ -1010,12 +1010,12 @@ def extract_missing_chat_target(
     )
 
     # Lazy imports keep the module importable in offline / test environments.
-    from src.concept_dynamics import (
+    from postdyn.concept_dynamics import (
         load_concept_vectors as _load_vectors,
         load_model_and_tokenizer as _default_loader,
         run_model_extraction as _default_extract,
     )
-    from src.config import OLMO3_VARIANTS
+    from postdyn.config import OLMO3_VARIANTS
 
     loader = load_model_and_tokenizer or _default_loader
     extract = extract_fn or _default_extract

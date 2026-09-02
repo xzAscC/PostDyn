@@ -9,11 +9,10 @@ from pathlib import Path
 
 import torch
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.concept_dynamics import load_concept_vectors, load_model_and_tokenizer
-from src.config import EXPERIMENT_LAYERS_7B, MODEL_CHECKPOINTS, OLMO3_VARIANTS
-from src.gender_surface_analysis import (
+from postdyn.concept_dynamics import load_concept_vectors, load_model_and_tokenizer
+from postdyn.config import EXPERIMENT_LAYERS_7B, MODEL_CHECKPOINTS, OLMO3_VARIANTS
+from postdyn.gender_surface_analysis import (
     compare_gender_surface_vectors,
     compute_surface_pronoun_vectors,
     save_surface_analysis,
@@ -22,8 +21,8 @@ from src.gender_surface_analysis import (
 
 GENDER_CONCEPT = "female_vs_male_gender"
 DEFAULT_MODEL = "olmo3-rl-zero-math"
-DEFAULT_VECTORS_DIR = "results/concept_dynamics_paired/vectors"
-DEFAULT_OUTPUT = "results/concept_dynamics_paired/gender_surface_control.json"
+DEFAULT_VECTORS_DIR = "logs/concept_dynamics_paired/vectors"
+DEFAULT_OUTPUT = "logs/concept_dynamics_paired/gender_surface_control.json"
 
 
 def default_checkpoint_for(model: str) -> str:

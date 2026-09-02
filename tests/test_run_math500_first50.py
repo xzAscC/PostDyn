@@ -4,8 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import experiments.run_math500_first50 as cli
-from src.math500_eval import MATH500_COUNT
+import scripts.run_math500_first50 as cli
+from postdyn.math500_eval import MATH500_COUNT
 
 
 class FakeModel:

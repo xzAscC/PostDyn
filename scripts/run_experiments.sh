@@ -5,8 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-RESULTS_DIR="${RESULTS_DIR:-results}"
-LOG_DIR="${LOG_DIR:-${RESULTS_DIR}/logs}"
+LOGS_DIR="${LOGS_DIR:-logs}"
+LOG_DIR="${LOG_DIR:-${LOGS_DIR}/run_logs}"
 mkdir -p "$LOG_DIR"
 
 log() { echo -e "\033[1;34m[$(date +%H:%M:%S)]\033[0m $*"; }
@@ -36,12 +36,12 @@ exp_tests() {
 
 exp_weight_rank() {
     log "Weight-level effective rank analysis (quick mode)"
-    uv run python main.py --analysis all --quick --output-dir "$RESULTS_DIR"
+    uv run python -m postdyn.cli --analysis all --quick --output-dir "$LOGS_DIR"
 }
 
 exp_activation_rank() {
     log "Activation-level effective rank analysis"
-    uv run python main.py --analysis activation-all --quick --num-samples 500 --output-dir "$RESULTS_DIR"
+    uv run python -m postdyn.cli --analysis activation-all --quick --num-samples 500 --output-dir "$LOGS_DIR"
 }
 
 exp_concept_steering() {
@@ -52,7 +52,7 @@ exp_concept_steering() {
         return 0
     fi
     uv run python -c "
-from src.concept_steering import load_concept_index, select_concepts
+from postdyn.concept_steering import load_concept_index, select_concepts
 concepts = load_concept_index()
 selected = select_concepts(concepts, n=100, strategy='first')
 print(f'Selected {len(selected)} concepts (first-100 by frequency)')
@@ -65,8 +65,8 @@ exp_concept_analysis() {
     log "Concept analysis: 4 metrics on synthetic steering vectors"
     uv run python -c "
 import torch
-from src.concept_steering import compute_steering_vector
-from src.concept_analysis import (
+from postdyn.concept_steering import compute_steering_vector
+from postdyn.concept_analysis import (
     directional_stability,
     separability_margin,
     concept_gram_matrix,
@@ -107,7 +107,7 @@ print(f'Top explained variance: {spectrum.explained_variance_ratio[0]:.4f}')
 
 exp_dry_run() {
     log "Dry run: validate configs"
-    uv run python main.py --dry-run
+    uv run python -m postdyn.cli --dry-run
 }
 
 # =============================================================================
@@ -116,7 +116,7 @@ exp_dry_run() {
 
 usage() {
     cat << 'USAGE'
-Usage: experiments/run_experiments.sh [COMMAND]
+Usage: scripts/run_experiments.sh [COMMAND]
 
 Commands:
   all              Run all experiments (tests + weight + activation + concept)
@@ -129,8 +129,8 @@ Commands:
   help             Show this help message
 
 Environment:
-  RESULTS_DIR      Output directory (default: results/)
-  LOG_DIR          Log directory (default: results/logs/)
+  LOGS_DIR      Output directory (default: logs/)
+  LOG_DIR          Log directory (default: logs/run_logs/)
 
 USAGE
 }
@@ -147,7 +147,7 @@ main() {
             run_step "concept-steering"  exp_concept_steering
             run_step "concept-analysis"  exp_concept_analysis
             log "========== ALL EXPERIMENTS COMPLETE =========="
-            log "Results: ${RESULTS_DIR}/"
+            log "Results: ${LOGS_DIR}/"
             log "Logs:    ${LOG_DIR}/"
             ;;
         tests)              exp_tests ;;

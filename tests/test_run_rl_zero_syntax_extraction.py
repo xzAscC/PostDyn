@@ -1,4 +1,4 @@
-"""Tests for experiments/run_rl_zero_syntax_extraction.py.
+"""Tests for scripts/run_rl_zero_syntax_extraction.py.
 
 Covers:
   * Checkpoint selection (``--only base|rl|all``, ``--checkpoints``, ``--limit``)
@@ -26,8 +26,8 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
-import experiments.run_rl_zero_syntax_extraction as driver
-from experiments.run_rl_zero_syntax_extraction import (
+import scripts.run_rl_zero_syntax_extraction as driver
+from scripts.run_rl_zero_syntax_extraction import (
     DEFAULT_MAX_SEQ_LEN,
     PAIRED_CONCEPT_RESULTS_ROOT,
     PAIRED_CONCEPT_RESULTS_ROOT_QUICK,
@@ -35,19 +35,19 @@ from experiments.run_rl_zero_syntax_extraction import (
     RL_CHECKPOINTS,
     RL_ZERO_CODE_RESULTS_ROOT,
 )
-from src.concept_dynamics import (
+from postdyn.concept_dynamics import (
     ConceptVector,
     compute_concept_vector,
     load_concept_vectors,
     save_concept_vectors,
 )
-from src.probe_activations import (
+from postdyn.probe_activations import (
     ProbeRecord,
     compute_records_fingerprint,
     is_layer_complete,
     save_layer_activations,
 )
-from src.rl_zero_experiment import (
+from postdyn.rl_zero_experiment import (
     BASE_CHECKPOINT,
     BASE_MODEL,
     EXPERIMENT_CHECKPOINTS,
@@ -567,7 +567,7 @@ class TestCheckpointProbeRecordsRegression:
     def test_run_checkpoint_re_extracts_old_probe_sidecar(self, tmp_path, monkeypatch):
         """End-to-end: an old probe sidecar must force a model load + re-extract,
         not be skipped. Mirrors the QA scenario that surfaced the bug."""
-        import src.probe_activations as pa
+        import postdyn.probe_activations as pa
 
         # Lightweight fake records don't satisfy the 8-class structural validator
         # inside run_extraction_with_resume; bypass it to keep this regression
@@ -1302,11 +1302,11 @@ class TestMainEndToEnd:
         monkeypatch.setattr(driver, "_clean_hf_cache", lambda hf_id: None)
         # Stub concept_texts_fn via monkeypatching the module-level import.
         monkeypatch.setattr(
-            "src.contrastive_datasets.load_contrastive_texts", _fake_concept_texts
+            "postdyn.contrastive_datasets.load_contrastive_texts", _fake_concept_texts
         )
         # Stub probe record building so no data files are needed.
         monkeypatch.setattr(
-            "src.probe_activations.build_probe_records",
+            "postdyn.probe_activations.build_probe_records",
             lambda: _fake_probe_records(10),
         )
 
@@ -1336,10 +1336,10 @@ class TestMainEndToEnd:
         )
         monkeypatch.setattr(driver, "_clean_hf_cache", lambda hf_id: None)
         monkeypatch.setattr(
-            "src.contrastive_datasets.load_contrastive_texts", _fake_concept_texts
+            "postdyn.contrastive_datasets.load_contrastive_texts", _fake_concept_texts
         )
         monkeypatch.setattr(
-            "src.probe_activations.build_probe_records",
+            "postdyn.probe_activations.build_probe_records",
             lambda: _fake_probe_records(10),
         )
 
@@ -1401,10 +1401,10 @@ class TestMainEndToEnd:
         monkeypatch.setattr(driver, "_clean_hf_cache", lambda hf_id: None)
         monkeypatch.setattr(driver, "EXPECTED_D_MODEL", 8)
         monkeypatch.setattr(
-            "src.contrastive_datasets.load_contrastive_texts", _fake_concept_texts
+            "postdyn.contrastive_datasets.load_contrastive_texts", _fake_concept_texts
         )
         monkeypatch.setattr(
-            "src.probe_activations.build_probe_records",
+            "postdyn.probe_activations.build_probe_records",
             lambda: _fake_probe_records(10),
         )
 

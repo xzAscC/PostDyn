@@ -11,8 +11,8 @@ ConceptSteeringVector data:
 import torch
 import pytest
 
-from src.concept_steering import ConceptSteeringVector, compute_steering_vector
-from src.concept_analysis import (
+from postdyn.concept_steering import ConceptSteeringVector, compute_steering_vector
+from postdyn.concept_analysis import (
     SeparabilityMargin,
     AnisotropySpectrum,
     directional_stability,

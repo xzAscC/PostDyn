@@ -1,4 +1,4 @@
-"""RED contracts for src.math_pairs (TDD).
+"""RED contracts for postdyn.math_pairs (TDD).
 
 Correctness-gated MATH-500 concise/verbose pair construction for the
 concept ``concise_math_reasoning_vs_verbose_math_reasoning``.
@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pytest
 
-from src.math_pairs import (
+from postdyn.math_pairs import (
     CONCEPT_NAME,
     MathPair,
     append_math_pair_jsonl,
@@ -471,7 +471,7 @@ class TestPreparationCli:
         result = subprocess.run(
             [
                 sys.executable,
-                str(REPO_ROOT / "experiments" / "prepare_math_pairs.py"),
+                str(REPO_ROOT / "scripts" / "prepare_math_pairs.py"),
                 "--help",
             ],
             cwd=REPO_ROOT,

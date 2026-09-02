@@ -5,13 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from src.math500_ablation_validator import validate_result_tree as validate_math
-from src.think_sft_differential_experiment import (
+from postdyn.math500_ablation_validator import validate_result_tree as validate_math
+from postdyn.think_sft_differential_experiment import (
     FAMILY_THINK,
     SCALE_7B,
     root_for_trajectory,
 )
-from src.think_sft_differential_validator import (
+from postdyn.think_sft_differential_validator import (
     validate_result_tree as validate_extraction,
 )
 
@@ -44,7 +44,7 @@ def preflight_canonical_7b(
     extraction_report = preflight_canonical_7b_extraction(project_root=base)
     extraction_errors = list(extraction_report.errors)
     math_errors: list[str] = []
-    dataset_path = base / "datasets" / "math500.json"
+    dataset_path = base / "data" / "math500.json"
     for trajectory, name in (
         ("sft", "math500_ablation_first50"),
         ("rlvr", "math500_ablation_first50_rlvr"),
@@ -53,7 +53,7 @@ def preflight_canonical_7b(
             FAMILY_THINK, SCALE_7B, trajectory, project_root=base
         )
         report = validate_math(
-            base / "results" / name,
+            base / "logs" / name,
             trajectory=trajectory,
             dataset_path=dataset_path,
             max_new_tokens=2048,

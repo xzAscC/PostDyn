@@ -13,8 +13,8 @@ Default: 7B bfloat16. 32B uses the optional NF4 loader and requires
 
 Usage::
 
-    uv run python experiments/run_think_sft_differential_subspace.py
-    uv run python experiments/run_think_sft_differential_subspace.py --quick
+    uv run python scripts/run_think_sft_differential_subspace.py
+    uv run python scripts/run_think_sft_differential_subspace.py --quick
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ import json
 import os
 import re
 import tempfile
-import sys
 import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -36,27 +35,26 @@ from typing import Any, Callable, Optional, cast
 import torch
 from safetensors.torch import load_file, save_file
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from experiments.run_math_differential_subspace import (
+from scripts.run_math_differential_subspace import (
     extract_raw_layer_activations,
     preflight_tokenizer_prompts,
     quick_sample_count,
 )
-from src.concept_dynamics import _load_model_and_tokenizer
-from src.quantized_model_loader import (
+from postdyn.concept_dynamics import _load_model_and_tokenizer
+from postdyn.quantized_model_loader import (
     CANONICAL_NF4_PROVENANCE,
     validate_nf4_load_diagnostics,
 )
-from src.differential_subspace import (
+from postdyn.differential_subspace import (
     SignedDifferentialSubspace,
     compute_signed_differential_subspace,
     compute_stability_trajectory,
     signed_subspace_to_serializable,
     subspace_stability,
 )
-import src.differential_subspace as differential_core
-from src.domain_datasets import (
+import postdyn.differential_subspace as differential_core
+from postdyn.domain_datasets import (
     DOLCI_HF_IDS,
     DOLCI_HF_REVISIONS,
     WIKITEXT_CONFIG,
@@ -66,7 +64,7 @@ from src.domain_datasets import (
     load_domain_prompt_selection,
     resolve_hub_dataset_revision,
 )
-from src.think_sft_differential_experiment import (
+from postdyn.think_sft_differential_experiment import (
     CONCEPT_PAIRS,
     DTYPE,
     EXTRACTION_CONTRACT,
@@ -108,7 +106,7 @@ def _require_canonical_7b(*, project_root: Path | None = None) -> None:
     import importlib
 
     require = importlib.import_module(
-        "src.cross_pipeline_integrity"
+        "postdyn.cross_pipeline_integrity"
     ).require_canonical_7b_extraction
     if project_root is None:
         require()
@@ -454,7 +452,7 @@ def build_model_loader(
         _require_canonical_7b(project_root=project_root)
         if revision is None:
             raise ValueError("32B trajectory loads require a pinned revision")
-        from src.quantized_model_loader import load_olmo3_32b_think
+        from postdyn.quantized_model_loader import load_olmo3_32b_think
 
         loaded = load_olmo3_32b_think(
             cfg.hf_id,
@@ -1089,7 +1087,7 @@ def _run_checkpoint(
         manifest["runtime_provenance"] = dict(runtime_provenance)
         manifest["loader_provenance"] = NF4_PROVENANCE
     if scale == SCALE_32B and validate_32b_checkpoint:
-        from src.think_32b_differential_validator import validate_checkpoint_tree
+        from postdyn.think_32b_differential_validator import validate_checkpoint_tree
 
         report = validate_checkpoint_tree(
             root,
@@ -1117,7 +1115,7 @@ def _validate_32b_tree_or_raise(
     setup_sig: str,
     require_publications: bool = True,
 ) -> None:
-    from src.think_32b_differential_validator import validate_result_tree
+    from postdyn.think_32b_differential_validator import validate_result_tree
 
     report = validate_result_tree(
         root,
@@ -1132,7 +1130,7 @@ def _validate_32b_tree_or_raise(
 
 
 def _validate_7b_tree_or_raise(root: Path, trajectory: str) -> None:
-    from src.think_sft_differential_validator import validate_result_tree
+    from postdyn.think_sft_differential_validator import validate_result_tree
 
     report = validate_result_tree(root, trajectory)
     if not report.ok:
@@ -1569,7 +1567,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             project_root=args.project_root,
         )
         if not args.keep_hf_cache:
-            from src.concept_dynamics import _clean_hf_cache
+            from postdyn.concept_dynamics import _clean_hf_cache
 
             try:
                 _clean_hf_cache(model_config(model_key).hf_id)
@@ -1740,7 +1738,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.scale == SCALE_7B and not args.quick:
         _validate_7b_tree_or_raise(root, args.trajectory)
     if args.scale == SCALE_32B and not args.quick:
-        from src.think_32b_differential_validator import (
+        from postdyn.think_32b_differential_validator import (
             validate_full_canonical_publication,
         )
 

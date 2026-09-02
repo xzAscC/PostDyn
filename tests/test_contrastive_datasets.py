@@ -21,8 +21,8 @@ from unittest.mock import patch
 
 import pytest
 
-import src.contrastive_datasets as cd
-from src.contrastive_datasets import (
+import postdyn.contrastive_datasets as cd
+from postdyn.contrastive_datasets import (
     ALIASES,
     CODE_LANGS,
     CONCEPTS,
@@ -44,7 +44,7 @@ from src.contrastive_datasets import (
 @pytest.fixture(autouse=True)
 def _isolated_datasets(tmp_path, monkeypatch):
     """Point dataset_store paths at a tmp dir for every test."""
-    import src.dataset_store as store
+    import postdyn.dataset_store as store
 
     monkeypatch.setattr(store, "DATASETS_DIR", tmp_path)
     monkeypatch.setattr(store, "SHARED_IDS_PATH", tmp_path / "shared_item_ids.json")
@@ -871,14 +871,14 @@ class TestPublicAPI:
 
 class TestDatasetStore:
     def test_get_shared_ids_empty_when_missing(self, _isolated_datasets):
-        import src.dataset_store as store
+        import postdyn.dataset_store as store
 
         data = store.get_shared_ids()
         assert data["humaneval_x_task_ids"] == []
         assert data["belebele_keys"] == []
 
     def test_save_and_reload_shared_ids(self, _isolated_datasets):
-        import src.dataset_store as store
+        import postdyn.dataset_store as store
 
         store.save_shared_ids(
             {
@@ -891,7 +891,7 @@ class TestDatasetStore:
         assert data["belebele_keys"] == [{"link": "l1", "question_number": 1}]
 
     def test_save_shared_ids_preserves_existing_keys(self, _isolated_datasets):
-        import src.dataset_store as store
+        import postdyn.dataset_store as store
 
         store.save_shared_ids({"humaneval_x_task_ids": [1, 2, 3]})
         store.save_shared_ids({"belebele_keys": [{"link": "l", "question_number": 1}]})
@@ -900,7 +900,7 @@ class TestDatasetStore:
         assert data["belebele_keys"] == [{"link": "l", "question_number": 1}]
 
     def test_sample_shared_indices_is_deterministic(self):
-        import src.dataset_store as store
+        import postdyn.dataset_store as store
 
         pool = list(range(200))
         a = store.sample_shared_indices(pool, n=50, seed=42)

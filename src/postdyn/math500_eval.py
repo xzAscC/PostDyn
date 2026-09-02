@@ -1,7 +1,7 @@
 """Deterministic, resumable first-50 evaluator for MATH-500.
 
 The benchmark contract is intentionally separate from HumanEval/MMLU:
-``datasets/math500.json`` is read in stored order, the raw ``problem`` string
+``data/math500.json`` is read in stored order, the raw ``problem`` string
 is the complete prompt, and the raw completion is preserved verbatim. Answers
 are scored with math-verify without fallback parsing.
 """
@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Protocol, Sequence, cast
 
-from src.downstream_eval import (
+from postdyn.downstream_eval import (
     BatchCompletionGenerator,
     CompletionGenerator,
     TokenizerLike,

@@ -38,7 +38,7 @@ import pytest
 import scipy.optimize
 from scipy.special import expit
 
-from src.linear_probe import (
+from postdyn.linear_probe import (
     EIGHT_LABELS,
     ClassProbeResult,
     LinearProbeResult,
@@ -865,7 +865,7 @@ class TestLogisticMethod:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """When L-BFGS-B reports non-success, a clear RuntimeError is raised."""
-        from src import linear_probe as lp
+        from postdyn import linear_probe as lp
 
         class _Failed:
             success = False
@@ -881,7 +881,7 @@ class TestLogisticMethod:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A finite-but-non-finite solution still raises a clear error."""
-        from src import linear_probe as lp
+        from postdyn import linear_probe as lp
 
         class _NonFinite:
             success = True
@@ -923,7 +923,7 @@ class TestOptimizerBudgetRegression:
     def test_logistic_fit_uses_approved_optimizer_options(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from src import linear_probe as lp
+        from postdyn import linear_probe as lp
 
         captured: dict[str, Any] = {}
         real_minimize = scipy.optimize.minimize
@@ -955,7 +955,7 @@ class TestOptimizerBudgetRegression:
     ) -> None:
         """Under the old strict/low budget the fixture genuinely runs out of
         iterations (>1000 needed) and ``_logistic_fit`` raises."""
-        from src import linear_probe as lp
+        from postdyn import linear_probe as lp
 
         X, y = _make_ill_conditioned_fixture()
         real_minimize = scipy.optimize.minimize

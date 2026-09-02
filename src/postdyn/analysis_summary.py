@@ -1,7 +1,7 @@
 """Deterministic, atomic, reproducible producer + validator for
 ``analysis_summary.json`` (RL-Zero-Code syntax experiment).
 
-The original ``results/rl_zero_code_syntax/analysis_summary.json`` was produced
+The original ``logs/rl_zero_code_syntax/analysis_summary.json`` was produced
 ad hoc with a Python one-liner and was therefore neither reproducible nor
 integrity-bound to its sources. This module replaces it with a deterministic
 pipeline that:
@@ -36,15 +36,15 @@ This module is **pure post-processing**. It runs no model, performs no
 extraction, never mutates ``metrics.json`` / ``aggregate_summary.json``, and
 introduces no wall-clock or RNG nondeterminism. The summary it produces is a
 pure function of its two source artifacts and the constants in
-:mod:`src.rl_zero_experiment`.
+:mod:`postdyn.rl_zero_experiment`.
 
 Authoritative docs:
 
-* :mod:`src.rl_zero_experiment` -- experiment constants (checkpoints, layers,
+* :mod:`postdyn.rl_zero_experiment` -- experiment constants (checkpoints, layers,
   concepts, probe classes, base checkpoint, optional references, sample count,
   primary protocol).
-* ``experiments/run_rl_zero_syntax_metrics.py`` -- metrics.json producer.
-* ``experiments/run_rl_zero_downstream.py`` -- aggregate_summary.json producer.
+* ``scripts/run_rl_zero_syntax_metrics.py`` -- metrics.json producer.
+* ``scripts/run_rl_zero_downstream.py`` -- aggregate_summary.json producer.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ from typing import Any, Mapping, Sequence, cast
 
 from scipy.stats import pearsonr, spearmanr
 
-from src.rl_zero_experiment import (
+from postdyn.rl_zero_experiment import (
     BASE_CHECKPOINT,
     CONTROL_CONCEPT,
     EXPERIMENT_CHECKPOINTS,
@@ -155,7 +155,7 @@ LIMITATIONS: tuple[str, ...] = (
 INTEGRITY_NOTES: dict[str, str] = {
     "probe_sidecars": "re-extracted with per-record text_sha256/source_ids",
     "downstream": "1100 cached code completions re-scored in bubblewrap with zero outcome drift",
-    "tests": "results/rl_zero_code_syntax/test-results.xml",
+    "tests": "logs/rl_zero_code_syntax/test-results.xml",
 }
 
 
@@ -814,7 +814,7 @@ def build_summary(
     The returned dict is fully deterministic: same inputs in, byte-identical
     JSON out (after :func:`canonical_json_bytes` serialization). It is a pure
     function of ``metrics`` and ``aggregate`` plus the
-    :mod:`src.rl_zero_experiment` constants.
+    :mod:`postdyn.rl_zero_experiment` constants.
 
     Args:
         metrics: parsed ``metrics.json`` object.

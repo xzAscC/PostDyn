@@ -11,15 +11,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.config import (
+from postdyn.config import (
     EXPERIMENT_LAYERS_7B,
     MODEL_CHECKPOINTS,
     OLMO3_VARIANTS,
     ModelConfig,
 )
-from src.dataset_store import PROJECT_ROOT, SHARED_SAMPLE_SEED
-from src.domain_datasets import DEFAULT_CONCEPT_PAIRS
-from src.differential_subspace import DEFAULT_TAU
+from postdyn.dataset_store import PROJECT_ROOT, SHARED_SAMPLE_SEED
+from postdyn.domain_datasets import DEFAULT_CONCEPT_PAIRS
+from postdyn.differential_subspace import DEFAULT_TAU
 
 # =============================================================================
 # Models & checkpoints
@@ -54,10 +54,10 @@ CONCEPT_PAIRS: tuple[tuple[str, str, str], ...] = (DEFAULT_CONCEPT_PAIRS[1],)
 # =============================================================================
 
 RESULTS_ROOT: Path = (
-    PROJECT_ROOT / "results" / "math_differential_subspace_setup_raw_prompt"
+    PROJECT_ROOT / "logs" / "math_differential_subspace_setup_raw_prompt"
 )
 RESULTS_ROOT_QUICK: Path = (
-    PROJECT_ROOT / "results" / "math_differential_subspace_setup_raw_prompt_quick"
+    PROJECT_ROOT / "logs" / "math_differential_subspace_setup_raw_prompt_quick"
 )
 
 CHECKPOINT_REVISIONS: dict[str, str] = {

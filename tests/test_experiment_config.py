@@ -1,7 +1,7 @@
 """Tests for experiment-specific configuration constants.
 
 References the experimental setup described in TrainingDynamic.tex
-(adapted in docs/experiment_setup.md):
+(adapted from the original slides):
   - PaCE concepts, first 100
   - OLMo-3 7B post-training, bfloat16
   - Think chain (base -> SFT -> DPO -> RL) + RL-Zero family
@@ -15,7 +15,7 @@ import sys
 
 import pytest
 
-from src.config import (
+from postdyn.config import (
     THINK_CHAIN,
     RL_ZERO_FAMILY,
     EXPERIMENT_MODELS,
@@ -152,7 +152,7 @@ class TestLayerSelection:
 
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(_TESTS_DIR)
-_RUNNER_PATH = os.path.join(_PROJECT_ROOT, "experiments", "run_concept_dynamics.py")
+_RUNNER_PATH = os.path.join(_PROJECT_ROOT, "scripts", "run_concept_dynamics.py")
 
 
 def _load_runner():
@@ -215,7 +215,7 @@ class TestConceptDynamicsLayerWiring:
 
 class TestConceptDynamicsConceptWiring:
     def test_default_concepts_are_full_catalogue(self, runner):
-        from src.contrastive_datasets import all_concept_keys
+        from postdyn.contrastive_datasets import all_concept_keys
 
         assert runner.DEFAULT_CONCEPTS == all_concept_keys()
 
@@ -229,41 +229,39 @@ class TestConceptDynamicsOutputWiring:
     ):
         monkeypatch.setattr("sys.argv", ["run_concept_dynamics.py"])
         args = runner.parse_args()
-        assert args.output != "results/concept_dynamics"
+        assert args.output != "logs/concept_dynamics"
 
     def test_shell_wrapper_uses_the_fresh_output_directory(self):
         wrapper_path = os.path.join(
-            _PROJECT_ROOT, "experiments", "run_concept_dynamics.sh"
+            _PROJECT_ROOT, "scripts", "run_concept_dynamics.sh"
         )
         with open(wrapper_path, encoding="utf-8") as handle:
             wrapper = handle.read()
-        assert "results/concept_dynamics_multi" in wrapper
-        assert (
-            'OUTPUT_DIR="${OUTPUT_DIR:-results/concept_dynamics_paired}"' not in wrapper
-        )
+        assert "logs/concept_dynamics_multi" in wrapper
+        assert 'OUTPUT_DIR="${OUTPUT_DIR:-logs/concept_dynamics_paired}"' not in wrapper
 
     def test_quick_and_full_modes_have_distinct_default_outputs(self, runner):
         assert runner.resolve_output_directory(quick=False, output=None) == (
-            "results/concept_dynamics_multi"
+            "logs/concept_dynamics_multi"
         )
         assert runner.resolve_output_directory(quick=True, output=None) == (
-            "results/concept_dynamics_multi_quick"
+            "logs/concept_dynamics_multi_quick"
         )
 
     def test_explicit_output_overrides_both_mode_defaults(self, runner):
         for quick in (False, True):
             assert (
-                runner.resolve_output_directory(quick=quick, output="results/custom")
-                == "results/custom"
+                runner.resolve_output_directory(quick=quick, output="logs/custom")
+                == "logs/custom"
             )
 
     def test_shell_wrapper_declares_separate_quick_default(self):
         wrapper_path = os.path.join(
-            _PROJECT_ROOT, "experiments", "run_concept_dynamics.sh"
+            _PROJECT_ROOT, "scripts", "run_concept_dynamics.sh"
         )
         with open(wrapper_path, encoding="utf-8") as handle:
             wrapper = handle.read()
-        assert "results/concept_dynamics_multi_quick" in wrapper
+        assert "logs/concept_dynamics_multi_quick" in wrapper
 
 
 class TestConceptDynamicsCliHelp:
@@ -280,7 +278,7 @@ class TestConceptDynamicsCliHelp:
 
     def test_shell_help_does_not_claim_results_were_saved(self):
         wrapper_path = os.path.join(
-            _PROJECT_ROOT, "experiments", "run_concept_dynamics.sh"
+            _PROJECT_ROOT, "scripts", "run_concept_dynamics.sh"
         )
         result = subprocess.run(
             [wrapper_path, "--help"],

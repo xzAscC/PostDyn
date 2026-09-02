@@ -1,4 +1,4 @@
-"""Tests for experiments/run_rl_zero_downstream.py.
+"""Tests for scripts/run_rl_zero_downstream.py.
 
 No real model, no real benchmark code, no host execution. Every test injects
 a fake model loader, a fake generator factory, a fake sandbox runner, and a
@@ -33,8 +33,8 @@ from typing import Callable, Sequence, cast
 
 import pytest
 
-import experiments.run_rl_zero_downstream as cli
-from experiments.run_rl_zero_downstream import (
+import scripts.run_rl_zero_downstream as cli
+from scripts.run_rl_zero_downstream import (
     AGGREGATE_FILENAME,
     DEFAULT_MAX_NEW_TOKENS_CODE,
     DEFAULT_MAX_NEW_TOKENS_MMLU,
@@ -56,8 +56,8 @@ from experiments.run_rl_zero_downstream import (
     resolve_input_device,
     run_downstream_eval,
 )
-from src.config import OLMO3_VARIANTS
-from src.downstream_eval import (
+from postdyn.config import OLMO3_VARIANTS
+from postdyn.downstream_eval import (
     CheckpointSummary,
     DEFAULT_MAX_NEW_TOKENS_CODE as DE_CODE,
     DEFAULT_MAX_NEW_TOKENS_MMLU as DE_MMLU,
@@ -70,8 +70,8 @@ from src.downstream_eval import (
     sha256_hex,
     write_item_atomically,
 )
-from src.humaneval_x_validator import assemble_python_program
-from src.rl_zero_experiment import (
+from postdyn.humaneval_x_validator import assemble_python_program
+from postdyn.rl_zero_experiment import (
     BASE_CHECKPOINT,
     BASE_MODEL_KEY,
     EXPERIMENT_CHECKPOINTS,
@@ -412,7 +412,7 @@ class TestPreflightGate:
     def test_default_gate_is_report_matches_ids(self):
         # The default gate callable must be the canonical matcher imported
         # from the preflight CLI (exact IDs / revision / all-pass / hashes).
-        from experiments.validate_rl_zero_downstream import report_matches_ids
+        from scripts.validate_rl_zero_downstream import report_matches_ids
 
         # run_downstream_eval is keyword-only (* prefix), so its defaults
         # live in __kwdefaults__, not __defaults__.

@@ -8,19 +8,18 @@ machine-readable JSONL report that ``run_concept_dynamics.py`` uses as
 its preflight gate for ``python_vs_cpp``.
 
 Usage:
-    uv run python experiments/validate_humaneval_x.py [OPTIONS]
+    uv run python scripts/validate_humaneval_x.py [OPTIONS]
 
 Options:
     --n N             Aligned pairs to validate (default: 50)
     --report-path P   Output JSONL report
-                      (default: experiments/artifacts/humaneval-x-validation.jsonl)
+                      (default: scripts/artifacts/humaneval-x-validation.jsonl)
     --timeout SECS    Per-program subprocess timeout in seconds (default: 10)
     --skip-tool-check Skip the bwrap/g++ presence check (for testing only)
     --help            Show this message and exit
 
-Run this before ``experiments/run_concept_dynamics.sh`` whenever the
-``python_vs_cpp`` concept is enabled. See
-``docs/humaneval_x_validation.md`` for the full workflow.
+Run this before ``scripts/run_concept_dynamics.sh`` whenever the
+``python_vs_cpp`` concept is enabled.
 
 This script never modifies the host filesystem outside ``--report-path``
 and a per-task scratch directory under the system temp dir.
@@ -33,10 +32,9 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.contrastive_datasets import HUMANEVAL_X_DATASET, HUMANEVAL_X_REVISION
-from src.humaneval_x_validator import (
+from postdyn.contrastive_datasets import HUMANEVAL_X_DATASET, HUMANEVAL_X_REVISION
+from postdyn.humaneval_x_validator import (
     BwrapRunner,
     ValidationFailure,
     check_sandbox_tools_available,
@@ -46,7 +44,7 @@ from src.humaneval_x_validator import (
 
 DEFAULT_REPORT_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "experiments",
+    "logs",
     "artifacts",
     "humaneval-x-validation.jsonl",
 )
@@ -154,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"OK: {summary.n_validated} aligned pairs validated")
     print(f"Report written to: {summary.report_path}")
     print(
-        "Run `experiments/run_concept_dynamics.sh` next; this report "
+        "Run `scripts/run_concept_dynamics.sh` next; this report "
         "is required whenever python_vs_cpp is enabled."
     )
     return 0

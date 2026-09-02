@@ -5,8 +5,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from src import quantized_model_loader as loader
-from src.config import OLMO3_VARIANTS
+from postdyn import quantized_model_loader as loader
+from postdyn.config import OLMO3_VARIANTS
 
 
 def _configured_sft_revision() -> str:

@@ -24,7 +24,7 @@ import matplotlib.ticker as ticker
 import numpy as np
 import seaborn as sns
 
-from src.config import FIGURES_DIR, COLOR_PALETTES
+from postdyn.config import COLOR_PALETTES, FIGS_DIR, PROJECT_ROOT
 
 
 def _setup_style():
@@ -44,10 +44,10 @@ def _setup_style():
     )
 
 
-def _save_fig(fig, name: str, formats=("png", "pdf")):
-    os.makedirs(FIGURES_DIR, exist_ok=True)
+def _save_fig(fig, name: str, formats=("pdf",)):
+    os.makedirs(FIGS_DIR, exist_ok=True)
     for fmt in formats:
-        path = os.path.join(FIGURES_DIR, f"{name}.{fmt}")
+        path = os.path.join(FIGS_DIR, f"{name}.{fmt}")
         fig.savefig(path, format=fmt)
         print(f"  Saved: {path}")
     plt.close(fig)
@@ -65,8 +65,8 @@ def plot_cross_model_size(
     if data is None:
         if results_path is None:
             results_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "results",
+                PROJECT_ROOT,
+                "logs",
                 "cross_model_size.json",
             )
         with open(results_path) as f:
@@ -148,8 +148,8 @@ def plot_training_dynamics(
     if data is None:
         if results_path is None:
             results_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "results",
+                PROJECT_ROOT,
+                "logs",
                 "training_dynamics_pythia-70m.json",
             )
         with open(results_path) as f:
@@ -258,8 +258,8 @@ def plot_training_stages(
     if data is None:
         if results_path is None:
             results_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "results",
+                PROJECT_ROOT,
+                "logs",
                 "training_stages.json",
             )
         with open(results_path) as f:
@@ -314,8 +314,8 @@ def plot_post_training_methods(
     if data is None:
         if results_path is None:
             results_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "results",
+                PROJECT_ROOT,
+                "logs",
                 "post_training_methods.json",
             )
         with open(results_path) as f:
@@ -413,8 +413,8 @@ def plot_fixed_ratio_distribution(
     if data is None:
         if results_path is None:
             results_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "results",
+                PROJECT_ROOT,
+                "logs",
                 "fixed_ratio_hypothesis.json",
             )
         with open(results_path) as f:
@@ -672,8 +672,8 @@ def plot_activation_analysis(
     if data is None:
         if results_path is None:
             results_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "results",
+                PROJECT_ROOT,
+                "logs",
                 "activation_cross_model.json",
             )
         with open(results_path) as f:
@@ -771,8 +771,8 @@ def plot_activation_combined(
 
     if results_dir is None:
         results_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "results",
+            PROJECT_ROOT,
+            "logs",
         )
 
     combined: dict[str, dict] = {}
@@ -891,7 +891,7 @@ def generate_all_plots(results_dir: Optional[str] = None):
     """Generate all plots from saved results."""
     if results_dir is None:
         results_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "results"
+            PROJECT_ROOT, "logs"
         )
 
     print("\nGenerating all plots...")
@@ -940,7 +940,7 @@ def generate_all_plots(results_dir: Optional[str] = None):
     except Exception as e:
         print(f"  Error plotting activation_combined: {e}")
 
-    print(f"\nGenerated {len(generated)} plots in {FIGURES_DIR}")
+    print(f"\nGenerated {len(generated)} plots in {FIGS_DIR}")
     return generated
 
 
@@ -960,8 +960,8 @@ def _load_json(path: str) -> dict:
         return json.load(f)
 
 
-def _save_concept_dynamics_fig(fig, name: str, formats=("png", "pdf")) -> str:
-    target_dir = os.path.join(FIGURES_DIR, "concept_dynamics")
+def _save_concept_dynamics_fig(fig, name: str, formats=("pdf",)) -> str:
+    target_dir = os.path.join(FIGS_DIR, "concept_dynamics")
     os.makedirs(target_dir, exist_ok=True)
     saved: list[str] = []
     for fmt in formats:
@@ -1180,7 +1180,7 @@ def plot_concept_dynamics_summary(
     For each model: plot the mid-layer Gram matrix at the last available
     checkpoint. For each requested concept (default: first three in the
     catalogue): plot the per-model checkpoint-stability heatmap. Figures
-    land under ``results/figures/concept_dynamics/`` (or ``figures_subdir``
+    land under ``figs/concept_dynamics/`` (or ``figures_subdir``
     when provided).
     """
     gram_path = os.path.join(output_dir, "gram", "gram.json")
@@ -1252,6 +1252,6 @@ def plot_concept_dynamics_summary(
     print(f"\nGenerated {len(generated)} concept-dynamics summary plots.")
     if figures_subdir is not None:
         print(
-            f"(figures_subdir hint={figures_subdir!r}; output stays under FIGURES_DIR/concept_dynamics/)"
+            f"(figures_subdir hint={figures_subdir!r}; output stays under FIGS_DIR/concept_dynamics/)"
         )
     return generated

@@ -7,18 +7,16 @@ import argparse
 import importlib
 import os
 from pathlib import Path
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.math500_eval import DEFAULT_DTYPE, DEFAULT_MAX_NEW_TOKENS, DEFAULT_QUANTIZATION
-from src.think_sft_differential_experiment import root_for_trajectory
-from src.think_32b_differential_validator import validate_full_canonical_publication
+from postdyn.math500_eval import DEFAULT_DTYPE, DEFAULT_MAX_NEW_TOKENS, DEFAULT_QUANTIZATION
+from postdyn.think_sft_differential_experiment import root_for_trajectory
+from postdyn.think_32b_differential_validator import validate_full_canonical_publication
 
 CANONICAL_32B_MAX_NEW_TOKENS = 2048
 
 validate_result_tree = importlib.import_module(
-    "src.math500_ablation_validator"
+    "postdyn.math500_ablation_validator"
 ).validate_result_tree
 
 
@@ -33,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--checkpoints", nargs="+", default=None)
     parser.add_argument("--layers", nargs="+", type=int, default=None)
-    parser.add_argument("--dataset", type=Path, default=Path("datasets/math500.json"))
+    parser.add_argument("--dataset", type=Path, default=Path("data/math500.json"))
     parser.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
     parser.add_argument("--dtype", default=DEFAULT_DTYPE)
     parser.add_argument("--quantization", default=None)
@@ -50,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.scale == "32b":
         require = importlib.import_module(
-            "src.cross_pipeline_integrity"
+            "postdyn.cross_pipeline_integrity"
         ).require_canonical_7b
         try:
             if args.project_root is None:
@@ -64,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
         args.artifact_root = root_for_trajectory(
             "think", args.scale, args.trajectory, project_root=args.project_root
         )
-    if args.project_root is not None and args.dataset == Path("datasets/math500.json"):
+    if args.project_root is not None and args.dataset == Path("data/math500.json"):
         args.dataset = args.project_root / args.dataset
     if args.scale == "32b":
         publication = validate_full_canonical_publication(

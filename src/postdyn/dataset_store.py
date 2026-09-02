@@ -1,12 +1,12 @@
 """Local dataset store for materialized HF datasets.
 
-Datasets are streamed one-at-a-time by ``experiments/download_datasets.py``
-and written as JSON files under ``datasets/``. Loaders in
-``src/contrastive_datasets.py`` read these JSON files offline.
+Datasets are streamed one-at-a-time by ``scripts/download_datasets.py``
+and written as JSON files under ``data/``. Loaders in
+``postdyn/contrastive_datasets.py`` read these JSON files offline.
 
 Layout::
 
-    datasets/
+    data/
         humaneval_x.json
         minif2f.json
         beyondx.json
@@ -36,7 +36,7 @@ from pathlib import Path
 # =============================================================================
 
 PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
-DATASETS_DIR: Path = PROJECT_ROOT / "datasets"
+DATASETS_DIR: Path = PROJECT_ROOT / "data"
 SHARED_IDS_PATH: Path = DATASETS_DIR / "shared_item_ids.json"
 
 # =============================================================================
@@ -128,12 +128,12 @@ def dataset_path(name: str) -> Path:
 
 
 def dataset_exists(name: str) -> bool:
-    """Return True if ``datasets/<name>`` exists."""
+    """Return True if ``data/<name>`` exists."""
     return _path_for(name).exists()
 
 
 def load_dataset_json(name: str) -> dict:
-    """Load ``datasets/<name>`` and return the parsed object."""
+    """Load ``data/<name>`` and return the parsed object."""
     return load_json(_path_for(name))
 
 

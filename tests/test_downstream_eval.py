@@ -1,4 +1,4 @@
-"""Tests for src/downstream_eval.py.
+"""Tests for postdyn/downstream_eval.py.
 
 No real model, no real benchmark code, no host execution. Every test injects
 a fake ``CompletionGenerator`` and a fake ``SandboxRunner`` so generation is
@@ -31,8 +31,8 @@ from typing import Sequence
 
 import pytest
 
-from src import downstream_eval as de
-from src.downstream_eval import (
+from postdyn import downstream_eval as de
+from postdyn.downstream_eval import (
     DEFAULT_MAX_NEW_TOKENS_CODE,
     DEFAULT_MAX_NEW_TOKENS_MMLU,
     DEFAULT_TIMEOUT_SECONDS,
@@ -69,7 +69,7 @@ from src.downstream_eval import (
     validate_mmlu_cached_body,
     write_item_atomically,
 )
-from src.humaneval_x_validator import (
+from postdyn.humaneval_x_validator import (
     OUTCOME_COMPILE_ERROR,
     OUTCOME_ERROR,
     OUTCOME_FAIL,
@@ -1531,7 +1531,7 @@ class TestGenerationContractVersion:
         assert identity_matches({"identity": old_dict}, ident) is False
 
     def test_identity_matches_when_version_present_and_equal(self):
-        from src.downstream_eval import GENERATION_CONTRACT_VERSION
+        from postdyn.downstream_eval import GENERATION_CONTRACT_VERSION
 
         ident = DownstreamIdentity(
             model="m",

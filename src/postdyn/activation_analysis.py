@@ -28,12 +28,12 @@ from typing import Any, Iterable, Mapping, Optional, cast
 import torch
 from tqdm import tqdm
 
-from src.config import (
+from postdyn.config import (
     ModelConfig,
     PYTHIA_CONFIGS,
     PYTHIA_CHECKPOINTS,
     OLMO3_VARIANTS,
-    RESULTS_DIR,
+    LOGS_DIR,
 )
 
 
@@ -191,7 +191,7 @@ def _reject_generic_32b_loading(model_config: ModelConfig) -> None:
         raise ValueError(
             "Generic activation analysis does not support OLMo-3 32B loading; "
             "use the canonical NF4 experiment loader "
-            "src.quantized_model_loader.load_olmo3_32b_think instead."
+            "postdyn.quantized_model_loader.load_olmo3_32b_think instead."
         )
 
 
@@ -387,11 +387,11 @@ def _detect_num_layers(model, model_config: ModelConfig) -> int:
 
 
 def _ensure_dirs():
-    os.makedirs(RESULTS_DIR, exist_ok=True)
+    os.makedirs(LOGS_DIR, exist_ok=True)
 
 
 def _save_results(data: dict[str, Any], filename: str):
-    path = os.path.join(RESULTS_DIR, filename)
+    path = os.path.join(LOGS_DIR, filename)
     with open(path, "w") as f:
         json.dump(data, f, indent=2, default=str)
     print(f"Saved results to {path}")
@@ -438,7 +438,7 @@ def analyze_activation_cross_model(
 
     questions = load_mmlu_questions(num_samples=num_samples)
 
-    output_path = os.path.join(RESULTS_DIR, "activation_cross_model.json")
+    output_path = os.path.join(LOGS_DIR, "activation_cross_model.json")
     existing_models: dict[str, Any] = {}
     if os.path.exists(output_path):
         try:
@@ -566,7 +566,7 @@ def analyze_activation_training_dynamics(
     questions = load_mmlu_questions(num_samples=num_samples)
 
     output_path = os.path.join(
-        RESULTS_DIR, f"activation_training_dynamics_{model_name}.json"
+        LOGS_DIR, f"activation_training_dynamics_{model_name}.json"
     )
     existing_results: dict[str, Any] = {}
     if os.path.exists(output_path):
@@ -661,7 +661,7 @@ def analyze_activation_post_training(
 
     questions = load_mmlu_questions(num_samples=num_samples)
 
-    output_path = os.path.join(RESULTS_DIR, "activation_post_training.json")
+    output_path = os.path.join(LOGS_DIR, "activation_post_training.json")
     existing_results: dict[str, Any] = {}
     if os.path.exists(output_path):
         try:

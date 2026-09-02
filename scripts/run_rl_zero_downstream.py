@@ -9,7 +9,7 @@ downstream MMLU items, and writes **isolated per-checkpoint** results plus an
 
 Hard preflight gate
     The CLI refuses to run any model work unless the exact canonical
-    preflight report produced by ``experiments/validate_rl_zero_downstream.py``
+    preflight report produced by ``scripts/validate_rl_zero_downstream.py``
     validates the pinned 50 downstream HumanEval-X ids. The gate reuses
     :func:`experiments.validate_rl_zero_downstream.report_matches_ids`, which
     verifies -- in order -- that the report:
@@ -22,14 +22,14 @@ Hard preflight gate
        hash (re-derived from the current dataset rows).
 
     The gate cannot be bypassed from this CLI: there is no ``--skip-gate``
-    flag. Regenerate the report with ``experiments/validate_rl_zero_downstream.py``
+    flag. Regenerate the report with ``scripts/validate_rl_zero_downstream.py``
     when it is missing or stale.
 
-Protocol (enforced here and by :mod:`src.downstream_eval`)
+Protocol (enforced here and by :mod:`postdyn.downstream_eval`)
     * **Raw direct tokenization.** No chat template; the prompt fed to the
       model is the verbatim HumanEval prompt or the built MMLU prompt.
     * **Deterministic greedy decoding.** ``do_sample=False``, ``num_beams=1``
-      via :class:`src.downstream_eval.GreedyGenerator`.
+      via :class:`postdyn.downstream_eval.GreedyGenerator`.
     * **Same revision for model + tokenizer.** Each checkpoint loads its model
       and tokenizer from the same repo at the same revision, ``bfloat16``,
       ``device_map="auto"``. The generator resolves the input device from the
@@ -46,13 +46,13 @@ Protocol (enforced here and by :mod:`src.downstream_eval`)
       summary, regardless of which subset was selected for the current run.
 
 Usage:
-    uv run python experiments/run_rl_zero_downstream.py [OPTIONS]
+    uv run python scripts/run_rl_zero_downstream.py [OPTIONS]
 
 Options:
     --results-root DIR     Root for per-checkpoint + aggregate outputs
-                           (default: results/rl_zero_code_syntax/downstream)
+                           (default: logs/rl_zero_code_syntax/downstream)
     --report-path PATH     Preflight report path
-                           (default: results/rl_zero_code_syntax/preflight/
+                           (default: logs/rl_zero_code_syntax/preflight/
                             humaneval-x-downstream.jsonl)
     --checkpoints SPEC     Comma-separated subset of the 11 checkpoints
                            (default: all 11, i.e. main + the ten RL steps)
@@ -97,11 +97,10 @@ from typing import (
     cast,
 )
 
-# Make ``src`` importable when run directly via ``python experiments/...``.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Make ``src`` importable when run directly via ``python scripts/...``.
 
-from src.config import OLMO3_VARIANTS
-from src.downstream_eval import (
+from postdyn.config import OLMO3_VARIANTS
+from postdyn.downstream_eval import (
     DEFAULT_MAX_NEW_TOKENS_CODE,
     DEFAULT_MAX_NEW_TOKENS_MMLU,
     DEFAULT_TIMEOUT_SECONDS as DE_DEFAULT_TIMEOUT,
@@ -128,12 +127,12 @@ from src.downstream_eval import (
     validate_mmlu_cached_body,
     write_item_atomically,
 )
-from src.humaneval_x_validator import (
+from postdyn.humaneval_x_validator import (
     SandboxRunner,
     check_sandbox_tools_available,
     sha256_hex,
 )
-from src.rl_zero_experiment import (
+from postdyn.rl_zero_experiment import (
     BASE_MODEL_KEY,
     EXPERIMENT_CHECKPOINTS,
     RL_ZERO_CODE_RESULTS_ROOT,
@@ -148,7 +147,7 @@ from src.rl_zero_experiment import (
 # Re-used preflight gate + id loader from the companion preflight CLI. These
 # are imported (not duplicated) so the hard gate stays the single source of
 # truth for "is the canonical report valid for the pinned downstream ids?".
-from experiments.validate_rl_zero_downstream import (
+from scripts.validate_rl_zero_downstream import (
     DEFAULT_REPORT_PATH,
     load_downstream_humaneval_ids,
     report_matches_ids,
@@ -205,7 +204,7 @@ class _EmbeddingSource(Protocol):
 class _ModelForDownstream(Protocol):
     """HuggingFace model surface needed for raw greedy downstream eval.
 
-    Combines :class:`src.downstream_eval.CompletionGenerator`'s underlying
+    Combines :class:`postdyn.downstream_eval.CompletionGenerator`'s underlying
     ``generate`` (via :class:`GreedyGenerator`) with the embedding lookup used
     to resolve the input device for ``device_map="auto"`` models. The
     ``generate`` signature mirrors :class:`GreedyGenerator`'s
@@ -232,7 +231,7 @@ class _ModelForDownstream(Protocol):
 
 # A loaded (model, tokenizer) pair. ``Any`` is intentionally absent: the model
 # is bounded by :class:`_ModelForDownstream` and the tokenizer by
-# :class:`TokenizerLike` (re-exported from :mod:`src.downstream_eval`).
+# :class:`TokenizerLike` (re-exported from :mod:`postdyn.downstream_eval`).
 LoadedModel = tuple[_ModelForDownstream, TokenizerLike]
 
 
@@ -246,7 +245,7 @@ class PreflightGateError(RuntimeError):
 
     The CLI treats this as a hard, non-recoverable failure: no model work
     runs until the report is (re)generated by
-    ``experiments/validate_rl_zero_downstream.py``.
+    ``scripts/validate_rl_zero_downstream.py``.
     """
 
 
@@ -305,7 +304,7 @@ def load_model_and_tokenizer(model_key: str, revision: str) -> LoadedModel:
 
     The model and tokenizer are loaded from the **same repo at the same
     revision** so a checkpoint and its tokenizer cannot drift apart.
-    Mirrors the load pattern in :mod:`src.concept_dynamics` (bfloat16,
+    Mirrors the load pattern in :mod:`postdyn.concept_dynamics` (bfloat16,
     ``device_map="auto"``, ``low_cpu_mem_usage=True``).
     """
     import torch
@@ -877,7 +876,7 @@ def run_downstream_eval(
     When ``rebuild_summaries_only`` is ``True`` (or ``rescore_cached`` is
     ``True``, which implies the rebuild path), no model is loaded: each
     checkpoint's summary is rebuilt from its existing per-item JSON via
-    :func:`src.downstream_eval.rebuild_checkpoint_summary`. The hard preflight
+    :func:`postdyn.downstream_eval.rebuild_checkpoint_summary`. The hard preflight
     gate still runs first. This is the CPU-only path for refreshing summaries
     (e.g. after a scoring-config change) without regenerating completions.
 
@@ -891,7 +890,7 @@ def run_downstream_eval(
         raise PreflightGateError(
             f"preflight report {report_path} is missing or invalid for the "
             f"{len(humaneval_ids)} downstream HumanEval-X ids; regenerate it "
-            f"with experiments/validate_rl_zero_downstream.py"
+            f"with scripts/validate_rl_zero_downstream.py"
         )
 
     results_root.mkdir(parents=True, exist_ok=True)
@@ -1132,7 +1131,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"REFUSE: preflight report {report_path} is missing or invalid.\n"
             "        Regenerate it with:\n"
-            "          uv run python experiments/validate_rl_zero_downstream.py",
+            "          uv run python scripts/validate_rl_zero_downstream.py",
             file=sys.stderr,
         )
         return 1
@@ -1148,7 +1147,7 @@ def main(argv: list[str] | None = None) -> int:
     rescore = bool(args.rescore_cached)
     plain_rebuild = args.rebuild_summaries_only and not rescore
     requires_tools = rescore or (not plain_rebuild and not args.skip_tool_check)
-    from src.humaneval_x_validator import BwrapRunner
+    from postdyn.humaneval_x_validator import BwrapRunner
 
     if requires_tools:
         try:

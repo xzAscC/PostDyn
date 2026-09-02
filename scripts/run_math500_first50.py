@@ -10,11 +10,10 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.config import OLMO3_VARIANTS
-from src.downstream_eval import GreedyGenerator, TokenizerLike
-from src.math500_eval import (
+from postdyn.config import OLMO3_VARIANTS
+from postdyn.downstream_eval import GreedyGenerator, TokenizerLike
+from postdyn.math500_eval import (
     DEFAULT_DTYPE,
     DEFAULT_MAX_NEW_TOKENS,
     DEFAULT_QUANTIZATION,
@@ -26,8 +25,8 @@ if TYPE_CHECKING:
 
 DEFAULT_MODEL_KEY = "olmo3-think-sft"
 DEFAULT_REVISION = "main"
-DEFAULT_DATASET = "datasets/math500.json"
-DEFAULT_OUTPUT = "results/math500_first50"
+DEFAULT_DATASET = "data/math500.json"
+DEFAULT_OUTPUT = "logs/math500_first50"
 THINK_MODEL_KEYS = tuple(
     key for key in OLMO3_VARIANTS if key.startswith("olmo3-think-")
 )

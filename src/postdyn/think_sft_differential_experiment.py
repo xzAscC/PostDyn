@@ -20,7 +20,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.config import (
+from postdyn.config import (
     EXPERIMENT_LAYERS_7B,
     EXPERIMENT_LAYERS_32B,
     MODEL_CHECKPOINTS,
@@ -33,9 +33,9 @@ from src.config import (
     THINK_32B_SFT_REVISIONS,
     ModelConfig,
 )
-from src.dataset_store import PROJECT_ROOT, SHARED_SAMPLE_SEED
-from src.differential_subspace import DEFAULT_TAU
-from src.domain_datasets import DEFAULT_CONCEPT_PAIRS
+from postdyn.dataset_store import PROJECT_ROOT, SHARED_SAMPLE_SEED
+from postdyn.differential_subspace import DEFAULT_TAU
+from postdyn.domain_datasets import DEFAULT_CONCEPT_PAIRS
 
 SCALE_7B: str = "7b"
 SCALE_32B: str = "32b"
@@ -141,9 +141,9 @@ FIXED_POINT_MODEL_KEYS_BY_SCALE: dict[str, dict[str, str]] = {
     SCALE_32B: {},
 }
 
-RESULTS_ROOT: Path = PROJECT_ROOT / "results" / "think_sft_differential_subspace"
+RESULTS_ROOT: Path = PROJECT_ROOT / "logs" / "think_sft_differential_subspace"
 RESULTS_ROOT_QUICK: Path = (
-    PROJECT_ROOT / "results" / "think_sft_differential_subspace_quick"
+    PROJECT_ROOT / "logs" / "think_sft_differential_subspace_quick"
 )
 
 U_SUBDIR: str = "U"
@@ -293,8 +293,8 @@ def root_for_trajectory(
     config = trajectory_config(family, scale, trajectory)
     base = PROJECT_ROOT if project_root is None else Path(project_root)
     if config.root_name == RESULTS_ROOT.name and quick:
-        return base / "results" / RESULTS_ROOT_QUICK.name
-    root = base / "results" / config.root_name
+        return base / "logs" / RESULTS_ROOT_QUICK.name
+    root = base / "logs" / config.root_name
     return Path(f"{root}_quick") if quick else root
 
 

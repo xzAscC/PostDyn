@@ -1,4 +1,4 @@
-"""Tests for src.humaneval_x_validator.py (TDD, failing-first).
+"""Tests for postdyn.humaneval_x_validator.py (TDD, failing-first).
 
 Covers:
   - Official CodeGeeX assembly (Python + C++) byte-exactly
@@ -28,8 +28,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src import humaneval_x_validator as hv
-from src.humaneval_x_validator import (
+from postdyn import humaneval_x_validator as hv
+from postdyn.humaneval_x_validator import (
     BWRAP_PATH,
     CPP_INCLUDES,
     CPP_OPENSSL_TASK_ID,
@@ -66,7 +66,7 @@ from src.humaneval_x_validator import (
     validate_pairs_by_ids,
     write_report_atomically,
 )
-from src.contrastive_datasets import HUMANEVAL_X_DATASET, HUMANEVAL_X_REVISION
+from postdyn.contrastive_datasets import HUMANEVAL_X_DATASET, HUMANEVAL_X_REVISION
 
 
 # =============================================================================
@@ -989,7 +989,7 @@ class TestLoadHumanevalXPairsByIds:
         # The downstream manifest pins 50 ids; the first three are
         # ``[1, 5, 6]``. This guards the contract that this loader is
         # the right primitive for ``shared_item_ids.json`` consumers.
-        from src.contrastive_datasets import humaneval_x_shared_ids
+        from postdyn.contrastive_datasets import humaneval_x_shared_ids
 
         pinned = humaneval_x_shared_ids()
         if not pinned:
@@ -1251,7 +1251,7 @@ class TestNoRegressionValidateFirstNPairs:
 
 class TestRunnerPreflightWiring:
     def test_skip_preflight_flag_is_not_supported(self):
-        import experiments.run_concept_dynamics as rcd
+        import scripts.run_concept_dynamics as rcd
 
         with pytest.raises(SystemExit) as exc_info:
             rcd.parse_args(["--skip-humaneval-preflight"])
@@ -1260,7 +1260,7 @@ class TestRunnerPreflightWiring:
     def test_main_calls_preflight_when_python_vs_cpp_selected(
         self, monkeypatch, capsys
     ):
-        import experiments.run_concept_dynamics as rcd
+        import scripts.run_concept_dynamics as rcd
 
         calls: list[tuple[str, int]] = []
 
@@ -1299,7 +1299,7 @@ class TestRunnerPreflightWiring:
         assert "Extraction complete: 1 OK, 0 errors" in capsys.readouterr().out
 
     def test_main_skips_preflight_when_python_vs_cpp_not_selected(self, monkeypatch):
-        import experiments.run_concept_dynamics as rcd
+        import scripts.run_concept_dynamics as rcd
 
         calls: list[tuple[str, int]] = []
 
@@ -1334,7 +1334,7 @@ class TestRunnerPreflightWiring:
         assert calls == []
 
     def test_main_exits_when_preflight_fails(self, monkeypatch, capsys):
-        import experiments.run_concept_dynamics as rcd
+        import scripts.run_concept_dynamics as rcd
 
         def raising_preflight(report_path: str, n_samples: int) -> None:
             raise ValueError("stale report")

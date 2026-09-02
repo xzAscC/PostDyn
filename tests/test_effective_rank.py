@@ -5,7 +5,7 @@ import torch
 import numpy as np
 import pytest
 
-from src.effective_rank import (
+from postdyn.effective_rank import (
     effective_rank,
     effective_rank_ratio,
     svd_entropy_normalized,

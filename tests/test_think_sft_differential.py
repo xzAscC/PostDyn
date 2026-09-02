@@ -9,12 +9,12 @@ from typing import Any, cast
 import pytest
 import torch
 
-from src.differential_subspace import (
+from postdyn.differential_subspace import (
     compute_differential_subspace,
     compute_signed_differential_subspace,
     signed_subspace_stability,
 )
-from src.think_sft_differential_experiment import (
+from postdyn.think_sft_differential_experiment import (
     CONCEPT_PAIRS,
     FAMILY_THINK,
     N_SAMPLES,
@@ -149,7 +149,7 @@ def test_extraction_cannot_claim_other_trajectory_canonical_root(tmp_path):
 
 
 def test_read_only_root_validation_does_not_claim_empty_custom_root(tmp_path):
-    from src.think_sft_differential_experiment import validate_root_ownership
+    from postdyn.think_sft_differential_experiment import validate_root_ownership
 
     config = trajectory_config(trajectory="sft")
     validate_root_ownership(
@@ -202,7 +202,7 @@ def test_experiment_config_32b():
 
 
 def test_memo_grid_and_fixed_point_configuration():
-    from src.think_sft_differential_experiment import CONCEPT_PAIRS
+    from postdyn.think_sft_differential_experiment import CONCEPT_PAIRS
 
     assert len(CONCEPT_PAIRS) == 7
     assert {pair[2] for pair in CONCEPT_PAIRS if pair[0].endswith("wikitext")} == {
@@ -216,7 +216,7 @@ def test_memo_grid_and_fixed_point_configuration():
 
 
 def test_revision_resolution_is_immutable_and_fail_closed():
-    from experiments import run_think_sft_differential_subspace as runner
+    from scripts import run_think_sft_differential_subspace as runner
 
     class Info:
         sha = "A" * 40
@@ -239,7 +239,7 @@ def test_revision_resolution_is_immutable_and_fail_closed():
 
 
 def test_prepare_domain_prompts_uses_streaming_memo_selection(monkeypatch, tmp_path):
-    from experiments import run_think_sft_differential_subspace as runner
+    from scripts import run_think_sft_differential_subspace as runner
 
     calls = []
     monkeypatch.setattr(
@@ -319,7 +319,7 @@ def test_exact_pinned_rlvr_and_32b_sft_trajectories():
 def test_checkpoint_worker_is_private_and_routes_pinned_model_and_revision(
     monkeypatch, tmp_path
 ):
-    from experiments import run_think_sft_differential_subspace as runner
+    from scripts import run_think_sft_differential_subspace as runner
 
     assert not hasattr(runner, "run_checkpoint")
     assert callable(runner._run_checkpoint)
@@ -412,7 +412,7 @@ def test_signed_stability_identical_is_one():
 
 
 def test_32b_refused_without_flag():
-    from experiments.run_think_sft_differential_subspace import validate_scale
+    from scripts.run_think_sft_differential_subspace import validate_scale
 
     with pytest.raises(ValueError, match="32B"):
         validate_scale("32b", allow_32b=False)
@@ -420,7 +420,7 @@ def test_32b_refused_without_flag():
 
 
 def test_32b_fixed_points_are_reported_unavailable_without_substitution(tmp_path):
-    from experiments import run_think_sft_differential_subspace as runner
+    from scripts import run_think_sft_differential_subspace as runner
 
     with pytest.raises(ValueError, match="fixed points are unavailable"):
         runner.main(
@@ -489,7 +489,7 @@ def test_canonical_extraction_protocol_rejects_mutated_or_missing_field(field):
 
 
 def test_32b_invalid_extraction_protocol_rejects_before_loader(monkeypatch, tmp_path):
-    from experiments import run_think_sft_differential_subspace as runner
+    from scripts import run_think_sft_differential_subspace as runner
 
     called = []
     monkeypatch.setattr(runner, "_require_canonical_7b", lambda **kwargs: None)
@@ -536,7 +536,7 @@ def test_32b_invalid_extraction_protocol_rejects_before_loader(monkeypatch, tmp_
 def test_checkpoint_rejects_model_scale_mismatch_before_side_effects(
     monkeypatch, tmp_path, model_key, scale
 ):
-    from experiments import run_think_sft_differential_subspace as runner
+    from scripts import run_think_sft_differential_subspace as runner
 
     calls = []
     monkeypatch.setattr(
@@ -589,8 +589,8 @@ def test_checkpoint_rejects_model_scale_mismatch_before_side_effects(
 def test_direct_32b_checkpoint_preflight_precedes_skip_filesystem_and_loader(
     monkeypatch, tmp_path
 ):
-    from experiments import run_think_sft_differential_subspace as runner
-    from src import cross_pipeline_integrity as integrity
+    from scripts import run_think_sft_differential_subspace as runner
+    from postdyn import cross_pipeline_integrity as integrity
 
     calls = []
 
@@ -639,8 +639,8 @@ def test_direct_32b_checkpoint_preflight_precedes_skip_filesystem_and_loader(
 
 
 def test_32b_allow_flag_selects_nf4_loader_without_gpu_size_gate(monkeypatch):
-    from experiments import run_think_sft_differential_subspace as runner
-    from src import quantized_model_loader
+    from scripts import run_think_sft_differential_subspace as runner
+    from postdyn import quantized_model_loader
 
     assert not hasattr(runner, "load_olmo3_32b_think")
     monkeypatch.setattr(
@@ -653,8 +653,8 @@ def test_32b_allow_flag_selects_nf4_loader_without_gpu_size_gate(monkeypatch):
 
 
 def test_32b_loader_passes_immutable_revision_and_records_diagnostics(monkeypatch):
-    from experiments import run_think_sft_differential_subspace as runner
-    from src.quantized_model_loader import LoadDiagnostics, LoadedQuantizedModel
+    from scripts import run_think_sft_differential_subspace as runner
+    from postdyn.quantized_model_loader import LoadDiagnostics, LoadedQuantizedModel
 
     monkeypatch.setattr(runner, "_require_canonical_7b", lambda **kwargs: None)
     tokenizer = SimpleNamespace(pad_token=None, eos_token="<eos>")
@@ -665,7 +665,7 @@ def test_32b_loader_passes_immutable_revision_and_records_diagnostics(monkeypatc
         calls.append((model_id, revision))
         return LoadedQuantizedModel(object(), tokenizer, diagnostics)
 
-    monkeypatch.setattr("src.quantized_model_loader.load_olmo3_32b_think", fake_load)
+    monkeypatch.setattr("postdyn.quantized_model_loader.load_olmo3_32b_think", fake_load)
     runtime = {}
     load = runner.build_model_loader("32b", runtime_provenance=runtime)
     cfg = runner.model_config("olmo3-32b-think-sft")
@@ -677,8 +677,8 @@ def test_32b_loader_passes_immutable_revision_and_records_diagnostics(monkeypatc
 
 
 def test_32b_loader_preflight_blocks_nf4_import_and_call(monkeypatch, tmp_path):
-    from experiments import run_think_sft_differential_subspace as runner
-    from src import cross_pipeline_integrity as integrity
+    from scripts import run_think_sft_differential_subspace as runner
+    from postdyn import cross_pipeline_integrity as integrity
 
     gate_calls = []
 
@@ -688,7 +688,7 @@ def test_32b_loader_preflight_blocks_nf4_import_and_call(monkeypatch, tmp_path):
 
     monkeypatch.setattr(integrity, "require_canonical_7b_extraction", fail_preflight)
     monkeypatch.setattr(
-        "src.quantized_model_loader.load_olmo3_32b_think",
+        "postdyn.quantized_model_loader.load_olmo3_32b_think",
         lambda *args, **kwargs: pytest.fail(
             "NF4 loader must not be imported or called"
         ),
@@ -705,14 +705,14 @@ def test_32b_loader_preflight_blocks_nf4_import_and_call(monkeypatch, tmp_path):
 
 
 def test_32b_loader_rejects_missing_trajectory_revision(monkeypatch):
-    from experiments import run_think_sft_differential_subspace as runner
+    from scripts import run_think_sft_differential_subspace as runner
 
     monkeypatch.setattr(runner, "_require_canonical_7b", lambda **kwargs: None)
     loader = runner.build_model_loader("32b")
     cfg = runner.model_config("olmo3-32b-think-sft")
     called = []
     monkeypatch.setattr(
-        "src.quantized_model_loader.load_olmo3_32b_think",
+        "postdyn.quantized_model_loader.load_olmo3_32b_think",
         lambda *args, **kwargs: called.append((args, kwargs)),
     )
 
@@ -722,7 +722,7 @@ def test_32b_loader_rejects_missing_trajectory_revision(monkeypatch):
 
 
 def test_32b_setup_signature_binds_loader_provenance():
-    from experiments import run_think_sft_differential_subspace as runner
+    from scripts import run_think_sft_differential_subspace as runner
 
     common: dict[str, Any] = dict(
         pairs=[("math_vs_text", "math", "text")],
@@ -748,7 +748,7 @@ def test_32b_setup_signature_binds_loader_provenance():
 
 
 def test_activation_inputs_follow_dispatched_model_parameter_device():
-    from experiments.run_math_differential_subspace import extract_raw_layer_activations
+    from scripts.run_math_differential_subspace import extract_raw_layer_activations
 
     moved = []
 
@@ -792,7 +792,7 @@ def test_activation_inputs_follow_dispatched_model_parameter_device():
 
 
 def test_think_subspace_complete_rejects_checkpoint_sidecar_mismatch(tmp_path):
-    from experiments import run_think_sft_differential_subspace as runner
+    from scripts import run_think_sft_differential_subspace as runner
 
     sub = compute_signed_differential_subspace(
         torch.randn(4, 3), torch.randn(4, 3), concept="math_vs_text"
@@ -808,7 +808,7 @@ def test_think_subspace_complete_rejects_checkpoint_sidecar_mismatch(tmp_path):
 
 
 def test_save_load_signed_roundtrip(tmp_path):
-    from experiments import run_think_sft_differential_subspace as runner
+    from scripts import run_think_sft_differential_subspace as runner
 
     torch.manual_seed(0)
     sub = compute_signed_differential_subspace(
@@ -857,7 +857,7 @@ def test_save_load_signed_roundtrip(tmp_path):
 
 
 def test_finalize_stability_writes_both_signs(tmp_path):
-    from experiments import run_think_sft_differential_subspace as runner
+    from scripts import run_think_sft_differential_subspace as runner
 
     torch.manual_seed(4)
     sub = compute_signed_differential_subspace(
@@ -889,8 +889,8 @@ def test_finalize_stability_writes_both_signs(tmp_path):
 
 
 def test_residual_to_final_reports_observed_chance_and_excess_only():
-    from experiments import run_think_sft_differential_subspace as runner
-    from src.differential_subspace import residual_to_later_subspace_overlap
+    from scripts import run_think_sft_differential_subspace as runner
+    from postdyn.differential_subspace import residual_to_later_subspace_overlap
 
     sub = compute_signed_differential_subspace(
         torch.randn(12, 5), torch.randn(12, 5), concept="math_vs_wikitext"
@@ -910,7 +910,7 @@ def test_residual_to_final_reports_observed_chance_and_excess_only():
 
 
 def test_reference_robustness_and_histograms_are_per_concept(tmp_path):
-    from experiments import run_think_sft_differential_subspace as runner
+    from scripts import run_think_sft_differential_subspace as runner
 
     concepts = [
         "math_vs_wikitext",
@@ -962,7 +962,7 @@ def test_reference_robustness_and_histograms_are_per_concept(tmp_path):
 
 
 def test_summary_core_metrics_exclude_spectra():
-    from experiments import run_think_sft_differential_subspace as runner
+    from scripts import run_think_sft_differential_subspace as runner
 
     result = runner._summary_core_metrics(
         {

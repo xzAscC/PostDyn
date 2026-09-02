@@ -1,7 +1,7 @@
 """Contrastive dataset loaders for the 47-concept PaCE study.
 
-This module reads materialized JSON files under ``datasets/`` (produced by
-``experiments/download_datasets.py``) and exposes the 47 concept directions
+This module reads materialized JSON files under ``data/`` (produced by
+``scripts/download_datasets.py``) and exposes the 47 concept directions
 from the 20260724 slides:
 
 * **Code (20)**: all 5x4 directed pairs over {python, cpp, java, js, go}
@@ -21,7 +21,7 @@ A small number of **legacy aliases** keep older callers working with the new
 polarity (callers must be aware that the polarity now follows the slides).
 
 If a required JSON is missing the loader raises ``FileNotFoundError`` with a
-clear message pointing the user at ``experiments/download_datasets.py``.
+clear message pointing the user at ``scripts/download_datasets.py``.
 """
 
 from __future__ import annotations
@@ -58,9 +58,9 @@ _WINOGENDER_TEMPLATES_URL: str = (
     f"{WINOGENDER_REVISION}/data/templates.tsv"
 )
 
-# Pinned HumanEval-X JSONL URLs (compat for src.humaneval_x_validator).
+# Pinned HumanEval-X JSONL URLs (compat for postdyn.humaneval_x_validator).
 _HUMANEVAL_X_BASE_URL: str = (
-    f"https://huggingface.co/datasets/{HUMANEVAL_X_DATASET}/resolve/"
+    f"https://huggingface.co/data/{HUMANEVAL_X_DATASET}/resolve/"
     f"{HUMANEVAL_X_REVISION}/data"
 )
 _HUMANEVAL_X_FILES: dict[str, str] = {
@@ -85,7 +85,7 @@ def _humaneval_task_id(example: dict) -> int:
 # Dataset store integration
 # =============================================================================
 
-from src.dataset_store import (  # noqa: E402
+from postdyn.dataset_store import (  # noqa: E402
     BELEBELE_FILE,
     BEYONDX_FILE,
     HUMANEVAL_X_FILE,
@@ -326,7 +326,7 @@ def _require_dataset(file_name: str, concept_hint: str) -> dict:
     if not path.exists():
         raise FileNotFoundError(
             f"Missing dataset {file_name} for concept '{concept_hint}'. "
-            f"Run `uv run python experiments/download_datasets.py "
+            f"Run `uv run python scripts/download_datasets.py "
             f"--only {file_name.removesuffix('.json')}` first."
         )
     return load_dataset_json(file_name)
@@ -522,7 +522,7 @@ def _load_math_pairs_legacy_jsonl(
     if not os.path.exists(MATH_JSONL_PATH):
         raise FileNotFoundError(
             f"Missing dataset {MATH500_FILE}. Run "
-            "`uv run python experiments/download_datasets.py --only math500`."
+            "`uv run python scripts/download_datasets.py --only math500`."
         )
     rows: list[dict] = []
     with open(MATH_JSONL_PATH, encoding="utf-8") as handle:
@@ -931,7 +931,7 @@ def load_python_syntax_pairs(
     """Load aligned ``(positive=syntax_valid, negative=syntax_error)`` pairs.
 
     Reads the diagnostic JSON produced by
-    ``experiments/build_rl_zero_syntax_concept.py``. Each item carries a valid
+    ``scripts/build_rl_zero_syntax_concept.py``. Each item carries a valid
     full Python program under ``positive`` and the same program with one
     deterministic syntax mutation under ``negative``.
     """
@@ -942,7 +942,7 @@ def load_python_syntax_pairs(
         raise FileNotFoundError(
             f"Missing dataset {PYTHON_SYNTAX_PAIRS_FILE} for concept "
             f"'python_valid_vs_syntax_error'. Run "
-            f"`uv run python experiments/build_rl_zero_syntax_concept.py` first."
+            f"`uv run python scripts/build_rl_zero_syntax_concept.py` first."
         )
     data = load_dataset_json(PYTHON_SYNTAX_PAIRS_FILE)
     items = data.get("items", [])

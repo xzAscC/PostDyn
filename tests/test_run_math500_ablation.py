@@ -11,9 +11,9 @@ import weakref
 
 import pytest
 
-import experiments.run_math500_ablation as cli
-from src.config import OLMO3_VARIANTS
-from src.think_sft_differential_experiment import (
+import scripts.run_math500_ablation as cli
+from postdyn.config import OLMO3_VARIANTS
+from postdyn.think_sft_differential_experiment import (
     FAMILY_THINK,
     SCALE_7B,
     THINK_7B_RLVR_REVISIONS,
@@ -32,7 +32,7 @@ def test_rlvr_resolves_all_canonical_checkpoints_and_sha_revisions() -> None:
     assert len(resolved.checkpoints) == 10
     assert dict(resolved.revisions) == dict(THINK_7B_RLVR_REVISIONS)
     assert resolved.artifact_root == root_for_trajectory(FAMILY_THINK, SCALE_7B, "rlvr")
-    assert resolved.result_root == Path("results/math500_ablation_first50_rlvr")
+    assert resolved.result_root == Path("logs/math500_ablation_first50_rlvr")
 
 
 def test_alternate_project_root_scopes_default_artifact_and_result_roots(tmp_path):
@@ -40,10 +40,10 @@ def test_alternate_project_root_scopes_default_artifact_and_result_roots(tmp_pat
     resolved = cli.resolve_run_config(args)
     assert (
         resolved.artifact_root
-        == tmp_path / "results" / "think_7b_rlvr_differential_subspace"
+        == tmp_path / "logs" / "think_7b_rlvr_differential_subspace"
     )
     assert (
-        resolved.result_root == tmp_path / "results" / "math500_ablation_first50_rlvr"
+        resolved.result_root == tmp_path / "logs" / "math500_ablation_first50_rlvr"
     )
 
 
@@ -58,11 +58,11 @@ def test_default_result_roots_are_scale_isolated() -> None:
     }
 
     assert roots_7b == {
-        "sft": Path("results/math500_ablation_first50"),
-        "rlvr": Path("results/math500_ablation_first50_rlvr"),
+        "sft": Path("logs/math500_ablation_first50"),
+        "rlvr": Path("logs/math500_ablation_first50_rlvr"),
     }
     assert roots_32b == {
-        trajectory: Path(f"results/math500_ablation_first50_32b_{trajectory}")
+        trajectory: Path(f"logs/math500_ablation_first50_32b_{trajectory}")
         for trajectory in ("sft_lr_1e-4", "sft_lr_5e-5", "rlvr")
     }
     assert len(set(roots_7b.values()) | set(roots_32b.values())) == 5
@@ -92,7 +92,7 @@ def test_custom_result_root_rejects_normalized_cross_scale_collision() -> None:
             "--trajectory",
             "rlvr",
             "--result-root",
-            "results/other/../math500_ablation_first50_rlvr",
+            "logs/other/../math500_ablation_first50_rlvr",
         ]
     )
 
@@ -116,7 +116,7 @@ def test_artifact_and_result_roots_must_differ(tmp_path: Path) -> None:
 
 def test_project_root_scopes_artifact_collision_checks(tmp_path: Path) -> None:
     project_root = tmp_path / "project"
-    foreign = project_root / "results" / "think_sft_differential_subspace"
+    foreign = project_root / "logs" / "think_sft_differential_subspace"
     args = cli.parse_args(
         [
             "--project-root",
@@ -433,12 +433,12 @@ def test_32b_resolves_canonical_trajectory_layers_and_nf4(trajectory: str) -> No
         FAMILY_THINK, "32b", trajectory
     )
     assert resolved.result_root == Path(
-        f"results/math500_ablation_first50_32b_{trajectory}"
+        f"logs/math500_ablation_first50_32b_{trajectory}"
     )
 
 
 def test_32b_loader_routes_to_nf4_without_moving_dispatched_model(monkeypatch) -> None:
-    import src.quantized_model_loader as loader
+    import postdyn.quantized_model_loader as loader
 
     model = SimpleNamespace()
     called: dict[str, object] = {}
@@ -539,7 +539,7 @@ def test_32b_incomplete_extraction_publication_blocks_basis_loading(
             "--layers",
             "6",
             "--result-root",
-            str(tmp_path / "results"),
+            str(tmp_path / "logs"),
             "--artifact-root",
             str(tmp_path / "artifacts"),
             "--max-new-tokens",
@@ -551,7 +551,7 @@ def test_32b_incomplete_extraction_publication_blocks_basis_loading(
     config = cli.resolve_run_config(args)
     config = replace(config, artifact_root=tmp_path / "artifacts")
     monkeypatch.setattr(
-        "src.think_32b_differential_validator.validate_full_canonical_publication",
+        "postdyn.think_32b_differential_validator.validate_full_canonical_publication",
         lambda *a, **k: SimpleNamespace(ok=False, errors=["incomplete publication"]),
     )
     monkeypatch.setattr(
@@ -559,7 +559,7 @@ def test_32b_incomplete_extraction_publication_blocks_basis_loading(
         "run_checkpoint",
         lambda **kwargs: pytest.fail("checkpoint execution must not occur"),
     )
-    import src.cross_pipeline_integrity as integrity
+    import postdyn.cross_pipeline_integrity as integrity
 
     monkeypatch.setattr(integrity, "require_canonical_7b", lambda **kwargs: None)
 
@@ -573,14 +573,14 @@ def test_direct_32b_checkpoint_validates_publication_before_unlink_or_basis(
         ["--scale", "32b", "--trajectory", "rlvr", "--checkpoints", "step_050"]
     )
     config = cli.resolve_run_config(args)
-    result_root = tmp_path / "results"
+    result_root = tmp_path / "logs"
     summary = result_root / "checkpoints" / "step_050" / "summary.json"
     summary.parent.mkdir(parents=True)
     summary.write_text("old", encoding="utf-8")
     events: list[str] = []
     monkeypatch.setattr(cli, "_require_canonical_7b", lambda **kwargs: None)
     monkeypatch.setattr(
-        "src.think_32b_differential_validator.validate_full_canonical_publication",
+        "postdyn.think_32b_differential_validator.validate_full_canonical_publication",
         lambda *a, **k: (
             events.append("publication")
             or SimpleNamespace(ok=False, errors=["incomplete"])
@@ -637,7 +637,7 @@ def test_direct_32b_loader_gate_precedes_nf4_import(monkeypatch) -> None:
     with pytest.raises(RuntimeError, match="7b incomplete"):
         cli.load_model_for_run("olmo3-32b-think-sft", "sha", "bfloat16", "nf4")
 
-    assert "src.quantized_model_loader" not in imports
+    assert "postdyn.quantized_model_loader" not in imports
 
 
 def test_direct_32b_checkpoint_gate_precedes_publication_and_side_effects(
@@ -647,7 +647,7 @@ def test_direct_32b_checkpoint_gate_precedes_publication_and_side_effects(
         ["--scale", "32b", "--trajectory", "rlvr", "--checkpoints", "step_050"]
     )
     config = cli.resolve_run_config(args)
-    result_root = tmp_path / "results"
+    result_root = tmp_path / "logs"
     summary = result_root / "checkpoints" / "step_050" / "summary.json"
     summary.parent.mkdir(parents=True)
     summary.write_text("old", encoding="utf-8")
@@ -659,7 +659,7 @@ def test_direct_32b_checkpoint_gate_precedes_publication_and_side_effects(
 
     monkeypatch.setattr(cli, "_require_canonical_7b", fail_gate)
     monkeypatch.setattr(
-        "src.think_32b_differential_validator.validate_full_canonical_publication",
+        "postdyn.think_32b_differential_validator.validate_full_canonical_publication",
         lambda *a, **k: events.append("publication"),
     )
     monkeypatch.setattr(
@@ -712,7 +712,7 @@ def test_32b_condition_identity_binds_runtime_and_basis_hashes() -> None:
         revision="sha",
         condition="layer_3_U_pos",
         basis=basis,
-        dataset=Path("datasets/math500.json"),
+        dataset=Path("data/math500.json"),
         max_new_tokens=2048,
         dtype="bfloat16",
         quantization="nf4",
@@ -865,11 +865,11 @@ def test_32b_rebuild_passes_scale_to_model_free_validator(
 
     monkeypatch.setattr(cli, "collect_valid_conditions", fake_collect)
     monkeypatch.setattr(
-        "src.think_32b_differential_validator.validate_full_canonical_publication",
+        "postdyn.think_32b_differential_validator.validate_full_canonical_publication",
         lambda *args, **kwargs: SimpleNamespace(ok=True, errors=[]),
     )
     monkeypatch.setattr(
-        "src.cross_pipeline_integrity.require_canonical_7b",
+        "postdyn.cross_pipeline_integrity.require_canonical_7b",
         lambda **kwargs: None,
     )
     cli.rebuild_aggregate(
@@ -898,10 +898,10 @@ def test_32b_rebuild_preflights_before_artifact_validation_or_side_effects(
         raise RuntimeError("7b incomplete")
 
     monkeypatch.setattr(
-        "src.cross_pipeline_integrity.require_canonical_7b", fail_preflight
+        "postdyn.cross_pipeline_integrity.require_canonical_7b", fail_preflight
     )
     monkeypatch.setattr(
-        "src.think_32b_differential_validator.validate_full_canonical_publication",
+        "postdyn.think_32b_differential_validator.validate_full_canonical_publication",
         lambda *args, **kwargs: events.append("artifact-validation"),
     )
     monkeypatch.setattr(
@@ -915,7 +915,7 @@ def test_32b_rebuild_preflights_before_artifact_validation_or_side_effects(
 
     with pytest.raises(RuntimeError, match="7b incomplete"):
         cli.rebuild_aggregate(
-            tmp_path / "results",
+            tmp_path / "logs",
             trajectory="rlvr",
             model_key="olmo3-32b-think-rlvr",
             scale="32b",
@@ -925,7 +925,7 @@ def test_32b_rebuild_preflights_before_artifact_validation_or_side_effects(
         )
 
     assert events == [f"preflight:{project_root}"]
-    assert not (tmp_path / "results").exists()
+    assert not (tmp_path / "logs").exists()
 
 
 def test_rebuild_aggregate_forwards_explicit_artifact_and_project_roots(
@@ -941,7 +941,7 @@ def test_rebuild_aggregate_forwards_explicit_artifact_and_project_roots(
 
     monkeypatch.setattr(cli, "collect_valid_conditions", fake_collect)
     cli.rebuild_aggregate(
-        tmp_path / "results",
+        tmp_path / "logs",
         trajectory="rlvr",
         model_key="olmo3-think-rlvr",
         artifact_root=artifact_root,
@@ -964,7 +964,7 @@ def test_rebuild_aggregate_forwards_explicit_artifact_and_project_roots(
     )
 
     assert seen["artifact_root"] == (
-        project_root / "results" / "think_7b_rlvr_differential_subspace"
+        project_root / "logs" / "think_7b_rlvr_differential_subspace"
     )
     assert seen["project_root"] == project_root
 

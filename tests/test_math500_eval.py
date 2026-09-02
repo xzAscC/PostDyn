@@ -7,8 +7,8 @@ from typing import Sequence
 
 import pytest
 
-import src.math500_eval as math500_eval
-from src.math500_eval import (
+import postdyn.math500_eval as math500_eval
+from postdyn.math500_eval import (
     MATH500_COUNT,
     evaluate_first50,
     item_filename,
@@ -17,7 +17,7 @@ from src.math500_eval import (
 )
 
 
-DATASET = Path(__file__).parents[1] / "datasets" / "math500.json"
+DATASET = Path(__file__).parents[1] / "data" / "math500.json"
 
 
 class FakeTokenizer:

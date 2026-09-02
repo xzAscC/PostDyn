@@ -16,7 +16,7 @@ import torch
 from safetensors import safe_open
 from huggingface_hub import snapshot_download
 
-from src.config import ModelConfig, categorize_weight, get_layer_index
+from postdyn.config import ModelConfig, categorize_weight, get_layer_index
 
 
 def _is_linear_weight(name: str) -> bool:

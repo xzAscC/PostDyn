@@ -8,10 +8,10 @@ import pytest
 import torch
 from safetensors.torch import save_file
 
-validator = importlib.import_module("src.think_sft_differential_validator")
+validator = importlib.import_module("postdyn.think_sft_differential_validator")
 
 
-SFT_ROOT = Path("results/think_sft_differential_subspace")
+SFT_ROOT = Path("logs/think_sft_differential_subspace")
 
 
 def test_canonical_sft_tree_is_accepted_without_model_loading():

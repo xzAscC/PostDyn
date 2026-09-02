@@ -36,8 +36,8 @@ from typing import Any
 import pytest
 import torch
 
-from src.concept_dynamics import ConceptVector, save_concept_vectors
-from src.sensitivity_analysis import (
+from postdyn.concept_dynamics import ConceptVector, save_concept_vectors
+from postdyn.sensitivity_analysis import (
     ChatTemplateUnavailableError,
     DEFAULT_SENSITIVITY_OUTPUT_ROOT,
     LIMITATIONS,
@@ -69,7 +69,7 @@ from src.sensitivity_analysis import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CLI_PATH = REPO_ROOT / "experiments" / "run_sensitivity_analysis.py"
+CLI_PATH = REPO_ROOT / "scripts" / "run_sensitivity_analysis.py"
 
 
 # =============================================================================
@@ -342,7 +342,7 @@ class TestPathIsolation:
             _assert_path_isolation(str(out), str(chat))
 
     def test_rejects_metrics_segment_anywhere(self, tmp_path: Path) -> None:
-        out = tmp_path / "results" / "metrics" / "sensitivity"
+        out = tmp_path / "logs" / "metrics" / "sensitivity"
         with pytest.raises(ValueError, match="'metrics' segment"):
             _assert_path_isolation(str(out))
 
@@ -615,7 +615,7 @@ class TestChatTargetIsolation:
         assert os.path.abspath(args.chat_target_vectors_dir).startswith(
             os.path.abspath(args.output_dir) + os.sep
         )
-        from src.sensitivity_analysis import _assert_chat_target_isolation
+        from postdyn.sensitivity_analysis import _assert_chat_target_isolation
 
         _assert_chat_target_isolation(
             args.chat_target_vectors_dir,

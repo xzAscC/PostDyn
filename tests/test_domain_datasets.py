@@ -3,7 +3,7 @@ from __future__ import annotations
 import datasets
 import pytest
 
-import src.domain_datasets as domain_datasets
+import postdyn.domain_datasets as domain_datasets
 
 
 def test_symbolic_revision_resolution_fails_closed_on_invalid_hub_sha(

@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, cast
 
-from src.config import (
+from postdyn.config import (
     OLMO3_VARIANTS,
     THINK_32B_RLVR_REVISIONS,
     THINK_32B_SFT_REVISIONS,
@@ -37,7 +37,7 @@ CANONICAL_32B_MODEL_REVISIONS = {
 }
 CANONICAL_32B_MODEL_IDS = frozenset(CANONICAL_32B_MODEL_REVISIONS)
 CANONICAL_NF4_PROVENANCE: dict[str, Any] = {
-    "loader": "src.quantized_model_loader.load_olmo3_32b_think",
+    "loader": "postdyn.quantized_model_loader.load_olmo3_32b_think",
     "quantization": {
         "bits": 4,
         "type": "nf4",

@@ -1,7 +1,7 @@
 """Raw greedy generation + safe downstream scoring for HumanEval-X and MMLU.
 
 This module is the model-side companion to
-``experiments/validate_rl_zero_downstream.py``. Where that CLI validates the
+``scripts/validate_rl_zero_downstream.py``. Where that CLI validates the
 *official canonical solutions* in a bubblewrap sandbox as a hard preflight
 gate, this module scores the *model's own raw completions* against the same
 official tests, plus MMLU multiple-choice accuracy, across the RL-Zero-Code
@@ -22,7 +22,7 @@ Design rules (enforced here and by the tests):
   with the canonical solution. The canonical solution is loaded only as
   provenance and to guard against accidental substitution.
 * **Assembly reuses the official CodeGeeX helpers.** Python programs are
-  assembled with :func:`src.humaneval_x_validator.assemble_python_program`
+  assembled with :func:`postdyn.humaneval_x_validator.assemble_python_program`
   (``prompt + completion + test``) and C++ with
   :func:`assemble_cpp_program`, then executed exclusively through the
   injected/existing :class:`SandboxRunner`. No program code is ever executed
@@ -61,7 +61,7 @@ from typing import (
     cast,
 )
 
-from src.humaneval_x_validator import (
+from postdyn.humaneval_x_validator import (
     OUTCOME_COMPILE_ERROR,
     OUTCOME_ERROR,
     OUTCOME_FAIL,
@@ -75,7 +75,7 @@ from src.humaneval_x_validator import (
     run_python_program,
     sha256_hex,
 )
-from src.rl_zero_experiment import (
+from postdyn.rl_zero_experiment import (
     DOWNSTREAM_HUMANEVAL_X_ITEMS,
     DOWNSTREAM_MMLU_ITEMS,
     validate_downstream_counts,
@@ -726,7 +726,7 @@ def load_downstream_items(
     """Validate the downstream schema and return typed item lists.
 
     Delegates count validation to
-    :func:`src.rl_zero_experiment.validate_downstream_counts` (so the
+    :func:`postdyn.rl_zero_experiment.validate_downstream_counts` (so the
     orchestration reuses the single source of truth for the 50/50 contract),
     then parses every item into a typed record with per-field validation.
     """

@@ -3,13 +3,13 @@
 
 This is a hard gate that runs *before* any model-side pass@1 work on the
 RL-Zero-Code syntax experiment. It validates the exact 50 downstream
-HumanEval-X ids pinned in ``datasets/allenai/Dolci-RL-Zero-Code-7B/downstream.json``
+HumanEval-X ids pinned in ``data/allenai/Dolci-RL-Zero-Code-7B/downstream.json``
 with the existing bubblewrap canonical validator
-(:func:`src.humaneval_x_validator.validate_pairs_by_ids`) and writes an
+(:func:`postdyn.humaneval_x_validator.validate_pairs_by_ids`) and writes an
 atomic JSONL report under the isolated experiment results root.
 
 Why a separate CLI?
-    The legacy ``experiments/validate_humaneval_x.py`` validates the first
+    The legacy ``scripts/validate_humaneval_x.py`` validates the first
     ``N`` aligned task ids (sorted ``0..49``). The downstream set is an
     explicit, disjoint selection (``[1, 5, 6, ..., 161, 163]``) that the
     first-N report does not cover. Downstream pass@1 must only run against
@@ -19,17 +19,17 @@ Idempotency.
     On every invocation the CLI first checks whether an existing report at
     ``--report-path`` already covers the exact ordered downstream id set
     with the pinned revision and all-pass canonical outcomes (delegated to
-    :func:`src.humaneval_x_validator.preflight_validation`, which also
+    :func:`postdyn.humaneval_x_validator.preflight_validation`, which also
     re-derives the SHA-256 of every assembled program from the current
     dataset rows). When that check passes, the CLI skips all sandbox work
     and exits 0. Use ``--force`` to ignore a valid report and regenerate.
 
 Usage:
-    uv run python experiments/validate_rl_zero_downstream.py [OPTIONS]
+    uv run python scripts/validate_rl_zero_downstream.py [OPTIONS]
 
 Options:
     --report-path P    Output JSONL report
-                       (default: results/rl_zero_code_syntax/preflight/
+                       (default: logs/rl_zero_code_syntax/preflight/
                         humaneval-x-downstream.jsonl)
     --timeout SECS     Per-program subprocess timeout in seconds (default: 10)
     --skip-tool-check  Skip the bwrap/g++ presence check (testing only)
@@ -51,11 +51,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-# Make ``src`` importable when run directly via ``python experiments/...``.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Make ``src`` importable when run directly via ``python scripts/...``.
 
-from src.contrastive_datasets import HUMANEVAL_X_DATASET, HUMANEVAL_X_REVISION
-from src.humaneval_x_validator import (
+from postdyn.contrastive_datasets import HUMANEVAL_X_DATASET, HUMANEVAL_X_REVISION
+from postdyn.humaneval_x_validator import (
     BwrapRunner,
     PreflightOptions,
     SandboxRunner,
@@ -66,7 +65,7 @@ from src.humaneval_x_validator import (
     read_validation_report,
     validate_pairs_by_ids,
 )
-from src.rl_zero_experiment import (
+from postdyn.rl_zero_experiment import (
     N_SAMPLES,
     RL_ZERO_CODE_RESULTS_ROOT,
     load_downstream,
@@ -92,7 +91,7 @@ def load_downstream_humaneval_ids(
     """Return the pinned 50 downstream HumanEval-X numeric task ids, in order.
 
     Reads ``humaneval_x.task_ids`` straight from ``downstream.json`` (via
-    :func:`src.rl_zero_experiment.load_downstream`) so the **caller's
+    :func:`postdyn.rl_zero_experiment.load_downstream`) so the **caller's
     manifest order** is preserved end-to-end -- ``validate_pairs_by_ids``
     writes rows in exactly this order, and the idempotency check compares
     against it line-for-line.

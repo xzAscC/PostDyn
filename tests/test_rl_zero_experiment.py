@@ -1,6 +1,6 @@
 """Tests for the RL-Zero-Code syntax experiment configuration module.
 
-Covers the structural invariants encoded in ``src.rl_zero_experiment.self_check``
+Covers the structural invariants encoded in ``postdyn.rl_zero_experiment.self_check``
 plus the downstream-data helpers (50 HumanEval-X items, 50 MMLU questions,
 disjoint target ids) against the real builder artifacts when present.
 
@@ -15,14 +15,14 @@ from typing import Any
 
 import pytest
 
-from src import rl_zero_experiment as exp
-from src.config import (
+from postdyn import rl_zero_experiment as exp
+from postdyn.config import (
     EXPERIMENT_LAYERS_7B,
     MODEL_CHECKPOINTS,
     OLMO3_VARIANTS,
-    RESULTS_DIR,
+    LOGS_DIR,
 )
-from src.rl_zero_experiment import (
+from postdyn.rl_zero_experiment import (
     BASE_CHECKPOINT,
     BASE_MODEL,
     BASE_MODEL_KEY,
@@ -63,7 +63,7 @@ from src.rl_zero_experiment import (
 )
 
 # Shared-registry imports used by the membership tests.
-from src.contrastive_datasets import CONCEPTS as REGISTRY
+from postdyn.contrastive_datasets import CONCEPTS as REGISTRY
 
 
 # =============================================================================
@@ -88,17 +88,17 @@ class TestSelfCheck:
 
 class TestResultsIsolation:
     def test_root_is_under_results_dir(self) -> None:
-        assert RL_ZERO_CODE_RESULTS_ROOT.startswith(RESULTS_DIR)
+        assert RL_ZERO_CODE_RESULTS_ROOT.startswith(LOGS_DIR)
 
     def test_root_is_not_concept_dynamics_multi(self) -> None:
-        assert RL_ZERO_CODE_RESULTS_ROOT != RESULTS_DIR + "/concept_dynamics_multi"
+        assert RL_ZERO_CODE_RESULTS_ROOT != LOGS_DIR + "/concept_dynamics_multi"
 
     def test_root_does_not_collide_with_any_paired_root(self) -> None:
         forbidden = {
             exp.PAIRED_CONCEPT_RESULTS_ROOT,
             exp.PAIRED_CONCEPT_RESULTS_ROOT_QUICK,
-            RESULTS_DIR + "/concept_dynamics",
-            RESULTS_DIR + "/concept_dynamics_paired",
+            LOGS_DIR + "/concept_dynamics",
+            LOGS_DIR + "/concept_dynamics_paired",
         }
         assert RL_ZERO_CODE_RESULTS_ROOT not in forbidden
 
@@ -115,8 +115,8 @@ class TestResultsIsolation:
         assert results_root(quick=quick) == expected
 
     def test_results_root_explicit_override_wins(self) -> None:
-        assert results_root(override="results/custom") == "results/custom"
-        assert results_root(quick=True, override="results/custom") == "results/custom"
+        assert results_root(override="logs/custom") == "logs/custom"
+        assert results_root(quick=True, override="logs/custom") == "logs/custom"
 
     def test_sensitivity_input_root_is_the_paired_run(self) -> None:
         assert exp.SENSITIVITY_INPUT_RESULTS_ROOT == exp.PAIRED_CONCEPT_RESULTS_ROOT
@@ -142,7 +142,7 @@ class TestCheckpointSchedule:
         assert BASE_CHECKPOINT == "main"
 
     def test_rl_checkpoints_reused_from_model_checkpoints(self) -> None:
-        # Must be exactly the src.config schedule -- never re-derived here.
+        # Must be exactly the postdyn.config schedule -- never re-derived here.
         assert RL_CHECKPOINTS == list(MODEL_CHECKPOINTS[TARGET_MODEL_KEY])
 
     def test_ten_rl_checkpoints(self) -> None:
@@ -369,7 +369,7 @@ class TestConceptSpecs:
 def _skip_if_no_artifact(path: Path) -> None:
     if not path.exists():
         pytest.skip(
-            f"{path} not built; run experiments/build_rl_zero_syntax_concept.py"
+            f"{path} not built; run scripts/build_rl_zero_syntax_concept.py"
         )
 
 
@@ -516,7 +516,7 @@ class TestValidateDownstreamOrchestrator:
 
 
 # =============================================================================
-# Consistency with src.config (anti-duplication guard)
+# Consistency with postdyn.config (anti-duplication guard)
 # =============================================================================
 
 

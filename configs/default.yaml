@@ -1,0 +1,30 @@
+# Default experiment configuration for PostDyn.
+# Mirrors the defaults in src/postdyn (config.py, concept_dynamics.py,
+# contrastive_datasets.py). Kept as a declarative reference for runs.
+
+concept_dynamics:
+  # trajectories = OLMO3 trajectory keys (see postdyn.config.OLMO3_VARIANTS)
+  trajectories:
+    - olmo3-think-sft
+    - olmo3-rl-zero-mix
+    - olmo3-rl-zero-math
+    - olmo3-rl-zero-code
+    - olmo3-rl-zero-if
+    - olmo3-rl-zero-general
+  n_samples: 50          # samples per concept per class
+  max_seq_len: 2048      # extraction tokenization limit
+  chat_template: true
+
+quick:
+  n_samples: 5
+  layers: [0, 16]
+
+effective_rank:
+  quick: true
+  fit_range: [10, 100]
+  max_seq_len: 512
+
+io:
+  data: data
+  logs: logs
+  figs: figs

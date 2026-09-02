@@ -1,7 +1,7 @@
 """Focused tests for the RL-Zero-Code Python syntax-validity concept (data-only).
 
 These tests validate the data-only phase deliverables under
-``datasets/allenai/Dolci-RL-Zero-Code-7B/``:
+``data/allenai/Dolci-RL-Zero-Code-7B/``:
 
 * ``python_syntax_pairs.json`` -- 50 paired records for the
   ``python_valid_vs_syntax_error`` concept.
@@ -41,11 +41,11 @@ from typing import Any
 import pytest
 
 # -----------------------------------------------------------------------------
-# Load the builder module from its file path (experiments/ is not a package).
+# Load the builder module from its file path (scripts/ is not a package).
 # -----------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BUILDER_PATH = REPO_ROOT / "experiments" / "build_rl_zero_syntax_concept.py"
+BUILDER_PATH = REPO_ROOT / "scripts" / "build_rl_zero_syntax_concept.py"
 
 _spec = importlib.util.spec_from_file_location(
     "build_rl_zero_syntax_concept", BUILDER_PATH
@@ -55,7 +55,7 @@ builder = importlib.util.module_from_spec(_spec)
 sys.modules["build_rl_zero_syntax_concept"] = builder
 _spec.loader.exec_module(builder)
 
-CONCEPT_DIR = REPO_ROOT / "datasets" / "allenai" / "Dolci-RL-Zero-Code-7B"
+CONCEPT_DIR = REPO_ROOT / "data" / "allenai" / "Dolci-RL-Zero-Code-7B"
 PAIRS_PATH = CONCEPT_DIR / "python_syntax_pairs.json"
 DOWNSTREAM_PATH = CONCEPT_DIR / "downstream.json"
 
@@ -178,7 +178,7 @@ def _reference_negative(positive: str, kind: str) -> str | None:
 def _require_pairs() -> dict[str, Any]:
     if not PAIRS_PATH.exists():
         pytest.skip(
-            f"{PAIRS_PATH} not built; run experiments/build_rl_zero_syntax_concept.py"
+            f"{PAIRS_PATH} not built; run scripts/build_rl_zero_syntax_concept.py"
         )
     return json.loads(PAIRS_PATH.read_text(encoding="utf-8"))
 
@@ -186,7 +186,7 @@ def _require_pairs() -> dict[str, Any]:
 def _require_downstream() -> dict[str, Any]:
     if not DOWNSTREAM_PATH.exists():
         pytest.skip(
-            f"{DOWNSTREAM_PATH} not built; run experiments/build_rl_zero_syntax_concept.py"
+            f"{DOWNSTREAM_PATH} not built; run scripts/build_rl_zero_syntax_concept.py"
         )
     return json.loads(DOWNSTREAM_PATH.read_text(encoding="utf-8"))
 
@@ -464,7 +464,7 @@ class TestDownstreamHumanEvalX:
     def test_downstream_ids_match_pinned(self) -> None:
         data = _require_downstream()
         shared = json.loads(
-            (REPO_ROOT / "datasets" / "shared_item_ids.json").read_text("utf-8")
+            (REPO_ROOT / "data" / "shared_item_ids.json").read_text("utf-8")
         )
         pinned = shared["humaneval_x_task_ids"]
         assert data["humaneval_x"]["task_ids"] == pinned

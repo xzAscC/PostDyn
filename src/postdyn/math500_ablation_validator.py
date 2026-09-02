@@ -8,9 +8,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
 
-from src.config import EXPERIMENT_LAYERS_7B, OLMO3_VARIANTS
-from src.math500_eval import MATH500_COUNT, load_authoritative_summary
-from src.think_sft_differential_experiment import (
+from postdyn.config import EXPERIMENT_LAYERS_7B, OLMO3_VARIANTS
+from postdyn.math500_eval import MATH500_COUNT, load_authoritative_summary
+from postdyn.think_sft_differential_experiment import (
     FAMILY_THINK,
     SCALE_32B,
     SCALE_7B,
@@ -20,7 +20,7 @@ from src.think_sft_differential_experiment import (
     trajectory_config,
     validate_extraction_protocol,
 )
-from src.quantized_model_loader import (
+from postdyn.quantized_model_loader import (
     CANONICAL_NF4_PROVENANCE,
     validate_nf4_load_diagnostics,
 )
@@ -411,7 +411,7 @@ def validate_result_tree(
 ) -> ValidationReport:
     report = ValidationReport(str(root), trajectory)
     if scale == SCALE_32B:
-        from src.think_32b_differential_validator import (
+        from postdyn.think_32b_differential_validator import (
             validate_full_canonical_publication,
         )
 

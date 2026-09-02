@@ -27,7 +27,7 @@ validated before the file is written.
 
 Usage::
 
-    uv run python experiments/run_rl_zero_syntax_metrics.py [OPTIONS]
+    uv run python scripts/run_rl_zero_syntax_metrics.py [OPTIONS]
 
 Options:
     --output PATH                 Output metrics.json path
@@ -56,25 +56,24 @@ from typing import Any
 import numpy as np
 import torch
 
-# Make ``src`` importable when run directly via ``python experiments/...``.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Make ``src`` importable when run directly via ``python scripts/...``.
 
-from src.concept_dynamics import (  # noqa: E402
+from postdyn.concept_dynamics import (  # noqa: E402
     EXPECTED_D_MODEL,
     ConceptVector,
     load_concept_sidecar,
     load_concept_vectors,
     validate_concept_sidecar,
 )
-from src.linear_probe import LinearProbeResult, linear_probe_score  # noqa: E402
-from src.probe_activations import (  # noqa: E402
+from postdyn.linear_probe import LinearProbeResult, linear_probe_score  # noqa: E402
+from postdyn.probe_activations import (  # noqa: E402
     PROTOCOL,
     default_activations_root,
     load_layer_activations,
     load_records_json,
     validate_sidecar_record_identity,
 )
-from src.rl_zero_experiment import (  # noqa: E402
+from postdyn.rl_zero_experiment import (  # noqa: E402
     BASE_CHECKPOINT,
     BASE_MODEL,
     BASE_MODEL_KEY,
@@ -120,11 +119,11 @@ SOURCE_MODELS: dict[str, str] = {
 
 #: Pinned HumanEval-X dataset revision (git SHA of ``zai-org/humaneval-x``)
 #: from which the four non-python code probe classes are materialized. Mirrors
-#: the pin in ``experiments/download_datasets.py``; recorded in metadata and
+#: the pin in ``scripts/download_datasets.py``; recorded in metadata and
 #: validated exactly so regenerated data cannot silently shift the probe texts.
 HUMANEVAL_X_REVISION: str = "62c78627f3072a1454fa0cb0184737cafe5e4198"
 
-#: Default linear-probe parameters (matching ``src.linear_probe`` defaults).
+#: Default linear-probe parameters (matching ``postdyn.linear_probe`` defaults).
 DEFAULT_N_FOLDS: int = 5
 DEFAULT_ALPHA: float = 1.0
 DEFAULT_SEED: int = 42
@@ -467,7 +466,7 @@ def metric_m4_eight_class_grouped_logistic_separability(
     For each ``(checkpoint, layer)`` the stored ``400 x d`` raw-text probe
     activations are loaded together with their labels and group IDs, and a
     leakage-safe grouped one-vs-rest logistic probe is run via
-    :func:`src.linear_probe.linear_probe_score`.  Balanced accuracy and
+    :func:`postdyn.linear_probe.linear_probe_score`.  Balanced accuracy and
     AUROC are reported for all eight classes.
 
     Args:
@@ -597,7 +596,7 @@ def load_concept_directions_from_disk(
         raise ValueError(
             f"concept vectors at {model_name}/{checkpoint}/layer_{layer_idx} "
             "failed v1 provenance validation; run "
-            "experiments/migrate_concept_sidecars.py or re-extract"
+            "scripts/migrate_concept_sidecars.py or re-extract"
         )
     vectors = load_concept_vectors(
         concept_vectors_root, model_name, layer_idx, checkpoint
@@ -621,7 +620,7 @@ def load_all_concept_directions(
     sidecars.
     """
     if expected_concept_sources is None:
-        from src.contrastive_datasets import load_contrastive_texts
+        from postdyn.contrastive_datasets import load_contrastive_texts
 
         expected_concept_sources = {
             name: load_contrastive_texts(name, 50) for name in concepts
@@ -666,7 +665,7 @@ def make_activation_loader(
 
     The returned callable takes ``(checkpoint, layer)`` and reads the
     corresponding safetensors + JSON sidecar via
-    :func:`src.probe_activations.load_layer_activations`.     The global
+    :func:`postdyn.probe_activations.load_layer_activations`.     The global
     ``records.json`` is loaded **once** (as typed ProbeRecord objects) and
     every layer's sidecar is bound to it via
     :func:`validate_sidecar_record_identity`, so a stored activation is only

@@ -20,14 +20,14 @@ from typing import Optional
 import torch
 from tqdm import tqdm
 
-from src.config import (
+from postdyn.config import (
     ModelConfig, PYTHIA_CONFIGS, PYTHIA_DEDUPED_CONFIGS,
     PYTHIA_CHECKPOINTS, PYTHIA_CHECKPOINTS_QUICK,
     OLMO3_VARIANTS, OLMO3_PRETRAIN_CHECKPOINTS,
-    RESULTS_DIR, FIGURES_DIR,
+    LOGS_DIR, FIGS_DIR,
 )
-from src.effective_rank import compute_all_metrics, RankMetrics
-from src.model_loader import (
+from postdyn.effective_rank import compute_all_metrics, RankMetrics
+from postdyn.model_loader import (
     iter_weight_tensors, collect_all_weight_names,
     group_names_by_type, group_names_by_layer,
 )
@@ -35,12 +35,12 @@ import gc
 
 
 def _ensure_dirs():
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-    os.makedirs(FIGURES_DIR, exist_ok=True)
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    os.makedirs(FIGS_DIR, exist_ok=True)
 
 
 def _save_results(data: dict, filename: str):
-    path = os.path.join(RESULTS_DIR, filename)
+    path = os.path.join(LOGS_DIR, filename)
     with open(path, "w") as f:
         json.dump(data, f, indent=2, default=str)
     print(f"Saved results to {path}")
@@ -217,7 +217,7 @@ def analyze_cross_model_size(
     print(f"{'#'*60}")
     
     # Try to load existing partial results
-    output_path = os.path.join(RESULTS_DIR, "cross_model_size.json")
+    output_path = os.path.join(LOGS_DIR, "cross_model_size.json")
     results = {}
     if os.path.exists(output_path):
         try:
@@ -287,7 +287,7 @@ def analyze_training_dynamics(
     print(f"# Checkpoints: {len(checkpoints)}")
     print(f"{'#'*60}")
     
-    output_path = os.path.join(RESULTS_DIR, f"training_dynamics_{model_name}.json")
+    output_path = os.path.join(LOGS_DIR, f"training_dynamics_{model_name}.json")
     results = {}
     if os.path.exists(output_path):
         try:
@@ -353,9 +353,9 @@ def analyze_training_stages(
     print(f"# Analysis 3: Training Stages (OLMo-3)")
     print(f"{'#'*60}")
     
-    from src.config import OLMO3_BASE_CONFIG
+    from postdyn.config import OLMO3_BASE_CONFIG
     
-    output_path = os.path.join(RESULTS_DIR, "training_stages.json")
+    output_path = os.path.join(LOGS_DIR, "training_stages.json")
     results = {}
     successful = 0
     

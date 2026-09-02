@@ -27,7 +27,7 @@ a fixed SciPy/Python version.
 
 Usage::
 
-    uv run python experiments/build_analysis_summary.py [OPTIONS]
+    uv run python scripts/build_analysis_summary.py [OPTIONS]
 
 Options:
     --metrics PATH           Override metrics.json path
@@ -48,10 +48,9 @@ import os
 import sys
 from pathlib import Path
 
-# Make ``src`` importable when run directly via ``python experiments/...``.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Make ``src`` importable when run directly via ``python scripts/...``.
 
-from src.analysis_summary import (  # noqa: E402
+from postdyn.analysis_summary import (  # noqa: E402
     DEFAULT_AGGREGATE_PATH,
     DEFAULT_METRICS_PATH,
     DEFAULT_SUMMARY_PATH,

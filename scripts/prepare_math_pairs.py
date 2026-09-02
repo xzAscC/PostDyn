@@ -6,17 +6,15 @@ import argparse
 import importlib
 import os
 import re
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
 if TYPE_CHECKING:
     import torch
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.config import MODEL_CHECKPOINTS, OLMO3_VARIANTS
-from src.math_pairs import (
+from postdyn.config import MODEL_CHECKPOINTS, OLMO3_VARIANTS
+from postdyn.math_pairs import (
     GenerateFn,
     GenerationMode,
     ProblemRecord,

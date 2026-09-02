@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src import cross_pipeline_integrity as integrity
+from postdyn import cross_pipeline_integrity as integrity
 
 
 def test_preflight_checks_both_extraction_and_math_7b_roots(monkeypatch) -> None:
@@ -59,8 +59,8 @@ def test_preflight_scopes_extraction_roots_to_alternate_project(monkeypatch) -> 
 
     integrity.preflight_canonical_7b(project_root=Path("/tmp/alternate"))
 
-    assert all(str(root).startswith("/tmp/alternate/results/") for root in extraction)
-    assert all(str(root).startswith("/tmp/alternate/results/") for root, _, _ in math)
+    assert all(str(root).startswith("/tmp/alternate/logs/") for root in extraction)
+    assert all(str(root).startswith("/tmp/alternate/logs/") for root, _, _ in math)
     assert [artifact_root for _, artifact_root, _ in math] == extraction
     assert all(project_root == Path("/tmp/alternate") for _, _, project_root in math)
 
@@ -85,7 +85,7 @@ def test_extraction_preflight_ignores_failing_math_validator(
 
     monkeypatch.setattr(integrity, "validate_math", fail_math)
 
-    from experiments import run_think_sft_differential_subspace as runner
+    from scripts import run_think_sft_differential_subspace as runner
 
     assert (
         runner.main(
@@ -104,7 +104,7 @@ def test_extraction_preflight_ignores_failing_math_validator(
         == 0
     )
     assert all(
-        str(root).startswith(str(tmp_path / "results")) for root in extraction_roots
+        str(root).startswith(str(tmp_path / "logs")) for root in extraction_roots
     )
 
 
@@ -122,7 +122,7 @@ def test_extraction_preflight_blocks_before_loader_when_extraction_is_incomplete
         lambda *args, **kwargs: pytest.fail("MATH validation must not run"),
     )
 
-    from experiments import run_think_sft_differential_subspace as runner
+    from scripts import run_think_sft_differential_subspace as runner
 
     monkeypatch.setattr(
         runner,
@@ -152,7 +152,7 @@ def test_extraction_preflight_blocks_before_loader_when_extraction_is_incomplete
 def test_validator_accepts_alternate_project_root_for_default_artifacts(
     monkeypatch, tmp_path
 ):
-    from src import math500_ablation_validator as validator
+    from postdyn import math500_ablation_validator as validator
 
     monkeypatch.setattr(
         validator, "collect_valid_conditions", lambda *args, **kwargs: ([], [])
@@ -172,7 +172,7 @@ def test_validator_accepts_alternate_project_root_for_default_artifacts(
 
 
 def test_preflight_failure_blocks_extraction_loader(monkeypatch) -> None:
-    from experiments import run_think_sft_differential_subspace as runner
+    from scripts import run_think_sft_differential_subspace as runner
 
     loader_called = False
     preflight_roots: list[Path | None] = []
@@ -211,7 +211,7 @@ def test_preflight_failure_blocks_extraction_loader(monkeypatch) -> None:
 def test_extraction_preflight_failure_leaves_custom_output_absent(
     monkeypatch, tmp_path
 ) -> None:
-    from experiments import run_think_sft_differential_subspace as runner
+    from scripts import run_think_sft_differential_subspace as runner
 
     monkeypatch.setattr(
         integrity,
@@ -239,7 +239,7 @@ def test_extraction_preflight_failure_leaves_custom_output_absent(
 
 
 def test_preflight_failure_blocks_math_loader(monkeypatch) -> None:
-    from experiments import run_math500_ablation as runner
+    from scripts import run_math500_ablation as runner
 
     loader_called = False
 
@@ -262,7 +262,7 @@ def test_preflight_failure_blocks_math_loader(monkeypatch) -> None:
 def test_32b_preflight_failure_leaves_custom_roots_absent(
     monkeypatch, tmp_path
 ) -> None:
-    from experiments import run_math500_ablation as runner
+    from scripts import run_math500_ablation as runner
 
     monkeypatch.setattr(
         integrity,
@@ -272,7 +272,7 @@ def test_32b_preflight_failure_leaves_custom_roots_absent(
         ),
     )
     artifact_root = tmp_path / "artifacts"
-    result_root = tmp_path / "results"
+    result_root = tmp_path / "logs"
     args = runner.parse_args(
         [
             "--scale",

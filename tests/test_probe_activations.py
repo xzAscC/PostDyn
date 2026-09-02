@@ -20,7 +20,7 @@ import os
 import pytest
 import torch
 
-from src.probe_activations import (
+from postdyn.probe_activations import (
     CODE_PROBE_CLASSES,
     GENDER_PROBE_CLASSES,
     PROBE_CLASSES,
@@ -45,7 +45,7 @@ from src.probe_activations import (
     validate_probe_records,
     validate_sidecar_record_identity,
 )
-from src.rl_zero_experiment import (
+from postdyn.rl_zero_experiment import (
     N_SAMPLES,
     RL_ZERO_CODE_RESULTS_ROOT,
     PROBE_CLASSES as EXP_PROBE_CLASSES,
@@ -205,7 +205,7 @@ class TestCodeGroupAlignment:
 
     def test_target_ids_match_python_syntax_pairs(self, target_ids):
         """The code classes must use the SAME IDs as python_syntax_pairs.json."""
-        from src.dataset_store import load_dataset_json, PYTHON_SYNTAX_PAIRS_FILE
+        from postdyn.dataset_store import load_dataset_json, PYTHON_SYNTAX_PAIRS_FILE
 
         data = load_dataset_json(PYTHON_SYNTAX_PAIRS_FILE)
         pairs_ids = sorted(int(i) for i in data["selection"]["target_ids"])
@@ -213,7 +213,7 @@ class TestCodeGroupAlignment:
 
     def test_non_python_code_loaded_from_humaneval_x(self, all_records, target_ids):
         """cpp/js/java/go texts must match humaneval_x.json for the task ID."""
-        from src.dataset_store import load_dataset_json, HUMANEVAL_X_FILE
+        from postdyn.dataset_store import load_dataset_json, HUMANEVAL_X_FILE
 
         hx = load_dataset_json(HUMANEVAL_X_FILE)
         hx_by_lang: dict[str, dict[int, str]] = {}
@@ -242,7 +242,7 @@ class TestCodeGroupAlignment:
 
     def test_python_valid_and_error_from_pairs_file(self, all_records, target_ids):
         """python_valid / python_syntax_error texts must come from the pairs file."""
-        from src.dataset_store import load_dataset_json, PYTHON_SYNTAX_PAIRS_FILE
+        from postdyn.dataset_store import load_dataset_json, PYTHON_SYNTAX_PAIRS_FILE
 
         data = load_dataset_json(PYTHON_SYNTAX_PAIRS_FILE)
         pairs_by_id: dict[int, dict[str, str]] = {}
@@ -534,7 +534,7 @@ class TestMockExtraction:
         """Verify extract_probe_activations always uses use_chat_template=False."""
         captured: dict = {}
 
-        from src import probe_activations as pa_mod
+        from postdyn import probe_activations as pa_mod
 
         original = pa_mod.extract_layer_activations
 
@@ -661,7 +661,7 @@ class TestRunExtractionResume:
         # Spy: extraction should not be called.
         called: list[bool] = []
 
-        from src import probe_activations as pa_mod
+        from postdyn import probe_activations as pa_mod
 
         original = pa_mod.extract_probe_activations
 
@@ -1793,7 +1793,7 @@ class TestAtomicPublicationOrder:
     def test_tensor_published_before_sidecar(self, tmp_path, monkeypatch):
         """Interpose between the two os.replace calls and assert the tensor is
         already on disk when the sidecar lands."""
-        import src.probe_activations as pa
+        import postdyn.probe_activations as pa
 
         events: list[str] = []
         real_replace = os.replace
@@ -1817,7 +1817,7 @@ class TestAtomicPublicationOrder:
 
     def test_failure_cleans_up_temp_files(self, tmp_path, monkeypatch):
         """If safetensors write fails, no temp files are left behind."""
-        import src.probe_activations as pa
+        import postdyn.probe_activations as pa
 
         from safetensors.torch import save_file as _real_save
 
@@ -1857,13 +1857,13 @@ class TestUnsafeMigrationRemoved:
         """These tests target provenance, not the 8-class balance, so they use
         lightweight _fake_records. run_extraction_with_resume validates the
         full 400-record structure; bypass that here to keep the tests focused."""
-        import src.probe_activations as pa
+        import postdyn.probe_activations as pa
 
         monkeypatch.setattr(pa, "validate_probe_records", lambda recs: None)
 
     def test_migrate_extraction_metadata_symbol_removed(self):
         """The unsafe migration function is no longer exported."""
-        import src.probe_activations as pa
+        import postdyn.probe_activations as pa
 
         assert not hasattr(pa, "migrate_extraction_metadata")
         assert "migrate_extraction_metadata" not in pa.__all__

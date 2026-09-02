@@ -3,16 +3,16 @@
 This module centralizes every knob of the 11-checkpoint syntax experiment so
 that extraction, sensitivity, and downstream-evaluation code share one source
 of truth. It is **data/config only**: it runs no model, writes no results,
-mutates no checkpoint config, and never touches ``src/config.py``.
+mutates no checkpoint config, and never touches ``postdyn/config.py``.
 
 What lives here
 ---------------
 * **Isolated results root** -- ``RL_ZERO_CODE_RESULTS_ROOT`` is deliberately
-  distinct from ``results/concept_dynamics_multi`` (the paired-concept run).
+  distinct from ``logs/concept_dynamics_multi`` (the paired-concept run).
 * **Eleven checkpoints** -- ``olmo3-base`` revision ``"main"`` plus the ten
   uniformly-spaced RL-Zero-Code steps, reused verbatim from
-  ``src.config.MODEL_CHECKPOINTS`` (never re-derived here).
-* **Ten layers** -- ``src.config.EXPERIMENT_LAYERS_7B``, reused verbatim.
+  ``postdyn.config.MODEL_CHECKPOINTS`` (never re-derived here).
+* **Ten layers** -- ``postdyn.config.EXPERIMENT_LAYERS_7B``, reused verbatim.
 * **Six concepts** -- one target (``python_valid_vs_syntax_error``) + four
   related code-language concepts + one gender control.
 * **Eight probe classes** -- ``python_valid``, ``python_syntax_error``,
@@ -26,7 +26,7 @@ What lives here
   HumanEval-X items and confirm target ids are disjoint.
 
 Model facts (architecture, layer count, revisions, checkpoint schedules) are
-imported from :mod:`src.config`; this module never duplicates them.
+imported from :mod:`postdyn.config`; this module never duplicates them.
 """
 
 from __future__ import annotations
@@ -37,14 +37,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from src.config import (
+from postdyn.config import (
     EXPERIMENT_LAYERS_7B,
     MODEL_CHECKPOINTS,
     OLMO3_VARIANTS,
     PROJECT_ROOT,
-    RESULTS_DIR,
+    LOGS_DIR,
 )
-from src.config import ModelConfig  # re-exported type only
+from postdyn.config import ModelConfig  # re-exported type only
 
 # =============================================================================
 # Results isolation
@@ -52,7 +52,7 @@ from src.config import ModelConfig  # re-exported type only
 
 #: Distinct results root for this experiment. Must NEVER equal any paired-concept
 #: results directory -- the syntax experiment is fully isolated.
-RL_ZERO_CODE_RESULTS_ROOT: str = os.path.join(RESULTS_DIR, "rl_zero_code_syntax")
+RL_ZERO_CODE_RESULTS_ROOT: str = os.path.join(LOGS_DIR, "rl_zero_code_syntax")
 
 #: Quick / smoke variant of the results root.
 RL_ZERO_CODE_RESULTS_ROOT_QUICK: str = RL_ZERO_CODE_RESULTS_ROOT + "_quick"
@@ -60,15 +60,15 @@ RL_ZERO_CODE_RESULTS_ROOT_QUICK: str = RL_ZERO_CODE_RESULTS_ROOT + "_quick"
 #: The existing paired-concept results directories. These are **read-only
 #: sensitivity inputs only** (their chat-template vectors feed the sensitivity
 #: sweep); this experiment never writes into them.
-PAIRED_CONCEPT_RESULTS_ROOT: str = os.path.join(RESULTS_DIR, "concept_dynamics_multi")
+PAIRED_CONCEPT_RESULTS_ROOT: str = os.path.join(LOGS_DIR, "concept_dynamics_multi")
 PAIRED_CONCEPT_RESULTS_ROOT_QUICK: str = os.path.join(
-    RESULTS_DIR, "concept_dynamics_multi_quick"
+    LOGS_DIR, "concept_dynamics_multi_quick"
 )
 #: Legacy directory names that the syntax root must also avoid colliding with.
 _PAIRED_CONCEPT_LEGACY_ROOTS: frozenset[str] = frozenset(
     {
-        os.path.join(RESULTS_DIR, "concept_dynamics"),
-        os.path.join(RESULTS_DIR, "concept_dynamics_paired"),
+        os.path.join(LOGS_DIR, "concept_dynamics"),
+        os.path.join(LOGS_DIR, "concept_dynamics_paired"),
     }
 )
 
@@ -86,7 +86,7 @@ def results_root(*, quick: bool = False, override: str | None = None) -> str:
 
 
 # =============================================================================
-# Model & checkpoint schedule (reused from src.config -- not duplicated)
+# Model & checkpoint schedule (reused from postdyn.config -- not duplicated)
 # =============================================================================
 
 #: Shared starting point of every OLMo-3 post-training branch.
@@ -102,7 +102,7 @@ TARGET_MODEL: ModelConfig = OLMO3_VARIANTS[TARGET_MODEL_KEY]
 BASE_CHECKPOINT: str = "main"
 
 #: Ten uniformly-spaced RL-Zero-Code checkpoints, reused verbatim from
-#: ``src.config.MODEL_CHECKPOINTS``. These are the ``step_100 .. step_2900``
+#: ``postdyn.config.MODEL_CHECKPOINTS``. These are the ``step_100 .. step_2900``
 #: branch names selected by ``select_uniform_checkpoints``.
 RL_CHECKPOINTS: list[str] = list(MODEL_CHECKPOINTS[TARGET_MODEL_KEY])
 
@@ -122,11 +122,11 @@ def is_rl_checkpoint(checkpoint: str) -> bool:
 
 
 # =============================================================================
-# Layers (reused verbatim from src.config -- never re-derived)
+# Layers (reused verbatim from postdyn.config -- never re-derived)
 # =============================================================================
 
 #: Ten slide-formula layer indices for OLMo-3 7B (32 transformer blocks).
-#: Identical object content to ``src.config.EXPERIMENT_LAYERS_7B``; copied
+#: Identical object content to ``postdyn.config.EXPERIMENT_LAYERS_7B``; copied
 #: into a fresh list so callers cannot mutate the shared constant.
 EXPERIMENT_LAYERS: list[int] = list(EXPERIMENT_LAYERS_7B)
 
@@ -137,7 +137,7 @@ EXPERIMENT_LAYERS: list[int] = list(EXPERIMENT_LAYERS_7B)
 
 #: Paired records per concept class. Matches the data-only builder's 50
 #: ``python_syntax_pairs.json`` records and ``DEFAULT_N_SAMPLES`` in
-#: :mod:`src.contrastive_datasets`.
+#: :mod:`postdyn.contrastive_datasets`.
 N_SAMPLES: int = 50
 
 #: Three RL checkpoints reserved for the sensitivity sweep. These are the
@@ -180,7 +180,7 @@ PROBE_CLASSES: tuple[str, ...] = (
 
 #: The target syntax-validity concept (domain ``"syntax"`` in the shared
 #: registry; materialized by the data-only builder under
-#: ``datasets/allenai/Dolci-RL-Zero-Code-7B``).
+#: ``data/allenai/Dolci-RL-Zero-Code-7B``).
 TARGET_CONCEPT: str = "python_valid_vs_syntax_error"
 
 #: Four related code-language concepts. Python (here labelled ``python_valid``)
@@ -233,14 +233,14 @@ class ConceptSpec:
     positive_class: str
     negative_class: str
     domain: str
-    #: Registered in ``src.contrastive_datasets``? The target concept is not.
+    #: Registered in ``postdyn.contrastive_datasets``? The target concept is not.
     registered: bool
 
 
 def concept_specs() -> dict[str, ConceptSpec]:
     """Build :class:`ConceptSpec` objects, reusing the contrastive registry.
 
-    All six concepts are looked up in :mod:`src.contrastive_datasets` so their
+    All six concepts are looked up in :mod:`postdyn.contrastive_datasets` so their
     domain is never duplicated here; probe-class polarity comes from
     :data:`CONCEPT_PROBE_CLASSES` (the experiment's own ``python_valid`` /
     ``python_syntax_error`` labels, which alias the registry's
@@ -248,7 +248,7 @@ def concept_specs() -> dict[str, ConceptSpec]:
     """
     # Imported lazily so this module stays importable in minimal envs and so
     # the registry is only touched when actually needed.
-    from src.contrastive_datasets import CONCEPTS as _REGISTRY
+    from postdyn.contrastive_datasets import CONCEPTS as _REGISTRY
 
     specs: dict[str, ConceptSpec] = {}
     for key in EXPERIMENT_CONCEPTS:
@@ -256,7 +256,7 @@ def concept_specs() -> dict[str, ConceptSpec]:
         if meta is None:
             raise KeyError(
                 f"experiment concept {key!r} is missing from "
-                "src.contrastive_datasets.CONCEPTS"
+                "postdyn.contrastive_datasets.CONCEPTS"
             )
         positive_class, negative_class = CONCEPT_PROBE_CLASSES[key]
         specs[key] = ConceptSpec(
@@ -285,7 +285,7 @@ def probe_classes_used() -> set[str]:
 
 #: Directory holding the builder's auditable JSON artifacts.
 CONCEPT_DATA_DIR: Path = (
-    Path(PROJECT_ROOT) / "datasets" / "allenai" / "Dolci-RL-Zero-Code-7B"
+    Path(PROJECT_ROOT) / "data" / "allenai" / "Dolci-RL-Zero-Code-7B"
 )
 #: 50 paired records for the target concept.
 PAIRS_FILE: Path = CONCEPT_DATA_DIR / "python_syntax_pairs.json"
@@ -309,7 +309,7 @@ def load_pairs() -> dict[str, Any]:
     """
     if not PAIRS_FILE.exists():
         raise FileNotFoundError(
-            f"{PAIRS_FILE} not built; run experiments/build_rl_zero_syntax_concept.py --only pairs"
+            f"{PAIRS_FILE} not built; run scripts/build_rl_zero_syntax_concept.py --only pairs"
         )
     return json.loads(PAIRS_FILE.read_text(encoding="utf-8"))
 
@@ -321,7 +321,7 @@ def load_downstream() -> dict[str, Any]:
     """
     if not DOWNSTREAM_FILE.exists():
         raise FileNotFoundError(
-            f"{DOWNSTREAM_FILE} not built; run experiments/build_rl_zero_syntax_concept.py --only downstream"
+            f"{DOWNSTREAM_FILE} not built; run scripts/build_rl_zero_syntax_concept.py --only downstream"
         )
     return json.loads(DOWNSTREAM_FILE.read_text(encoding="utf-8"))
 
@@ -441,7 +441,7 @@ def self_check() -> None:
     """Assert every structural invariant of the experiment configuration.
 
     Runs no model and touches no data files. The contrastive-registry cross
-    check imports :mod:`src.contrastive_datasets` lazily. Raises ``AssertionError``
+    check imports :mod:`postdyn.contrastive_datasets` lazily. Raises ``AssertionError``
     on the first violation; returns ``None`` on success.
     """
     # --- Results isolation -------------------------------------------------
@@ -504,7 +504,7 @@ def self_check() -> None:
 
     # --- Layers (reused) ---------------------------------------------------
     assert EXPERIMENT_LAYERS == list(EXPERIMENT_LAYERS_7B), (
-        "layers must be reused verbatim from src.config.EXPERIMENT_LAYERS_7B"
+        "layers must be reused verbatim from postdyn.config.EXPERIMENT_LAYERS_7B"
     )
     assert len(EXPERIMENT_LAYERS) == 10, "exactly ten layers"
 
@@ -559,7 +559,7 @@ def self_check() -> None:
         assert pos != neg, f"concept {key!r} has identical positive/negative classes"
 
     # --- Registry membership ----------------------------------------------
-    from src.contrastive_datasets import CONCEPTS as _REGISTRY  # lazy
+    from postdyn.contrastive_datasets import CONCEPTS as _REGISTRY  # lazy
 
     for key in EXPERIMENT_CONCEPTS:
         assert key in _REGISTRY, (

@@ -17,15 +17,14 @@ from typing import Callable, Mapping, Protocol, TYPE_CHECKING, cast
 if TYPE_CHECKING:
     import torch
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.config import EXPERIMENT_LAYERS_7B, OLMO3_VARIANTS
-from src.downstream_eval import (
+from postdyn.config import EXPERIMENT_LAYERS_7B, OLMO3_VARIANTS
+from postdyn.downstream_eval import (
     GreedyGenerator,
     TokenizerLike,
     compare_singleton_and_batch_token_ids,
 )
-from src.math500_eval import (
+from postdyn.math500_eval import (
     DEFAULT_DTYPE,
     DEFAULT_MAX_NEW_TOKENS,
     DEFAULT_QUANTIZATION,
@@ -34,13 +33,13 @@ from src.math500_eval import (
     load_first50,
     write_atomically,
 )
-from src.math500_ablation_validator import (
+from postdyn.math500_ablation_validator import (
     NF4_CONFIG,
     STATIC_NF4_PROVENANCE,
     _validate_extraction_manifest,
 )
-from src.residual_ablation import residual_stream_ablation
-from src.think_sft_differential_experiment import (
+from postdyn.residual_ablation import residual_stream_ablation
+from postdyn.think_sft_differential_experiment import (
     FAMILY_THINK,
     SCALE_32B,
     SCALE_7B,
@@ -55,11 +54,11 @@ from src.think_sft_differential_experiment import (
 
 collect_valid_conditions = cast(
     Callable[..., tuple[list[dict[str, object]], list[str]]],
-    importlib.import_module("src.math500_ablation_validator").collect_valid_conditions,
+    importlib.import_module("postdyn.math500_ablation_validator").collect_valid_conditions,
 )
 
-DEFAULT_DATASET = "datasets/math500.json"
-DEFAULT_RESULT_ROOT = "results/math500_ablation_first50"
+DEFAULT_DATASET = "data/math500.json"
+DEFAULT_RESULT_ROOT = "logs/math500_ablation_first50"
 CONCEPT = "math_vs_text"
 CONTRACT = "residual-ablation-all-tokens-v1"
 RUNTIME_FILENAME = "runtime_provenance.json"
@@ -127,7 +126,7 @@ def _default_result_root(trajectory: str, scale: str = SCALE_7B) -> Path:
     if scale == SCALE_7B and trajectory == "sft":
         return Path(DEFAULT_RESULT_ROOT)
     scale_suffix = "" if scale == SCALE_7B else f"_{scale}"
-    return Path("results") / f"math500_ablation_first50{scale_suffix}_{trajectory}"
+    return Path("logs") / f"math500_ablation_first50{scale_suffix}_{trajectory}"
 
 
 def resolve_run_config(args: argparse.Namespace) -> AblationRunConfig:
@@ -317,7 +316,7 @@ def load_model_for_run(
         if dtype != "bfloat16" or quantization != "nf4":
             raise ValueError("32b requires bfloat16 dtype and NF4 quantization")
         _require_canonical_7b(project_root=project_root)
-        from src.quantized_model_loader import load_olmo3_32b_think
+        from postdyn.quantized_model_loader import load_olmo3_32b_think
 
         loaded = load_olmo3_32b_think(
             model_id=OLMO3_VARIANTS[model_key].hf_id,
@@ -341,7 +340,7 @@ def load_model_for_run(
 
 def _require_canonical_7b(*, project_root: Path | None = None) -> None:
     require = importlib.import_module(
-        "src.cross_pipeline_integrity"
+        "postdyn.cross_pipeline_integrity"
     ).require_canonical_7b
     if project_root is None:
         require()
@@ -847,7 +846,7 @@ def _model_device(model: _Model) -> str:
 
 
 def _validate_32b_publication(run_config: AblationRunConfig) -> None:
-    from src.think_32b_differential_validator import (
+    from postdyn.think_32b_differential_validator import (
         validate_full_canonical_publication,
     )
 
@@ -950,7 +949,7 @@ def run(args: argparse.Namespace) -> int:
         try:
             _validate_32b_publication(run_config)
             require = importlib.import_module(
-                "src.cross_pipeline_integrity"
+                "postdyn.cross_pipeline_integrity"
             ).require_canonical_7b
             if run_config.project_root is None:
                 require()
@@ -1075,7 +1074,7 @@ def rebuild_aggregate(
         else artifact_root
     )
     if scale == SCALE_32B:
-        from src.think_32b_differential_validator import (
+        from postdyn.think_32b_differential_validator import (
             validate_full_canonical_publication,
         )
 

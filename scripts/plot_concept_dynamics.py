@@ -2,7 +2,7 @@
 """CLI entry point for plotting Concept Dynamics results.
 
 Renders Gram and stability heatmaps from a concept-dynamics output
-directory produced by ``experiments/run_concept_dynamics.py``.
+directory produced by ``scripts/run_concept_dynamics.py``.
 
 Modes (selected via flags):
 
@@ -18,18 +18,18 @@ Examples
 --------
 Default summary plot::
 
-    uv run python experiments/plot_concept_dynamics.py
+    uv run python scripts/plot_concept_dynamics.py
 
 Single Gram heatmap::
 
-    uv run python experiments/plot_concept_dynamics.py \\
-        --input results/concept_dynamics_multi \\
+    uv run python scripts/plot_concept_dynamics.py \\
+        --input logs/concept_dynamics_multi \\
         --model olmo3-think-sft --checkpoint step_500 --layer 14
 
 Single stability heatmap::
 
-    uv run python experiments/plot_concept_dynamics.py \\
-        --input results/concept_dynamics_multi \\
+    uv run python scripts/plot_concept_dynamics.py \\
+        --input logs/concept_dynamics_multi \\
         --model olmo3-think-sft --concept python_vs_cpp --layer 14
 """
 
@@ -40,9 +40,8 @@ import json
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-DEFAULT_INPUT = "results/concept_dynamics_multi"
+DEFAULT_INPUT = "logs/concept_dynamics_multi"
 
 
 def _split_csv(raw: str | None) -> list[str]:
@@ -54,7 +53,7 @@ def _split_csv(raw: str | None) -> list[str]:
 def _load_json(path: str) -> dict:
     if not os.path.exists(path):
         raise FileNotFoundError(
-            f"Expected {path} to exist. Run experiments/run_concept_dynamics.py first."
+            f"Expected {path} to exist. Run scripts/run_concept_dynamics.py first."
         )
     with open(path) as f:
         return json.load(f)
@@ -142,7 +141,7 @@ def parse_args(argv: list[str] | None = None):
 
 
 def _plot_single_gram(args, gram_path: str) -> int:
-    from src.visualization import plot_gram_heatmap
+    from postdyn.visualization import plot_gram_heatmap
 
     if args.layer is None or args.checkpoint is None:
         print(
@@ -164,7 +163,7 @@ def _plot_single_gram(args, gram_path: str) -> int:
 
 
 def _plot_single_stability(args, stab_path: str) -> int:
-    from src.visualization import plot_stability_heatmap
+    from postdyn.visualization import plot_stability_heatmap
 
     if args.layer is None or args.concept is None:
         print(
@@ -186,7 +185,7 @@ def _plot_single_stability(args, stab_path: str) -> int:
 
 
 def _plot_summary(args, gram: dict, stability: dict) -> int:
-    from src.visualization import plot_concept_dynamics_summary
+    from postdyn.visualization import plot_concept_dynamics_summary
 
     models = _split_csv(args.models) if args.models else None
     concepts = _split_csv(args.concepts) if args.concepts else None
@@ -216,7 +215,7 @@ def main(argv: list[str] | None = None) -> int:
     if not gram and not stability:
         print(
             f"ERROR: no gram.json/stability.json under {args.input}. "
-            "Run experiments/run_concept_dynamics.py first.",
+            "Run scripts/run_concept_dynamics.py first.",
             file=sys.stderr,
         )
         return 1

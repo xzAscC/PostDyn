@@ -7,8 +7,8 @@ contrastive loaders (the same texts used by the extraction driver).
 
 Usage::
 
-    uv run python experiments/migrate_concept_sidecars.py [--dry-run]
-    uv run python experiments/migrate_concept_sidecars.py --root results/rl_zero_code_syntax
+    uv run python scripts/migrate_concept_sidecars.py [--dry-run]
+    uv run python scripts/migrate_concept_sidecars.py --root logs/rl_zero_code_syntax
 
 Exit codes:
     0  all sidecars migrated or already valid v1
@@ -21,14 +21,12 @@ import argparse
 import hashlib
 import json
 import os
-import sys
 import tempfile
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.concept_dynamics import (  # noqa: E402
+from postdyn.concept_dynamics import (  # noqa: E402
     EXPECTED_D_MODEL,
     SIDECAR_SCHEMA,
     SIDECAR_VERSION,
@@ -36,9 +34,9 @@ from src.concept_dynamics import (  # noqa: E402
     compute_sidecar_source_fingerprint,
     validate_concept_sidecar,
 )
-from src.config import OLMO3_VARIANTS  # noqa: E402
-from src.contrastive_datasets import load_contrastive_texts  # noqa: E402
-from src.rl_zero_experiment import (  # noqa: E402
+from postdyn.config import OLMO3_VARIANTS  # noqa: E402
+from postdyn.contrastive_datasets import load_contrastive_texts  # noqa: E402
+from postdyn.rl_zero_experiment import (  # noqa: E402
     EXPERIMENT_CONCEPTS,
     N_SAMPLES,
     PRIMARY_USE_CHAT_TEMPLATE,

@@ -5,8 +5,8 @@ import json
 import pytest
 import torch
 
-from src.concept_dynamics import ConceptVector
-from src.gender_surface_analysis import (
+from postdyn.concept_dynamics import ConceptVector
+from postdyn.gender_surface_analysis import (
     build_surface_pronoun_texts,
     compare_gender_surface_vectors,
     compute_surface_pronoun_vectors,
@@ -75,7 +75,7 @@ def test_compute_surface_vectors_reuses_last_token_extraction(monkeypatch):
         return {layer: torch.full((len(texts), 2), value) for layer in layers}
 
     monkeypatch.setattr(
-        "src.gender_surface_analysis.extract_layer_activations", fake_extract
+        "postdyn.gender_surface_analysis.extract_layer_activations", fake_extract
     )
     vectors = compute_surface_pronoun_vectors(object(), object(), [3], 128)
     assert len(calls) == 2

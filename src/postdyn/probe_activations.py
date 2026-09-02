@@ -22,8 +22,8 @@ Key invariants
 * **Protocol**: always ``"raw"`` (no chat template applied).
 
 This module is data/extraction only: it runs no model on import, never edits
-``src/config.py`` or dataset artifacts, and writes only under
-``results/rl_zero_code_syntax``.
+``postdyn/config.py`` or dataset artifacts, and writes only under
+``logs/rl_zero_code_syntax``.
 """
 
 from __future__ import annotations
@@ -40,14 +40,14 @@ import torch
 from safetensors import safe_open
 from safetensors.torch import save_file
 
-from src.concept_dynamics import extract_layer_activations
-from src.dataset_store import (
+from postdyn.concept_dynamics import extract_layer_activations
+from postdyn.dataset_store import (
     HUMANEVAL_X_FILE,
     PYTHON_SYNTAX_PAIRS_FILE,
     dataset_path,
     load_dataset_json,
 )
-from src.rl_zero_experiment import (
+from postdyn.rl_zero_experiment import (
     N_SAMPLES,
     PROBE_CLASSES,
     results_root,
@@ -242,7 +242,7 @@ def build_gender_records(n_pairs: int = N_SAMPLES) -> list[ProbeRecord]:
     in the nominative pronoun. They share a ``gender:{i}`` group_id so the
     pairing is explicit.
     """
-    from src.contrastive_datasets import load_winogender_pairs
+    from postdyn.contrastive_datasets import load_winogender_pairs
 
     pairs = load_winogender_pairs(n_pairs)
     if len(pairs) < n_pairs:
@@ -378,7 +378,7 @@ def extract_probe_activations(
 ) -> dict[int, torch.Tensor]:
     """Extract last-token activations for all probe records (raw text).
 
-    Delegates to :func:`src.concept_dynamics.extract_layer_activations` with
+    Delegates to :func:`postdyn.concept_dynamics.extract_layer_activations` with
     ``use_chat_template=False`` so the primary protocol is raw text.
 
     Args:

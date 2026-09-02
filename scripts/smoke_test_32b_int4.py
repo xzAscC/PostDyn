@@ -13,15 +13,14 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.quantized_model_loader import (
+from postdyn.quantized_model_loader import (
     check_quantization_dependencies,
     load_olmo3_32b_think,
     validate_canonical_32b_request,
 )
-from src.cross_pipeline_integrity import require_canonical_7b
-from src.think_sft_differential_experiment import (
+from postdyn.cross_pipeline_integrity import require_canonical_7b
+from postdyn.think_sft_differential_experiment import (
     FAMILY_THINK,
     SCALE_32B,
     available_trajectories,

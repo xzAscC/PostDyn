@@ -7,15 +7,35 @@ wheels/
 *.egg-info
 
 # Virtual environments
-.venv
+.venv/
 
 # Model caches
 *.safetensors
 model_cache/
 .cache/
 
-# Generated results
-results/
+# Opencode
+.omo/
+
+# Latex files
+69e5bc6d27002aeac07372b4/
+
+# Experiment outputs
+logs/*
+!logs/.gitkeep
+figs/*
+!figs/.gitkeep
+checkpoints/*
+!checkpoints/.gitkeep
+
+# Materialized dataset JSONs (large, regenerable via scripts/download_datasets.py)
+data/*.json
+data/concept_index.txt
+data/math-500.jsonl
+!data/.gitkeep
+
+# Jupyter notebooks (research artifacts)
+notebooks/
 
 # IDE
 .idea/
@@ -25,22 +45,3 @@ results/
 # OS
 .DS_Store
 Thumbs.db
-
-# Ultrawork notepad
-/tmp/ulw-*
-
-# Opencode
-.omo/
-
-# Latex Files
-69e5bc6d27002aeac07372b4/
-
-# data files, will handle in hf
-data/
-
-# Materialized dataset JSONs (large, regenerable via experiments/download_datasets.py)
-datasets/*.json
-!datasets/.gitkeep
-
-# jupyter notebook
-notebook/

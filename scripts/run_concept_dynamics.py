@@ -5,7 +5,7 @@ Runs DiM concept extraction across Olmo-3-7B post-training variants,
 then computes cross-model stability and per-model gram matrices.
 
 Usage:
-    uv run python experiments/run_concept_dynamics.py [OPTIONS]
+    uv run python scripts/run_concept_dynamics.py [OPTIONS]
 
 Options:
     --quick             Smoke test: 1 model, 2 concepts, 2 layers, 5 samples
@@ -25,11 +25,10 @@ import sys
 import os
 from typing import Callable
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.config import OLMO3_VARIANTS, EXPERIMENT_LAYERS_7B
-from src.concept_dynamics import run_full_experiment
-from src.contrastive_datasets import (
+from postdyn.config import OLMO3_VARIANTS, EXPERIMENT_LAYERS_7B
+from postdyn.concept_dynamics import run_full_experiment
+from postdyn.contrastive_datasets import (
     PAIRED_CONCEPTS,
     _resolve_concept,
     all_concept_keys,
@@ -48,12 +47,12 @@ DEFAULT_MODELS = [
 
 DEFAULT_CONCEPTS = all_concept_keys()
 
-DEFAULT_OUTPUT = "results/concept_dynamics_multi"
-DEFAULT_QUICK_OUTPUT = "results/concept_dynamics_multi_quick"
+DEFAULT_OUTPUT = "logs/concept_dynamics_multi"
+DEFAULT_QUICK_OUTPUT = "logs/concept_dynamics_multi_quick"
 
 DEFAULT_HUMANEVAL_REPORT = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "experiments",
+    "logs",
     "artifacts",
     "humaneval-x-validation.jsonl",
 )
@@ -61,7 +60,7 @@ HUMANEVAL_X_CONCEPT_KEY = "code_python_vs_cpp"
 HUMANEVAL_X_LEGACY_KEYS = {"code_python_vs_cpp", "python_vs_cpp"}
 _HUMANEVAL_X_DATASETS_FALLBACK = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "datasets",
+    "data",
     "humaneval_x.json",
 )
 
@@ -90,7 +89,7 @@ def run_humaneval_preflight(
 
     from pathlib import Path
 
-    from src.humaneval_x_validator import (
+    from postdyn.humaneval_x_validator import (
         PreflightOptions,
         load_humaneval_x_raw_pairs,
         preflight_validation,
@@ -139,7 +138,7 @@ def parse_args(argv: list[str] | None = None):
         help=(
             "Comma-separated concepts (default: all "
             f"{len(DEFAULT_CONCEPTS)} canonical keys from "
-            "src.contrastive_datasets.all_concept_keys)"
+            "postdyn.contrastive_datasets.all_concept_keys)"
         ),
     )
     parser.add_argument(
@@ -176,7 +175,7 @@ def parse_args(argv: list[str] | None = None):
         help=(
             "HumanEval-X validation report required before extracting the "
             "python_vs_cpp concept. Generate it with "
-            "`experiments/validate_humaneval_x.py`. "
+            "`scripts/validate_humaneval_x.py`. "
             f"(default: {DEFAULT_HUMANEVAL_REPORT})"
         ),
     )
@@ -229,7 +228,7 @@ def _run_strict_humaneval_preflight(
     except (ValueError, FileNotFoundError) as exc:
         print(
             f"ERROR: HumanEval-X preflight failed: {exc}\n"
-            "Run `uv run python experiments/validate_humaneval_x.py` "
+            "Run `uv run python scripts/validate_humaneval_x.py` "
             "first.",
             file=sys.stderr,
         )
@@ -325,7 +324,7 @@ def main(argv: list[str] | None = None):
             f"ERROR: Unknown concepts: {unknown_concepts}. "
             f"Supported canonical concepts ({len(PAIRED_CONCEPTS)}): "
             f"{sorted(PAIRED_CONCEPTS)}\n"
-            f"  aliases also accepted: see src.contrastive_datasets.list_concepts()",
+            f"  aliases also accepted: see postdyn.contrastive_datasets.list_concepts()",
             file=sys.stderr,
         )
         sys.exit(2)

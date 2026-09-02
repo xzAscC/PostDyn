@@ -5,11 +5,11 @@ Analyzes training dynamics across post-training methods (SFT, RL, etc.),
 including effective rank and concept-direction trajectories on Pythia / OLMo-3.
 
 Usage:
-    python main.py --analysis all                  # Run all analyses
-    python main.py --analysis cross-model-size     # Only cross-model comparison
-    python main.py --analysis training-dynamics --model pythia-70m
-    python main.py --dry-run                       # Validate configs
-    python main.py --plot-only                     # Regenerate plots from saved results
+    python -m postdyn.cli --analysis all                  # Run all analyses
+    python -m postdyn.cli --analysis cross-model-size     # Only cross-model comparison
+    python -m postdyn.cli --analysis training-dynamics --model pythia-70m
+    python -m postdyn.cli --dry-run                       # Validate configs
+    python -m postdyn.cli --plot-only                     # Regenerate plots from saved results
 """
 
 from __future__ import annotations
@@ -19,13 +19,13 @@ import json
 import os
 import sys
 
-from src.config import (
+from postdyn.config import (
     PYTHIA_CONFIGS,
     PYTHIA_DEDUPED_CONFIGS,
     PYTHIA_CHECKPOINTS,
     PYTHIA_CHECKPOINTS_QUICK,
     OLMO3_VARIANTS,
-    RESULTS_DIR,
+    LOGS_DIR,
 )
 
 
@@ -88,7 +88,7 @@ def parse_args():
     parser.add_argument(
         "--output-dir",
         default=None,
-        help="Custom output directory (default: results/)",
+        help="Custom output directory (default: logs/)",
     )
 
     parser.add_argument(
@@ -142,21 +142,21 @@ def main():
     args = parse_args()
 
     if args.output_dir:
-        import src.config as cfg
+        import postdyn.config as cfg
 
-        cfg.RESULTS_DIR = args.output_dir
-        cfg.FIGURES_DIR = os.path.join(args.output_dir, "figures")
+        cfg.LOGS_DIR = args.output_dir
+        cfg.FIGS_DIR = os.path.join(args.output_dir, "figures")
 
     if args.dry_run:
         return dry_run_validation()
 
     if args.plot_only:
-        from src.visualization import generate_all_plots
+        from postdyn.visualization import generate_all_plots
 
         generate_all_plots()
         return
 
-    from src.analysis import (
+    from postdyn.analysis import (
         analyze_cross_model_size,
         analyze_training_dynamics,
         analyze_training_stages,
@@ -165,7 +165,7 @@ def main():
         run_all_analyses,
     )
 
-    os.makedirs(RESULTS_DIR, exist_ok=True)
+    os.makedirs(LOGS_DIR, exist_ok=True)
 
     analysis = args.analysis
     results = {}
@@ -193,7 +193,7 @@ def main():
         "activation-post-training",
         "activation-all",
     ):
-        from src.activation_analysis import (
+        from postdyn.activation_analysis import (
             load_mmlu_questions,
             extract_and_analyze_activations,
             analyze_activation_cross_model,
@@ -258,7 +258,7 @@ def main():
     print("Generating plots...")
     print("=" * 60)
 
-    from src.visualization import (
+    from postdyn.visualization import (
         plot_cross_model_size,
         plot_training_dynamics,
         plot_training_stages,
@@ -293,35 +293,35 @@ def main():
             plot_fixed_ratio_distribution(data=data)
 
     if analysis in ("activation-cross-model", "activation-all"):
-        from src.visualization import plot_activation_analysis
+        from postdyn.visualization import plot_activation_analysis
 
         acm_data = results.get("activation_cross_model", {})
         if isinstance(acm_data, dict) and "models" in acm_data:
             plot_activation_analysis(data=acm_data)
 
     if analysis in ("activation-training-dynamics", "activation-all"):
-        from src.visualization import plot_activation_analysis
+        from postdyn.visualization import plot_activation_analysis
 
         for key, val in results.items():
             if key.startswith("activation_training_dynamics") and isinstance(val, dict):
                 plot_activation_analysis(data=val)
 
     if analysis == "activation-single":
-        from src.visualization import plot_activation_analysis
+        from postdyn.visualization import plot_activation_analysis
 
         single_data = results.get("activation_single", {})
         if isinstance(single_data, dict) and "layer_results" in single_data:
             plot_activation_analysis(data=single_data)
 
     if analysis in ("activation-post-training", "activation-all"):
-        from src.visualization import plot_activation_analysis
+        from postdyn.visualization import plot_activation_analysis
 
         apt_data = results.get("activation_post_training", {})
         if isinstance(apt_data, dict) and "variants" in apt_data:
             plot_activation_analysis(data=apt_data)
 
     print("\n" + "=" * 60)
-    print("DONE! Results saved to:", RESULTS_DIR)
+    print("DONE! Results saved to:", LOGS_DIR)
     print("=" * 60)
 
 

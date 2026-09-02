@@ -1,11 +1,10 @@
-# Project artifacts remain searchable by OpenCode while Git ignores them.
-!.omo/
-!data/
-!notebook/
-!results/
+# ! un-ignore gitignored paths so agents can find them
 
-# Documentation
-!docs/
+# Project artifacts remain searchable by OpenCode while Git ignores them.
+!data/
+!notebooks/
+!logs/
+!figs/
 
 # LaTeX files
 !69e5bc6d27002aeac07372b4/

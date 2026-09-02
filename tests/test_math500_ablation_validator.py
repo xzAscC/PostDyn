@@ -7,19 +7,19 @@ import json
 
 import pytest
 
-from src.math500_eval import MATH500_COUNT
+from postdyn.math500_eval import MATH500_COUNT
 
-validator = importlib.import_module("src.math500_ablation_validator")
+validator = importlib.import_module("postdyn.math500_ablation_validator")
 canonical_conditions = validator.canonical_conditions
 collect_valid_conditions = validator.collect_valid_conditions
 validate_result_tree = validator.validate_result_tree
 validate_basis_artifact = validator._validate_basis_artifact
 validate_condition = validator._validate_condition
-validate_cli = importlib.import_module("experiments.validate_math500_ablation")
+validate_cli = importlib.import_module("scripts.validate_math500_ablation")
 
 
-DATASET = Path(__file__).parents[1] / "datasets" / "math500.json"
-REAL_ROOT = Path(__file__).parents[1] / "results" / "math500_ablation_first50"
+DATASET = Path(__file__).parents[1] / "data" / "math500.json"
+REAL_ROOT = Path(__file__).parents[1] / "logs" / "math500_ablation_first50"
 
 
 @pytest.mark.skipif(
@@ -29,7 +29,7 @@ def test_real_cache_accepts_hf_id_items_and_name_basis_provenance() -> None:
     records, errors = collect_valid_conditions(
         REAL_ROOT,
         trajectory="sft",
-        dataset_path=Path("datasets/math500.json"),
+        dataset_path=Path("data/math500.json"),
         max_new_tokens=2048,
         dtype="bfloat16",
         quantization="none",
@@ -238,7 +238,7 @@ def test_32b_condition_manifest_must_be_under_artifact_root(
     tmp_path: Path, monkeypatch
 ) -> None:
     artifact_root = tmp_path / "artifacts"
-    result_root = tmp_path / "results"
+    result_root = tmp_path / "logs"
     model = "olmo3-32b-think-sft"
     checkpoint = "step1000"
     revision = checkpoint
@@ -459,7 +459,7 @@ def test_cli_32b_preflights_before_artifact_or_result_validation(
         raise RuntimeError("7b incomplete")
 
     monkeypatch.setattr(
-        "src.cross_pipeline_integrity.require_canonical_7b", fail_preflight
+        "postdyn.cross_pipeline_integrity.require_canonical_7b", fail_preflight
     )
     monkeypatch.setattr(
         validate_cli,
@@ -475,7 +475,7 @@ def test_cli_32b_preflights_before_artifact_or_result_validation(
     assert (
         validate_cli.main(
             [
-                str(tmp_path / "results"),
+                str(tmp_path / "logs"),
                 "--scale",
                 "32b",
                 "--project-root",
@@ -485,7 +485,7 @@ def test_cli_32b_preflights_before_artifact_or_result_validation(
         == 2
     )
     assert events == [f"preflight:{project_root}"]
-    assert not (tmp_path / "results").exists()
+    assert not (tmp_path / "logs").exists()
 
 
 @pytest.mark.parametrize("bad_tokens", [1, 2047, 2049])

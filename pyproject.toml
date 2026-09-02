@@ -3,6 +3,10 @@ name = "postdyn"
 version = "0.1.0"
 description = "Post-training dynamics analysis for open-source LLMs"
 readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Xudong Zhu", email = "xzascc3944@gmail.com" }
+]
 requires-python = ">=3.13"
 dependencies = [
     "torch>=2.5.0",
@@ -31,6 +35,9 @@ quantization = [
     "bitsandbytes>=0.49.2,<1.0.0",
 ]
 
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]

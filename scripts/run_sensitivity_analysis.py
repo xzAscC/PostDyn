@@ -2,7 +2,7 @@
 """CLI entry point for the raw-vs-chat direction SENSITIVITY analysis.
 
 This is a deliberately ISOLATED, secondary diagnostic. It does NOT touch the
-primary concept-dynamics pipeline (``results/concept_dynamics_multi``) or any
+primary concept-dynamics pipeline (``logs/concept_dynamics_multi``) or any
 metrics output. It reads:
 
 * the isolated PRIMARY RAW vectors (``--raw-vectors-dir``), and
@@ -28,19 +28,19 @@ Usage
 Default (compare whatever raw + chat vectors already exist; record target as
 ``chat_missing`` until extracted)::
 
-    uv run python experiments/run_sensitivity_analysis.py
+    uv run python scripts/run_sensitivity_analysis.py
 
 Override the isolated raw store::
 
-    uv run python experiments/run_sensitivity_analysis.py \\
-        --raw-vectors-dir results/concept_dynamics_raw/vectors
+    uv run python scripts/run_sensitivity_analysis.py \\
+        --raw-vectors-dir logs/concept_dynamics_raw/vectors
 
 Gated, resumable extraction of the MISSING chat-TARGET direction only. This
 loads a real model + tokenizer and requires ``tokenizer.apply_chat_template``
 to be available; it FAILS CLEARLY otherwise and never silently falls back to
 raw text::
 
-    uv run python experiments/run_sensitivity_analysis.py --extract-target-chat
+    uv run python scripts/run_sensitivity_analysis.py --extract-target-chat
 
 The CLI NEVER writes into ``concept_dynamics_multi`` or any metrics location.
 A path-isolation guard refuses output dirs that lie inside a primary store.
@@ -55,9 +55,8 @@ import sys
 from typing import Any, Callable
 
 # Make ``src`` importable when run as a script.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.sensitivity_analysis import (  # noqa: E402
+from postdyn.sensitivity_analysis import (  # noqa: E402
     ChatTemplateUnavailableError,
     LIMITATIONS,
     PROTOCOL,
@@ -73,18 +72,18 @@ from src.sensitivity_analysis import (  # noqa: E402
     extract_missing_chat_target,
     run_sensitivity_analysis,
 )
-from src.rl_zero_experiment import RL_ZERO_CODE_RESULTS_ROOT  # noqa: E402
+from postdyn.rl_zero_experiment import RL_ZERO_CODE_RESULTS_ROOT  # noqa: E402
 
 #: Default isolated primary raw store (layout mirrors concept_dynamics_multi).
 DEFAULT_RAW_VECTORS_DIR = os.path.join(RL_ZERO_CODE_RESULTS_ROOT, "concept_vectors")
 
 #: Default old chat results (READ-ONLY reuse for related/control).
 DEFAULT_CHAT_OLD_VECTORS_DIR = os.path.join(
-    "results", "concept_dynamics_multi", "vectors"
+    "logs", "concept_dynamics_multi", "vectors"
 )
 
 #: Default sensitivity output root (NEVER inside concept_dynamics_multi).
-DEFAULT_SENSITIVITY_DIR = os.path.join("results", "sensitivity")
+DEFAULT_SENSITIVITY_DIR = os.path.join("logs", "sensitivity")
 
 #: Chat-TARGET extraction root, kept strictly under the sensitivity dir.
 DEFAULT_CHAT_TARGET_VECTORS_DIR = os.path.join(
@@ -306,7 +305,7 @@ def _check_output_isolation(args: argparse.Namespace) -> None:
     before any banner / model work, and checks ``output_dir`` is isolated from
     the primary stores.
     """
-    from src.sensitivity_analysis import (
+    from postdyn.sensitivity_analysis import (
         _assert_output_containment,
         _assert_path_isolation,
     )
@@ -328,7 +327,7 @@ def _check_chat_target_isolation(args: argparse.Namespace) -> None:
     extraction, so it must nest strictly under ``--output-dir`` (the designated
     sensitivity root) and never inside the raw or old-chat primary stores.
     """
-    from src.sensitivity_analysis import _assert_chat_target_isolation
+    from postdyn.sensitivity_analysis import _assert_chat_target_isolation
 
     try:
         _assert_chat_target_isolation(

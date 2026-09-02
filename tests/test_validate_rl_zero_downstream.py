@@ -1,4 +1,4 @@
-"""Tests for experiments/validate_rl_zero_downstream.py.
+"""Tests for scripts/validate_rl_zero_downstream.py.
 
 Covers the downstream preflight CLI without ever running real benchmark
 code: a fake dataset loader feeds canned HumanEval-X rows and a fake
@@ -30,8 +30,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import experiments.validate_rl_zero_downstream as cli
-from experiments.validate_rl_zero_downstream import (
+import scripts.validate_rl_zero_downstream as cli
+from scripts.validate_rl_zero_downstream import (
     DEFAULT_REPORT_PATH,
     DEFAULT_TIMEOUT_SECONDS,
     PreflightOutcome,
@@ -41,8 +41,8 @@ from experiments.validate_rl_zero_downstream import (
     report_matches_ids,
     run_downstream_preflight,
 )
-from src.contrastive_datasets import HUMANEVAL_X_REVISION
-from src.humaneval_x_validator import (
+from postdyn.contrastive_datasets import HUMANEVAL_X_REVISION
+from postdyn.humaneval_x_validator import (
     OUTCOME_FAIL,
     OUTCOME_PASS,
     PYTHON_PATH,

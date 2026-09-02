@@ -6,7 +6,7 @@ from pathlib import Path
 
 import torch
 
-from src.concept_dynamics import (
+from postdyn.concept_dynamics import (
     ConceptVector,
     compute_concept_vector,
     extract_layer_activations,

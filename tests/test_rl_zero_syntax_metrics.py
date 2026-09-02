@@ -1,4 +1,4 @@
-"""Tests for the four-metric driver ``experiments/run_rl_zero_syntax_metrics.py``.
+"""Tests for the four-metric driver ``scripts/run_rl_zero_syntax_metrics.py``.
 
 These tests are fully model-independent. They exercise:
 
@@ -30,8 +30,8 @@ import numpy as np
 import pytest
 import torch
 
-import experiments.run_rl_zero_syntax_metrics as cli
-from experiments.run_rl_zero_syntax_metrics import (
+import scripts.run_rl_zero_syntax_metrics as cli
+from scripts.run_rl_zero_syntax_metrics import (
     DEFAULT_ALPHA,
     DEFAULT_METRICS_PATH,
     DEFAULT_SEED,
@@ -57,17 +57,17 @@ from experiments.run_rl_zero_syntax_metrics import (
     validate_metrics,
     write_metrics_json,
 )
-from experiments.run_rl_zero_syntax_metrics import (
+from scripts.run_rl_zero_syntax_metrics import (
     PROBE_CLASSES as CLI_PROBE_CLASSES,
 )
-from src.concept_dynamics import ConceptVector, save_concept_vectors
-from src.probe_activations import (
+from postdyn.concept_dynamics import ConceptVector, save_concept_vectors
+from postdyn.probe_activations import (
     PROTOCOL,
     ProbeRecord,
     save_layer_activations,
     save_records_json,
 )
-from src.rl_zero_experiment import (
+from postdyn.rl_zero_experiment import (
     BASE_CHECKPOINT,
     CONTROL_CONCEPT,
     PROBE_CLASSES,
@@ -272,7 +272,7 @@ def _write_synthetic_concept_vectors(
     dirs_by_ckpt: dict[str, dict[str, np.ndarray]],
 ) -> None:
     """Write synthetic concept-vector safetensors files for every triple."""
-    from src.contrastive_datasets import load_contrastive_texts
+    from postdyn.contrastive_datasets import load_contrastive_texts
 
     for ckpt in checkpoints:
         model_name, ckpt_name = ckpt_model_map[ckpt]
@@ -1467,7 +1467,7 @@ class TestCheckpointModelMap:
             assert m[ckpt] == ("olmo3-rl-zero-code", ckpt)
 
     def test_covers_all_experiment_checkpoints(self) -> None:
-        from src.rl_zero_experiment import EXPERIMENT_CHECKPOINTS
+        from postdyn.rl_zero_experiment import EXPERIMENT_CHECKPOINTS
 
         m = checkpoint_model_map()
         assert set(m.keys()) >= set(EXPERIMENT_CHECKPOINTS)
@@ -1745,7 +1745,7 @@ class TestActivationLoaderProtocol:
             act_root, ckpt_map, [TEST_LAYERS[0]], [BASE_CHECKPOINT], records
         )
         # Corrupt the sidecar protocol.
-        from src.probe_activations import _layer_base
+        from postdyn.probe_activations import _layer_base
 
         base = _layer_base(act_root, "olmo3-base", "main", TEST_LAYERS[0])
         with open(base + ".json", encoding="utf-8") as f:
@@ -1766,7 +1766,7 @@ class TestActivationLoaderProtocol:
         _write_synthetic_activations(
             act_root, ckpt_map, [TEST_LAYERS[0]], [BASE_CHECKPOINT], records
         )
-        from src.probe_activations import _layer_base
+        from postdyn.probe_activations import _layer_base
 
         base = _layer_base(act_root, "olmo3-base", "main", TEST_LAYERS[0])
         with open(base + ".json", encoding="utf-8") as f:
@@ -1787,7 +1787,7 @@ class TestActivationLoaderProtocol:
         _write_synthetic_activations(
             act_root, ckpt_map, [TEST_LAYERS[0]], [BASE_CHECKPOINT], records
         )
-        from src.probe_activations import _layer_base
+        from postdyn.probe_activations import _layer_base
 
         base = _layer_base(act_root, "olmo3-base", "main", TEST_LAYERS[0])
         with open(base + ".json", encoding="utf-8") as f:
@@ -1805,7 +1805,7 @@ class TestActivationLoaderProtocol:
         """A flattened (rank-1) activation tensor must be rejected, not reshaped."""
         from safetensors.torch import save_file
 
-        from src.probe_activations import _ACTIVATIONS_KEY, _layer_base
+        from postdyn.probe_activations import _ACTIVATIONS_KEY, _layer_base
 
         act_root = str(tmp_path / "activations")
         records = _build_synthetic_probe_records(n_per_class=5)
@@ -1916,7 +1916,7 @@ class TestCLI:
         # main() uses the full EXPERIMENT_CHECKPOINTS by default; override
         # via a monkeypatched compute_all_metrics is fragile, so instead
         # we call main with our mini grid by patching the defaults.
-        import experiments.run_rl_zero_syntax_metrics as mod
+        import scripts.run_rl_zero_syntax_metrics as mod
 
         original_compute = mod.compute_all_metrics
 

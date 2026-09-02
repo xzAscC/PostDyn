@@ -1,4 +1,4 @@
-"""Tests for experiments/migrate_concept_sidecars.py."""
+"""Tests for scripts/migrate_concept_sidecars.py."""
 
 from __future__ import annotations
 
@@ -11,18 +11,18 @@ import pytest
 import torch
 from safetensors.torch import save_file
 
-from experiments.migrate_concept_sidecars import (
+from scripts.migrate_concept_sidecars import (
     build_v1_sidecar,
     migrate_one,
     migrate_tree,
 )
-from src.concept_dynamics import (
+from postdyn.concept_dynamics import (
     EXPECTED_D_MODEL,
     SIDECAR_SCHEMA,
     SIDECAR_VERSION,
     validate_concept_sidecar,
 )
-from src.rl_zero_experiment import EXPERIMENT_CONCEPTS, N_SAMPLES
+from postdyn.rl_zero_experiment import EXPERIMENT_CONCEPTS, N_SAMPLES
 
 
 def _sha(path: Path) -> str:

@@ -2,7 +2,7 @@ import pytest
 import torch
 from torch import nn
 
-from src.residual_ablation import (  # pyright: ignore[reportMissingImports]
+from postdyn.residual_ablation import (  # pyright: ignore[reportMissingImports]
     ResidualStreamAblation,
     register_residual_ablation,
     residual_stream_ablation,

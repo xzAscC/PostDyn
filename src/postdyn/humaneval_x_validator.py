@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Protocol, Sequence, cast
 
-from src.contrastive_datasets import (
+from postdyn.contrastive_datasets import (
     HUMANEVAL_X_DATASET,
     HUMANEVAL_X_REVISION,
     _humaneval_task_id,
@@ -266,7 +266,7 @@ def load_humaneval_x_raw_pairs(
     """Load the first ``n_samples`` aligned raw (python, cpp) HumanEval-X items.
 
     Pulls the pinned JSONL for both languages via the standard
-    ``src.contrastive_datasets`` constants. A ``dataset_loader`` seam lets
+    ``postdyn.contrastive_datasets`` constants. A ``dataset_loader`` seam lets
     tests inject a fake loader without touching network code.
 
     Raises:
@@ -300,10 +300,10 @@ def _default_dataset_loader(language: str) -> Iterable[dict[str, Any]]:
     """Default raw loader backed by ``datasets.load_dataset``.
 
     The split is constructed with the same pinned revision used by
-    ``src.contrastive_datasets`` so a single source of truth describes
+    ``postdyn.contrastive_datasets`` so a single source of truth describes
     both the contrastive pipeline and this validator.
     """
-    from src.contrastive_datasets import (
+    from postdyn.contrastive_datasets import (
         _HUMANEVAL_X_FILES,
     )  # local import: keep CLI --help offline
 
@@ -1449,7 +1449,7 @@ def load_humaneval_x_pairs_by_ids(
     first ``n_samples`` shared ids in sorted order, this function loads
     exactly the ids the caller asked for and **preserves the caller's
     ordering**. Downstream pipelines (e.g. the 50 pinned ids in
-    ``datasets/shared_item_ids.json``) depend on a deterministic, request
+    ``data/shared_item_ids.json``) depend on a deterministic, request
     order-respecting report so a stale or hand-edited
     ``shared_item_ids.json`` is detectable.
 
@@ -1530,7 +1530,7 @@ def validate_pairs_by_ids(
     Mirrors :func:`validate_first_n_pairs` but selects ids by name
     rather than by the first ``n_samples`` of the sorted shared pool.
     Used to gate the 50 pinned downstream ids in
-    ``datasets/shared_item_ids.json`` before any model-side pass@1 work.
+    ``data/shared_item_ids.json`` before any model-side pass@1 work.
 
     The full set of rows is computed before any file is written, so a
     failure midway through leaves ``report_path`` untouched (the

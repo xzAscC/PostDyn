@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Materialize the 9 contrastive datasets to ``datasets/*.json``.
+"""Materialize the 9 contrastive datasets to ``data/*.json``.
 
 Each dataset is streamed **one at a time** and written to disk before the next
 one is fetched, so peak memory stays bounded. ``--only NAME`` runs a single
@@ -19,9 +19,9 @@ Datasets::
 
 Usage::
 
-    uv run python experiments/download_datasets.py
-    uv run python experiments/download_datasets.py --only belebele
-    uv run python experiments/download_datasets.py --only humaneval_x --force
+    uv run python scripts/download_datasets.py
+    uv run python scripts/download_datasets.py --only belebele
+    uv run python scripts/download_datasets.py --only humaneval_x --force
 """
 
 from __future__ import annotations
@@ -37,11 +37,10 @@ import urllib.request
 from collections.abc import Callable, Iterable  # noqa: F401
 
 # Make ``src`` importable when run as a script.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from datasets import load_dataset  # noqa: E402
 
-from src.dataset_store import (  # noqa: E402
+from postdyn.dataset_store import (  # noqa: E402
     BELEBELE_FILE,
     BELEBELE_SHARED_KEY,
     BEYONDX_FILE,
@@ -151,7 +150,7 @@ def _release() -> None:
 
 def _humaneval_x_lang_url(lang: str) -> str:
     return (
-        f"https://huggingface.co/datasets/{HUMANEVAL_X_DATASET}/resolve/"
+        f"https://huggingface.co/data/{HUMANEVAL_X_DATASET}/resolve/"
         f"{HUMANEVAL_X_REVISION}/data/{lang}/data/humaneval.jsonl"
     )
 
@@ -208,7 +207,7 @@ def download_humaneval_x(force: bool = False) -> None:
     _log(f"  sampled {len(shared_ids)} pinned ids (seed={SHARED_SAMPLE_SEED})")
 
     # Pin into shared_item_ids.json only if missing or invalid.
-    from src.dataset_store import get_shared_ids
+    from postdyn.dataset_store import get_shared_ids
 
     existing = get_shared_ids()
     pinned = existing.get(HUMANEVAL_X_SHARED_KEY)
@@ -441,7 +440,7 @@ def download_belebele(force: bool = False) -> None:
     _log(f"  shared keys across dialects: {len(shared_keys_pool)}")
 
     # Pin / reuse pinned list.
-    from src.dataset_store import get_shared_ids
+    from postdyn.dataset_store import get_shared_ids
 
     existing = get_shared_ids()
     pinned = existing.get(BELEBELE_SHARED_KEY)
@@ -618,7 +617,7 @@ DOWNLOADERS: dict[str, Callable[..., object]] = {
 
 def parse_args(argv: list[str] | None = None):
     parser = argparse.ArgumentParser(
-        description="Materialize contrastive datasets to datasets/*.json",
+        description="Materialize contrastive datasets to data/*.json",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(

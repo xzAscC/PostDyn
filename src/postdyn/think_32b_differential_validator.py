@@ -15,7 +15,7 @@ from typing import Any
 import torch
 from safetensors.torch import load_file
 
-from src.config import (
+from postdyn.config import (
     EXPERIMENT_LAYERS_32B,
     OLMO3_VARIANTS,
     THINK_32B_RLVR_CHECKPOINTS,
@@ -23,19 +23,19 @@ from src.config import (
     THINK_32B_SFT_CHECKPOINTS,
     THINK_32B_SFT_REVISIONS,
 )
-from src.domain_datasets import (
+from postdyn.domain_datasets import (
     DOLCI_HF_IDS,
     DOLCI_HF_REVISIONS,
     WIKITEXT_CONFIG,
     WIKITEXT_HF_ID,
     WIKITEXT_SPLIT,
 )
-from src.think_sft_differential_experiment import CONCEPT_PAIRS
-from src.quantized_model_loader import (
+from postdyn.think_sft_differential_experiment import CONCEPT_PAIRS
+from postdyn.quantized_model_loader import (
     CANONICAL_NF4_PROVENANCE,
     validate_nf4_load_diagnostics,
 )
-from src.differential_subspace import subspace_stability
+from postdyn.differential_subspace import subspace_stability
 
 MODEL_BY_TRAJECTORY = {
     "rlvr": "olmo3-32b-think-rlvr",

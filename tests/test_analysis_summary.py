@@ -1,5 +1,5 @@
-"""Tests for ``src/analysis_summary.py`` and its CLI
-``experiments/build_analysis_summary.py``.
+"""Tests for ``postdyn/analysis_summary.py`` and its CLI
+``scripts/build_analysis_summary.py``.
 
 The tests are model-free and split into three layers:
 
@@ -17,7 +17,7 @@ The tests are model-free and split into three layers:
    absent) -- the deterministic producer reproduces the canonical 11-row
    checkpoint table, the canonical correlation block, and the canonical
    limitations/integrity text from the actual
-   ``results/rl_zero_code_syntax`` artifacts.
+   ``logs/rl_zero_code_syntax`` artifacts.
 
 Only ``numpy`` / ``scipy`` (already required) and ``pytest`` are used.
 """
@@ -35,8 +35,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-import experiments.build_analysis_summary as cli
-from src.analysis_summary import (
+import scripts.build_analysis_summary as cli
+from postdyn.analysis_summary import (
     AGGREGATE_METRIC_KEYS,
     AGGREGATION_DESCRIPTION,
     BASE_CHECKPOINT,
@@ -96,7 +96,7 @@ TEST_RELATED: tuple[str, ...] = RELATED_CONCEPTS
 
 #: Canonical 11-checkpoint schedule for tests that drive ``build_summary`` /
 #: ``validate_summary``. These functions intentionally enforce the canonical
-#: experiment grid (see :data:`src.rl_zero_experiment.EXPERIMENT_CHECKPOINTS`).
+#: experiment grid (see :data:`postdyn.rl_zero_experiment.EXPERIMENT_CHECKPOINTS`).
 TEST_BUILD_CHECKPOINTS: list[str] = list(EXPERIMENT_CHECKPOINTS)
 #: Canonical 10-layer schedule (same reasoning as TEST_BUILD_CHECKPOINTS).
 TEST_BUILD_LAYERS: list[int] = list(EXPERIMENT_LAYERS)

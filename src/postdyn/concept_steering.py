@@ -35,7 +35,9 @@ from safetensors.torch import save_file
 # Path Configuration
 # =============================================================================
 
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 _DEFAULT_INDEX_PATH = os.path.join(_PROJECT_ROOT, "data", "concept_index.txt")
 
 

@@ -10,7 +10,7 @@ err() { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; }
 
 usage() {
     cat << 'USAGE'
-Usage: experiments/run_concept_dynamics.sh [MODE]
+Usage: scripts/run_concept_dynamics.sh [MODE]
 
 Runs the Concept Dynamics experiment: DiM concept extraction across
 Olmo-3-7B post-training variants, then stability + gram analysis.
@@ -29,13 +29,13 @@ Options (override defaults):
   --[no-]chat-template      Toggle tokenizer.apply_chat_template wrapping
 
 Environment:
-  OUTPUT_DIR  Output directory (full default: results/concept_dynamics_multi;
-              quick default: results/concept_dynamics_multi_quick)
+  OUTPUT_DIR  Output directory (full default: logs/concept_dynamics_multi;
+              quick default: logs/concept_dynamics_multi_quick)
 
 Examples:
-  experiments/run_concept_dynamics.sh quick
-  experiments/run_concept_dynamics.sh full --models olmo3-think-sft,olmo3-rl-zero-math
-  experiments/run_concept_dynamics.sh --concepts code_python_vs_cpp,gender_she_vs_he
+  scripts/run_concept_dynamics.sh quick
+  scripts/run_concept_dynamics.sh full --models olmo3-think-sft,olmo3-rl-zero-math
+  scripts/run_concept_dynamics.sh --concepts code_python_vs_cpp,gender_she_vs_he
 
 USAGE
 }
@@ -57,15 +57,15 @@ main() {
 
     case "$mode" in
         full)
-            output_dir="${OUTPUT_DIR:-results/concept_dynamics_multi}"
+            output_dir="${OUTPUT_DIR:-logs/concept_dynamics_multi}"
             log "Running FULL concept dynamics experiment"
-            uv run python experiments/run_concept_dynamics.py \
+            uv run python scripts/run_concept_dynamics.py \
                 --output "$output_dir" "${passthrough[@]}"
             ;;
         quick)
-            output_dir="${OUTPUT_DIR:-results/concept_dynamics_multi_quick}"
+            output_dir="${OUTPUT_DIR:-logs/concept_dynamics_multi_quick}"
             log "Running QUICK concept dynamics (smoke test)"
-            uv run python experiments/run_concept_dynamics.py \
+            uv run python scripts/run_concept_dynamics.py \
                 --quick --output "$output_dir" "${passthrough[@]}"
             ;;
         help|--help|-h)

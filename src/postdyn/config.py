@@ -16,10 +16,11 @@ from typing import Optional
 # Path Configuration
 # =============================================================================
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RESULTS_DIR = os.path.join(PROJECT_ROOT, "results")
-FIGURES_DIR = os.path.join(RESULTS_DIR, "figures")
-DOCS_DIR = os.path.join(PROJECT_ROOT, "docs")
+PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+LOGS_DIR = os.path.join(PROJECT_ROOT, "logs")
+FIGS_DIR = os.path.join(PROJECT_ROOT, "figs")
 
 
 # =============================================================================
@@ -408,7 +409,7 @@ OLMO3_VARIANTS: dict[str, ModelConfig] = {
 
 # =============================================================================
 # EXPERIMENT CONFIGURATION — PaCE concepts × OLMo-3 (Think focus)
-# Setup adapted from TrainingDynamic.tex. See docs/experiment_setup.md.
+# Setup adapted from TrainingDynamic.tex.
 # =============================================================================
 
 EXPERIMENT_CONCEPT_SOURCE_URL = (
@@ -444,7 +445,7 @@ RL_ZERO_FAMILY: list[str] = [
 # Early stage; will expand toward ~10 per TrainingDynamic.tex.
 EXPERIMENT_MODELS: list[str] = THINK_CHAIN + RL_ZERO_FAMILY
 
-# Layer selection: slide formula (per docs/concept_dynamics_experiment.md).
+# Layer selection: slide formula.
 # For j = 0..n-1 and L layers, the layer index is
 #     ell_j = round[(0.1 + 0.8 * j / (n-1)) * (L - 1)]
 # so the sampled depth range slides from ~10% to ~90% of (L-1). For OLMo-3

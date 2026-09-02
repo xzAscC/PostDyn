@@ -2,8 +2,8 @@
 """Build the data-only phase of the RL-Zero-Code *Python syntax validity* concept.
 
 This script is **data-only**: it constructs two auditable JSON artifacts under
-``datasets/allenai/Dolci-RL-Zero-Code-7B/`` and runs no model, registers no
-concept in ``src/contrastive_datasets.py``, and alters no checkpoint config.
+``data/allenai/Dolci-RL-Zero-Code-7B/`` and runs no model, registers no
+concept in ``postdyn/contrastive_datasets.py``, and alters no checkpoint config.
 
 What it produces
 ----------------
@@ -22,7 +22,7 @@ What it produces
    introduced. Six balanced mutation kinds are used so the 50 records are not
    50 identical deletions. Target task ids are drawn deterministically from the
    HumanEval-X ids that are **disjoint** from (a) the pinned downstream
-   ``humaneval_x_task_ids`` in ``datasets/shared_item_ids.json`` and (b) the
+   ``humaneval_x_task_ids`` in ``data/shared_item_ids.json`` and (b) the
    legacy ``0..49`` validator report.
 
 2. ``downstream.json`` -- downstream evaluation items aligned to the same
@@ -53,13 +53,13 @@ Usage
 
 ::
 
-    uv run python experiments/build_rl_zero_syntax_concept.py
-    uv run python experiments/build_rl_zero_syntax_concept.py --force
-    uv run python experiments/build_rl_zero_syntax_concept.py --only pairs
-    uv run python experiments/build_rl_zero_syntax_concept.py --only downstream
+    uv run python scripts/build_rl_zero_syntax_concept.py
+    uv run python scripts/build_rl_zero_syntax_concept.py --force
+    uv run python scripts/build_rl_zero_syntax_concept.py --only pairs
+    uv run python scripts/build_rl_zero_syntax_concept.py --only downstream
 
 Network access to ``huggingface.co`` is required (HumanEval-X test fields and
-MMLU). The local ``datasets/humaneval_x.json`` (code fields, tests dropped) is
+MMLU). The local ``data/humaneval_x.json`` (code fields, tests dropped) is
 reused for the python positives and cpp downstream code, but the official
 ``test`` field is always re-fetched from the pinned revision.
 """
@@ -78,9 +78,8 @@ from collections import Counter
 from typing import Any, Callable
 
 # Make ``src`` importable when run as a script.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.dataset_store import (  # noqa: E402
+from postdyn.dataset_store import (  # noqa: E402
     DATASETS_DIR,
     PROJECT_ROOT,
     load_json,
@@ -91,7 +90,7 @@ from src.dataset_store import (  # noqa: E402
 # =============================================================================
 
 #: Directory that already holds pairs.json + README.md for the Dolci concept set.
-CONCEPT_DIR: str = str(PROJECT_ROOT / "datasets" / "allenai" / "Dolci-RL-Zero-Code-7B")
+CONCEPT_DIR: str = str(PROJECT_ROOT / "data" / "allenai" / "Dolci-RL-Zero-Code-7B")
 PAIRS_OUT: str = os.path.join(CONCEPT_DIR, "python_syntax_pairs.json")
 DOWNSTREAM_OUT: str = os.path.join(CONCEPT_DIR, "downstream.json")
 
@@ -111,7 +110,7 @@ LOCAL_HUMANEVAL_X: str = str(DATASETS_DIR / "humaneval_x.json")
 
 #: Path to the existing legacy validator report (first 50 aligned ids = 0..49).
 LEGACY_VALIDATION_REPORT: str = str(
-    PROJECT_ROOT / "experiments" / "artifacts" / "humaneval-x-validation.jsonl"
+    PROJECT_ROOT / "logs" / "artifacts" / "humaneval-x-validation.jsonl"
 )
 
 # =============================================================================
@@ -479,7 +478,7 @@ def build_pairs(target_ids: list[int]) -> dict[str, Any]:
             "dataset": HUMANEVAL_X_DATASET,
             "revision": HUMANEVAL_X_REVISION,
             "language": "python",
-            "local_file": "datasets/humaneval_x.json",
+            "local_file": "data/humaneval_x.json",
         },
         "selection": {
             "n_pairs": N_PAIRS,
@@ -488,8 +487,8 @@ def build_pairs(target_ids: list[int]) -> dict[str, Any]:
             "excluded_downstream_ids": _load_shared_downstream_ids(),
             "excluded_legacy_report_ids": sorted(_load_legacy_report_ids()),
             "disjoint_from": [
-                "datasets/shared_item_ids.json::humaneval_x_task_ids",
-                "experiments/artifacts/humaneval-x-validation.jsonl (legacy 0..49)",
+                "data/shared_item_ids.json::humaneval_x_task_ids",
+                "scripts/artifacts/humaneval-x-validation.jsonl (legacy 0..49)",
             ],
             "disjointness_verified": set(target_ids).isdisjoint(
                 set(_load_shared_downstream_ids())
@@ -516,7 +515,7 @@ def build_pairs(target_ids: list[int]) -> dict[str, Any]:
 
 def _humaneval_lang_url(lang: str) -> str:
     return (
-        f"https://huggingface.co/datasets/{HUMANEVAL_X_DATASET}/resolve/"
+        f"https://huggingface.co/data/{HUMANEVAL_X_DATASET}/resolve/"
         f"{HUMANEVAL_X_REVISION}/data/{lang}/data/humaneval.jsonl"
     )
 

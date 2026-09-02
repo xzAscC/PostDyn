@@ -21,7 +21,7 @@ from typing import Optional
 import torch
 import pytest
 
-from src.concept_dynamics import (
+from postdyn.concept_dynamics import (
     ConceptVector,
     extract_layer_activations,
     compute_concept_vector,
@@ -109,7 +109,7 @@ class TestModelLoading:
     def test_generic_32b_loading_rejected_before_dependency_imports(
         self, model_name, loader, monkeypatch
     ):
-        from src.config import OLMO3_VARIANTS
+        from postdyn.config import OLMO3_VARIANTS
 
         imported = []
         real_import = __import__
@@ -152,7 +152,7 @@ class TestModelLoading:
                 AutoTokenizer=TokenizerFactory,
             ),
         )
-        from src.config import OLMO3_VARIANTS
+        from postdyn.config import OLMO3_VARIANTS
 
         _load_model_and_tokenizer(OLMO3_VARIANTS["olmo3-think-sft"], "step_1000")
 
@@ -240,8 +240,8 @@ class TestExperimentResume:
     def test_failed_checkpoint_remains_retryable_and_keeps_cache(
         self, tmp_path, monkeypatch
     ):
-        from src import config as config_module
-        from src import concept_dynamics as dynamics_module
+        from postdyn import config as config_module
+        from postdyn import concept_dynamics as dynamics_module
 
         model_config = SimpleNamespace(name="model", hf_id="org/model")
         monkeypatch.setattr(config_module, "OLMO3_VARIANTS", {"model": model_config})
@@ -272,8 +272,8 @@ class TestExperimentResume:
         assert cleaned == []
 
     def test_dynamics_excludes_partial_failed_checkpoints(self, tmp_path, monkeypatch):
-        from src import config as config_module
-        from src import concept_dynamics as dynamics_module
+        from postdyn import config as config_module
+        from postdyn import concept_dynamics as dynamics_module
 
         checkpoints = ["step_1", "step_2", "step_failed"]
         monkeypatch.setattr(config_module, "MODEL_CHECKPOINTS", {"model": checkpoints})
@@ -645,7 +645,7 @@ class TestSelectUniformLayers:
 
     def test_matches_experiment_layers_7b(self):
         """Should match EXPERIMENT_LAYERS_7B from config."""
-        from src.config import EXPERIMENT_LAYERS_7B
+        from postdyn.config import EXPERIMENT_LAYERS_7B
 
         layers = select_uniform_layers(32, n=10)
         assert layers == EXPERIMENT_LAYERS_7B
@@ -754,7 +754,7 @@ class TestSaveConceptVectorsAtomicity:
     def test_tensor_published_before_sidecar(self, tmp_path, monkeypatch):
         """Interpose between the two os.replace calls and assert the tensor is
         already on disk when the sidecar lands."""
-        import src.concept_dynamics as cd
+        import postdyn.concept_dynamics as cd
 
         events: list[str] = []
         real_replace = os.replace
@@ -777,7 +777,7 @@ class TestSaveConceptVectorsAtomicity:
     # ------------------------------------------------------------------
 
     def test_failure_before_tensor_publish_cleans_temp(self, tmp_path, monkeypatch):
-        import src.concept_dynamics as cd
+        import postdyn.concept_dynamics as cd
 
         def boom(*args, **kwargs):
             raise RuntimeError("simulated tensor write failure")
@@ -805,7 +805,7 @@ class TestSaveConceptVectorsAtomicity:
         Outcome: tensor may be on disk, but the sidecar is NOT, so no loader
         can ever observe a sidecar referencing an unpublished tensor. All temp
         files are cleaned."""
-        import src.concept_dynamics as cd
+        import postdyn.concept_dynamics as cd
 
         real_replace = os.replace
         call = {"n": 0}
@@ -844,7 +844,7 @@ class TestSaveConceptVectorsAtomicity:
         We capture every path ``save_file`` and ``_write_json_file`` receive and
         assert none of them is the predictable base+extension name.
         """
-        import src.concept_dynamics as cd
+        import postdyn.concept_dynamics as cd
 
         seen_paths: list[str] = []
         real_save = cd.save_file

@@ -11,7 +11,7 @@ before activation extraction. Stability includes all unordered checkpoint-pair
 SubSim values (45 pairs per concept and layer), alongside consecutive/reference
 summaries.
 
-Writes under ``results/math_differential_subspace_setup_raw_prompt/``::
+Writes under ``logs/math_differential_subspace_setup_raw_prompt/``::
 
     U/{model}/{checkpoint}/layer_{L}/{concept}.safetensors
     U/{model}/{checkpoint}/layer_{L}/{concept}.json
@@ -23,8 +23,8 @@ Writes under ``results/math_differential_subspace_setup_raw_prompt/``::
 
 Usage::
 
-    uv run python experiments/run_math_differential_subspace.py
-    uv run python experiments/run_math_differential_subspace.py --quick
+    uv run python scripts/run_math_differential_subspace.py
+    uv run python scripts/run_math_differential_subspace.py --quick
 """
 
 from __future__ import annotations
@@ -34,7 +34,6 @@ import gc
 import hashlib
 import json
 import os
-import sys
 import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -44,25 +43,24 @@ from typing import Any, Callable, Optional
 import torch
 from safetensors.torch import load_file, save_file
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.concept_dynamics import (
+from postdyn.concept_dynamics import (
     _clean_hf_cache,
     _load_model_and_tokenizer,
 )
-from src.differential_subspace import (
+from postdyn.differential_subspace import (
     DifferentialSubspace,
     compute_differential_subspace,
     compute_pair_metrics_at_checkpoint,
     compute_stability_trajectory,
     subspace_to_serializable,
 )
-from src.domain_datasets import (
+from postdyn.domain_datasets import (
     DOLCI_HF_IDS,
     DOLCI_HF_REVISIONS,
     load_dolci_domain_prompts,
 )
-from src.math_differential_experiment import (
+from postdyn.math_differential_experiment import (
     CONCEPT_PAIRS,
     EXPERIMENT_CHECKPOINTS,
     EXPERIMENT_LAYERS,

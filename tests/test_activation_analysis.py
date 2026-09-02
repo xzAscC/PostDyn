@@ -4,13 +4,13 @@ import types
 import pytest
 import torch
 
-from src.activation_analysis import (
+from postdyn.activation_analysis import (
     _get_tokenizer,
     _load_model,
     compute_activation_alpha_req,
     compute_activation_rankme,
 )
-from src.config import OLMO3_BASE_CONFIG, OLMO3_VARIANTS
+from postdyn.config import OLMO3_BASE_CONFIG, OLMO3_VARIANTS
 
 
 @pytest.mark.parametrize("loader", [_get_tokenizer, _load_model])

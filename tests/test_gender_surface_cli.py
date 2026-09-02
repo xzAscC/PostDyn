@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 _ROOT = Path(__file__).resolve().parents[1]
-_CLI_PATH = _ROOT / "experiments" / "analyze_gender_surface_control.py"
+_CLI_PATH = _ROOT / "scripts" / "analyze_gender_surface_control.py"
 
 
 def _load_cli():
@@ -28,8 +28,8 @@ def test_cli_defaults_target_paired_vectors_and_final_math_checkpoint():
     args = cli.parse_args([])
     assert args.model == "olmo3-rl-zero-math"
     assert args.checkpoint == "step_1900"
-    assert args.vectors_dir == "results/concept_dynamics_paired/vectors"
-    assert args.output.startswith("results/concept_dynamics_paired/")
+    assert args.vectors_dir == "logs/concept_dynamics_paired/vectors"
+    assert args.output.startswith("logs/concept_dynamics_paired/")
 
 
 def test_cli_default_checkpoint_follows_selected_model():

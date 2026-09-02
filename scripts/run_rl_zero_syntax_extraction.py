@@ -6,7 +6,7 @@ activation collection (400 records) across **base ``main`` + ten RL-Zero-Code
 checkpoints** (11 total), always with ``use_chat_template=False``.
 
 Why a separate driver?
-    The legacy :func:`src.concept_dynamics.run_full_experiment` loads its own
+    The legacy :func:`postdyn.concept_dynamics.run_full_experiment` loads its own
     model internally and unloads it per checkpoint; it cannot share that
     loaded model with the probe-activation pass. This driver implements a
     **narrow checkpoint runner** (:func:`run_checkpoint_extraction`) that loads
@@ -14,7 +14,7 @@ Why a separate driver?
     and probe extraction paths with that single load, then unloads GPU memory
     before moving to the next checkpoint.
 
-What it writes (all under ``results/rl_zero_code_syntax`` only)
+What it writes (all under ``logs/rl_zero_code_syntax`` only)
 ::
 
     {output_root}/
@@ -38,7 +38,7 @@ Resume contract
 
 Usage::
 
-    uv run python experiments/run_rl_zero_syntax_extraction.py [OPTIONS]
+    uv run python scripts/run_rl_zero_syntax_extraction.py [OPTIONS]
 
 Options:
     --only base|rl|all     Select base only, RL only, or all 11 (default: all)
@@ -46,14 +46,14 @@ Options:
     --limit N              Take only the first N selected checkpoints
     --layers L1,L2         Comma-separated layer indices (default: 10 uniform)
     --samples N            Paired records per concept class (default: 50)
-    --output DIR           Output root (default: results/rl_zero_code_syntax)
+    --output DIR           Output root (default: logs/rl_zero_code_syntax)
     --max-seq-len N        Max tokenization length (default: 2048)
     --keep-hf-cache        Do not delete HF cache entries between checkpoints
     --quick                Smoke test: 1 layer, 5 samples, 1 checkpoint
 
 This script runs no real model during tests (the runner accepts injected
-mock model/tokenizer loaders), never writes to ``results/concept_dynamics_multi``,
-and never modifies datasets or ``src/config.py``.
+mock model/tokenizer loaders), never writes to ``logs/concept_dynamics_multi``,
+and never modifies datasets or ``postdyn/config.py``.
 """
 
 from __future__ import annotations
@@ -67,11 +67,10 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-# Make ``src`` importable when run directly via ``python experiments/...``.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Make ``src`` importable when run directly via ``python scripts/...``.
 
-from src.config import ModelConfig
-from src.concept_dynamics import (
+from postdyn.config import ModelConfig
+from postdyn.concept_dynamics import (
     EXPECTED_D_MODEL,
     _clean_hf_cache,
     _load_model_and_tokenizer,
@@ -81,7 +80,7 @@ from src.concept_dynamics import (
     load_concept_vectors,
     save_concept_vectors,
 )
-from src.probe_activations import (
+from postdyn.probe_activations import (
     PROTOCOL,
     ProbeRecord,
     build_probe_records,
@@ -89,7 +88,7 @@ from src.probe_activations import (
     is_layer_complete,
     run_extraction_with_resume,
 )
-from src.rl_zero_experiment import (
+from postdyn.rl_zero_experiment import (
     BASE_CHECKPOINT,
     BASE_MODEL,
     EXPERIMENT_CHECKPOINTS,
@@ -158,7 +157,7 @@ def resolve_output_root(*, quick: bool, override: str | None) -> str:
     """Resolve the output root, honouring the experiment's own :func:`results_root`.
 
     An explicit ``override`` wins; otherwise the quick/full default from
-    :mod:`src.rl_zero_experiment` is used.
+    :mod:`postdyn.rl_zero_experiment` is used.
     """
     if override is not None:
         return override
@@ -242,7 +241,7 @@ def select_checkpoints(
 
     Returns:
         Ordered list of checkpoint names from
-        :data:`src.rl_zero_experiment.EXPERIMENT_CHECKPOINTS`.
+        :data:`postdyn.rl_zero_experiment.EXPERIMENT_CHECKPOINTS`.
 
     Raises:
         ValueError: ``only`` is not one of the three valid values.
@@ -631,7 +630,7 @@ def _extract_concept_vectors(
     import torch
 
     if concept_texts_fn is None:
-        from src.contrastive_datasets import load_contrastive_texts as concept_texts_fn
+        from postdyn.contrastive_datasets import load_contrastive_texts as concept_texts_fn
 
     results: dict[str, dict[str, Any]] = {}
 
@@ -825,11 +824,11 @@ def run_checkpoint_extraction(
         output_root: Isolated results root.
         max_seq_len: Max tokenization length for both extraction paths.
         model_loader: Injectable ``(ModelConfig, revision) -> (model, tokenizer)``.
-            Defaults to :func:`src.concept_dynamics._load_model_and_tokenizer`.
+            Defaults to :func:`postdyn.concept_dynamics._load_model_and_tokenizer`.
         concept_texts_fn: Injectable ``(concept, n) -> (pos_texts, neg_texts)``.
-            Defaults to :func:`src.contrastive_datasets.load_contrastive_texts`.
+            Defaults to :func:`postdyn.contrastive_datasets.load_contrastive_texts`.
         probe_records_fn: Injectable ``() -> list[ProbeRecord]``.
-            Defaults to :func:`src.probe_activations.build_probe_records`.
+            Defaults to :func:`postdyn.probe_activations.build_probe_records`.
         unload_gpu: If ``True`` (default), call ``gc.collect`` and
             ``torch.cuda.empty_cache`` after extraction.
 
@@ -858,7 +857,7 @@ def run_checkpoint_extraction(
 
     # Build concept source provenance once so strict v1 checks can bind it.
     if concept_texts_fn is None:
-        from src.contrastive_datasets import load_contrastive_texts as concept_texts_fn
+        from postdyn.contrastive_datasets import load_contrastive_texts as concept_texts_fn
 
     concept_sources: ConceptSources = {}
     for concept in concepts:

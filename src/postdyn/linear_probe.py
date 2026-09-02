@@ -1,7 +1,7 @@
 """Grouped eight-class one-vs-rest L2 logistic linear-probe scoring.
 
-This is **metric 4** of the four-metric representation/readout suite defined in
-``docs/rl_zero_code_concept_experiment_plan.md``. Given a matrix of pre-extracted
+This is **metric 4** of the four-metric representation/readout suite. Given a
+matrix of pre-extracted
 hidden states and one of eight category labels per sample, it trains a
 **one-vs-rest L2 logistic regression** probe per class under **leakage-safe
 task/template-grouped K-fold folds** and reports **balanced accuracy** and

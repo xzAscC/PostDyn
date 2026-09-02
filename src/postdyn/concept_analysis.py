@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import torch
 
-from src.concept_steering import ConceptSteeringVector
+from postdyn.concept_steering import ConceptSteeringVector
 
 
 # =============================================================================

@@ -20,20 +20,20 @@ from typing import Any
 import torch
 from safetensors.torch import load_file
 
-from src.config import (
+from postdyn.config import (
     MODEL_CHECKPOINTS,
     OLMO3_VARIANTS,
     THINK_7B_RLVR_CHECKPOINTS,
     THINK_7B_RLVR_REVISIONS,
 )
-from src.domain_datasets import (
+from postdyn.domain_datasets import (
     DOLCI_HF_IDS,
     DOLCI_HF_REVISIONS,
     WIKITEXT_CONFIG,
     WIKITEXT_HF_ID,
     WIKITEXT_SPLIT,
 )
-from src.think_sft_differential_experiment import CONCEPT_PAIRS
+from postdyn.think_sft_differential_experiment import CONCEPT_PAIRS
 
 
 CHECKPOINTS_SFT: tuple[str, ...] = tuple(MODEL_CHECKPOINTS["olmo3-think-sft"])

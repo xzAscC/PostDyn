@@ -8,7 +8,7 @@ import pytest
 import torch
 from safetensors.torch import save_file
 
-from src import think_32b_differential_validator as validator
+from postdyn import think_32b_differential_validator as validator
 
 
 def _tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:

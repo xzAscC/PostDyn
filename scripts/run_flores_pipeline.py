@@ -5,22 +5,20 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from huggingface_hub import snapshot_download
 
-from src.concept_dynamics import (
+from postdyn.concept_dynamics import (
     _clean_hf_cache,
     compute_dynamics_analysis,
     run_model_extraction,
 )
-from src.config import EXPERIMENT_LAYERS_7B, MODEL_CHECKPOINTS, OLMO3_VARIANTS
-from src.contrastive_datasets import load_flores_pairs
+from postdyn.config import EXPERIMENT_LAYERS_7B, MODEL_CHECKPOINTS, OLMO3_VARIANTS
+from postdyn.contrastive_datasets import load_flores_pairs
 
 CONCEPT = "if_eng_vs_fra"
 ALL_CONCEPTS = [
@@ -29,7 +27,7 @@ ALL_CONCEPTS = [
     "if_eng_vs_fra",
     "gender_she_vs_he",
 ]
-OUTPUT_DIR = "results/concept_dynamics_paired"
+OUTPUT_DIR = "logs/concept_dynamics_paired"
 LAYERS = EXPERIMENT_LAYERS_7B
 N_SAMPLES = 50
 MAX_SEQ_LEN = 2048

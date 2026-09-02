@@ -9,7 +9,7 @@ import os
 import torch
 import pytest
 
-from src.concept_steering import (
+from postdyn.concept_steering import (
     ConceptSteeringVector,
     load_concept_index,
     select_concepts,
