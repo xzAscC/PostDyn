@@ -1154,6 +1154,74 @@ def test_load_signed_subspace_without_tensors_raises_clear_error(tmp_path):
         runner.load_signed_subspace(tmp_path, "m", "step1000", 3, "math_vs_text")
 
 
+def test_subspace_complete_accepts_json_only_sidecars(tmp_path):
+    from scripts import run_think_sft_differential_subspace as runner
+
+    sub = compute_signed_differential_subspace(
+        torch.randn(8, 5), torch.randn(8, 5), concept="math_vs_text"
+    )
+    runner.save_signed_subspace(tmp_path, "m", "step1000", 3, sub, "sig", "rev")
+    assert runner.subspace_complete(
+        tmp_path, "m", "step1000", 3, "math_vs_text", "sig", "rev"
+    )
+    assert not runner.subspace_complete(
+        tmp_path, "m", "step1000", 3, "math_vs_text", "other-sig", "rev"
+    )
+    assert not runner.subspace_complete(
+        tmp_path, "m", "step1000", 3, "math_vs_text", "sig", "other-rev"
+    )
+    assert not runner.subspace_complete(
+        tmp_path, "m", "step6000", 3, "math_vs_text", "sig", "rev"
+    )
+
+
+def test_model_complete_skips_json_only_checkpoint(monkeypatch, tmp_path):
+    from scripts import run_think_sft_differential_subspace as runner
+
+    sub = compute_signed_differential_subspace(
+        torch.randn(8, 5), torch.randn(8, 5), concept="math_vs_text"
+    )
+    for layer in (3, 6):
+        runner.save_signed_subspace(tmp_path, "m", "step1000", layer, sub, "sig", "rev")
+        metrics_path = runner._layer_metrics_path(tmp_path, "m", "step1000", layer)
+        metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        metrics_path.write_text(
+            json.dumps(
+                {
+                    "model": "m",
+                    "checkpoint": "step1000",
+                    "layer": layer,
+                    "setup_signature": "sig",
+                    "revision": "rev",
+                    "n_samples": 8,
+                    "tau": 0.95,
+                    "concepts": {"math_vs_text": {"k_pos": sub.k_pos}},
+                }
+            ),
+            encoding="utf-8",
+        )
+    manifest_path = runner._manifest_path(tmp_path, "m", "step1000")
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "model": "m",
+                "checkpoint": "step1000",
+                "revision": "rev",
+                "setup_signature": "sig",
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert runner.model_complete(
+        tmp_path, "m", "step1000", [3, 6], ["math_vs_text"], "sig", "rev"
+    )
+    assert not runner.model_complete(
+        tmp_path, "m", "step6000", [3, 6], ["math_vs_text"], "sig", "rev"
+    )
+
+
 def test_finalize_stability_writes_both_signs(tmp_path):
     from scripts import run_think_sft_differential_subspace as runner
 

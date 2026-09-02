@@ -785,12 +785,11 @@ def subspace_complete(
     expected_revision: str | None = None,
 ) -> bool:
     st_path, js_path = _u_paths(root, model_name, checkpoint, layer, concept)
-    if not st_path.is_file() or not js_path.is_file():
+    if not js_path.is_file():
         return False
     try:
         meta = json.loads(js_path.read_text(encoding="utf-8"))
-        tensors = load_file(str(st_path))
-    except (OSError, json.JSONDecodeError, KeyError, RuntimeError, ValueError):
+    except (OSError, json.JSONDecodeError):
         return False
     if not isinstance(meta, dict):
         return False
@@ -805,6 +804,17 @@ def subspace_complete(
             return False
         if int(meta.get("layer", -1)) != layer:
             return False
+    except (IndexError, KeyError, TypeError, ValueError):
+        return False
+    if meta.get("tensors_saved", True) is False:
+        return True
+    if not st_path.is_file():
+        return False
+    try:
+        tensors = load_file(str(st_path))
+    except (OSError, RuntimeError, ValueError):
+        return False
+    try:
         u_pos = tensors.get("U_pos")
         u_neg = tensors.get("U_neg")
         return (
