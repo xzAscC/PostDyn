@@ -1006,6 +1006,40 @@ def test_skip_7b_gate_flag_bypasses_canonical_preflight(monkeypatch):
         runner._require_canonical_7b(project_root=None)
 
 
+def test_finalize_stability_skips_cleanly_for_json_only_trees(tmp_path):
+    from scripts import run_think_sft_differential_subspace as runner
+
+    sub = compute_signed_differential_subspace(
+        torch.randn(8, 5), torch.randn(8, 5), concept="math_vs_text"
+    )
+    for ck in ("step1000", "step6000"):
+        runner.save_signed_subspace(tmp_path, "olmo3-think-sft", ck, 3, sub, "sig", ck)
+    runner.save_signed_subspace(
+        tmp_path / "final_points",
+        "olmo3-think-sft",
+        "sft_main",
+        3,
+        sub,
+        "f-sig",
+        "f-rev",
+    )
+    result = runner.finalize_stability(
+        tmp_path,
+        "7b",
+        ["step1000", "step6000"],
+        [3],
+        ["math_vs_text"],
+        "sig",
+        model_key="olmo3-think-sft",
+        revisions={"step1000": "step1000", "step6000": "step6000"},
+        final_root=tmp_path / "final_points",
+        final_checkpoint="sft_main",
+        final_setup_sig="f-sig",
+        final_revision="f-rev",
+    )
+    assert result["skipped"] == "tensors_not_saved"
+
+
 def test_think_subspace_complete_rejects_checkpoint_sidecar_mismatch(tmp_path):
     from scripts import run_think_sft_differential_subspace as runner
 

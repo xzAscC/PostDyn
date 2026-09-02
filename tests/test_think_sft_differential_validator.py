@@ -14,9 +14,20 @@ validator = importlib.import_module("postdyn.think_sft_differential_validator")
 SFT_ROOT = Path("logs/think_sft_differential_subspace")
 
 
+def _real_tree_is_json_only() -> bool:
+    probe = SFT_ROOT / "U/olmo3-think-sft/step1000/layer_3/math_vs_wikitext.json"
+    try:
+        meta = json.loads(probe.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return meta.get("tensors_saved", True) is False
+
+
 def test_canonical_sft_tree_is_accepted_without_model_loading():
     if not (SFT_ROOT / "metrics/summary.json").is_file():
         pytest.skip("canonical generated SFT tree is unavailable")
+    if _real_tree_is_json_only():
+        pytest.skip("canonical tree is JSON-only (verification run)")
     report = validator.validate_result_tree(SFT_ROOT, "sft")
     assert report.ok, report.errors[:3]
 
@@ -35,21 +46,30 @@ def test_missing_signed_artifact_is_rejected(tmp_path):
     assert "unreadable sidecar" in error
 
 
-def test_corrupt_sidecar_shape_is_rejected(tmp_path):
-    source = SFT_ROOT / "U/olmo3-think-sft/step1000/layer_3/math_vs_wikitext"
-    if not source.with_suffix(".json").is_file():
-        pytest.skip("canonical generated SFT tree is unavailable")
-    sidecar = json.loads(source.with_suffix(".json").read_text(encoding="utf-8"))
-    sidecar["u_pos_shape"] = [4096, 999]
-    corrupt_sidecar = tmp_path / "math_vs_wikitext.json"
+def test_corrupt_sidecar_shape_is_rejected(tmp_path, monkeypatch):
+    from postdyn.differential_subspace import compute_signed_differential_subspace
+    from scripts import run_think_sft_differential_subspace as runner
+
+    monkeypatch.setattr(validator, "EXPECTED_D_MODEL", 5)
+    torch.manual_seed(0)
+    sub = compute_signed_differential_subspace(
+        torch.randn(8, 5), torch.randn(8, 5), concept="math_vs_text"
+    )
+    runner.save_signed_subspace(
+        tmp_path, "m", "step1000", 3, sub, "sig", "rev", save_tensors=True
+    )
+    st_path, js_path = runner._u_paths(tmp_path, "m", "step1000", 3, "math_vs_text")
+    sidecar = json.loads(js_path.read_text(encoding="utf-8"))
+    sidecar["u_pos_shape"] = [5, 999]
+    corrupt_sidecar = tmp_path / "corrupt.json"
     corrupt_sidecar.write_text(json.dumps(sidecar), encoding="utf-8")
     error = validator._basis_error(
-        source.with_suffix(".safetensors"),
+        st_path,
         corrupt_sidecar,
-        "olmo3-think-sft",
+        "m",
         "step1000",
-        "step1000",
-        sidecar["setup_signature"],
+        "rev",
+        "sig",
         3,
     )
     assert error is not None
@@ -60,6 +80,8 @@ def test_summary_checkpoint_order_is_rejected(monkeypatch):
     summary_path = SFT_ROOT / "metrics/summary.json"
     if not summary_path.is_file():
         pytest.skip("canonical generated SFT tree is unavailable")
+    if _real_tree_is_json_only():
+        pytest.skip("canonical tree is JSON-only (verification run)")
     original = validator._read_json
 
     def reordered(path):
@@ -99,6 +121,8 @@ def test_manifest_provenance_is_rejected(monkeypatch, field, expected_value):
     manifest_path = SFT_ROOT / "manifests/olmo3-think-sft__step1000.json"
     if not manifest_path.is_file():
         pytest.skip("canonical generated SFT tree is unavailable")
+    if _real_tree_is_json_only():
+        pytest.skip("canonical tree is JSON-only (verification run)")
     original = validator._read_json
 
     def altered(path):

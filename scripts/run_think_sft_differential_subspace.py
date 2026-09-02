@@ -1260,6 +1260,25 @@ def finalize_stability(
     }
     if final_root is None or final_checkpoint is None or final_setup_sig is None:
         raise ValueError("final main artifacts are required for residual emergence")
+    if checkpoints and layers and concepts:
+        _, probe_sidecar = _u_paths(
+            root, model_name, checkpoints[0], layers[0], concepts[0]
+        )
+        try:
+            probe_meta = json.loads(probe_sidecar.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            probe_meta = None
+        if (
+            isinstance(probe_meta, dict)
+            and probe_meta.get("tensors_saved", True) is False
+        ):
+            print(
+                "WARNING: subspace tensors were not saved (JSON-only run); "
+                "skipping stability finalization"
+            )
+            out["skipped"] = "tensors_not_saved"
+            _atomic_write_json(root / METRICS_SUBDIR / "stability.json", out)
+            return out
     final_loaded: dict[int, dict[str, Any]] = {}
     for layer in layers:
         by_ck_pos: dict[str, dict[str, Any]] = {}
@@ -1821,7 +1840,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         },
     }
 
-    if args.scale == SCALE_32B and not args.quick:
+    if args.scale == SCALE_32B and not args.quick and args.save_tensors:
         _validate_32b_tree_or_raise(
             root,
             args.trajectory,
@@ -1844,7 +1863,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         final_setup_sig=final_setup_sig,
         final_revision=final_revision,
     )
-    if args.scale == SCALE_32B and not args.quick:
+    if args.scale == SCALE_32B and not args.quick and args.save_tensors:
         _validate_32b_tree_or_raise(
             root,
             args.trajectory,
@@ -1863,9 +1882,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         fixed_points=fixed_point_records,
         final_main=final_main_record,
     )
-    if args.scale == SCALE_7B and not args.quick:
+    if not args.quick and not args.save_tensors:
+        print(
+            "WARNING: JSON-only run (no --save-tensors); publication validation skipped"
+        )
+    if args.scale == SCALE_7B and not args.quick and args.save_tensors:
         _validate_7b_tree_or_raise(root, args.trajectory)
-    if args.scale == SCALE_32B and not args.quick:
+    if args.scale == SCALE_32B and not args.quick and args.save_tensors:
         from postdyn.think_32b_differential_validator import (
             validate_full_canonical_publication,
         )
@@ -1879,7 +1902,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(f"summary: {root / METRICS_SUBDIR / 'summary.json'}")
     print(f"stability: {root / METRICS_SUBDIR / 'stability.json'}")
     print(f"rows: {summary['n_rows']}")
-    if layers and checkpoints:
+    if stability.get("skipped") is not None:
+        print(f"stability finalization skipped: {stability['skipped']}")
+    elif layers and checkpoints:
         sample = (
             stability["layers"][str(layers[0])]["pos"]
             .get("vs_reference", {})
