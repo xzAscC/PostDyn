@@ -402,6 +402,7 @@ def run(args: argparse.Namespace) -> int:
                         )
             finally:
                 if args.scale != "tiny":
+                    model = None
                     release_model(model)
                     if checkpoint.name not in {"base", "sft", "dpo", "rlvr"}:
                         prune_revision_cache(checkpoint)
