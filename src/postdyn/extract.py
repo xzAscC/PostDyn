@@ -161,10 +161,11 @@ def extract_layer_hiddens(
     token_budget: int | None = None,
     attention_budget: int = 8_388_608,
 ) -> dict[int, torch.Tensor]:
-    """Extract final non-pad token states for the requested hidden layers.
+    """Extract final non-pad token states for the requested transformer blocks.
 
-    Hidden-state index ``0`` is the embedding output; transformer layer ``L``
-    therefore uses ``outputs.hidden_states[L]`` under this contract.
+    Requested layer ``L`` means transformer block ``L``'s output. Hidden-state
+    index ``0`` is the embedding output, so block ``L`` uses
+    ``outputs.hidden_states[L + 1]``. Valid layers are in ``[0, n_layers)``.
 
     When ``token_budget`` is set, prompts are grouped length-aware so each
     forward's padded ``rows x max_length`` stays within the budget, and
@@ -184,10 +185,13 @@ def extract_layer_hiddens(
     known_state_count = _model_hidden_state_count(model)
     if known_state_count is not None:
         invalid = [
-            layer for layer in layer_list if layer < 0 or layer >= known_state_count
+            layer for layer in layer_list if layer < 0 or layer + 1 >= known_state_count
         ]
         if invalid:
-            message = f"Requested layer(s) {invalid} outside hidden-state range [0, {known_state_count})"
+            message = (
+                f"Requested layer(s) {invalid} outside model layer range "
+                f"[0, {known_state_count - 1})"
+            )
             raise ValueError(message)
 
     hidden_size = _model_hidden_size(model)
@@ -275,10 +279,13 @@ def extract_layer_hiddens(
             hidden_states = outputs.hidden_states
             state_count = len(hidden_states)
             invalid = [
-                layer for layer in layer_list if layer < 0 or layer >= state_count
+                layer for layer in layer_list if layer < 0 or layer + 1 >= state_count
             ]
             if invalid:
-                message = f"Requested layer(s) {invalid} outside hidden-state range [0, {state_count})"
+                message = (
+                    f"Requested layer(s) {invalid} outside model layer range "
+                    f"[0, {state_count - 1})"
+                )
                 raise ValueError(message)
 
             input_ids = model_inputs.get("input_ids")
@@ -306,7 +313,7 @@ def extract_layer_hiddens(
                 ).amax(dim=1)
 
             for layer in layer_list:
-                hidden = hidden_states[layer]
+                hidden = hidden_states[layer + 1]
                 batch_indices = torch.arange(
                     hidden.shape[0], dtype=torch.long, device=hidden.device
                 )

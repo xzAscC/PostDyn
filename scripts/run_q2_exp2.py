@@ -14,8 +14,41 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 import scripts.q2_common as common
 from postdyn.config import ALPHAS, BENCHMARKS
 from postdyn.persistence import RunDir, tee_log, atomic_write_json
-from postdyn.spectra import eigensystem, subsim
+from postdyn.spectra import band_slices, eigensystem, subsim
 from postdyn.verifiers import split_sentences, verify
+
+
+def comparison_subsims(
+    solution_vectors: torch.Tensor,
+    high_vectors: torch.Tensor,
+    low_vectors: torch.Tensor,
+) -> tuple[float, float]:
+    """Compare with global high/low bands sliced to the solution width."""
+    k = int(solution_vectors.shape[1])
+    return (
+        subsim(solution_vectors[:, :k], high_vectors[:, :k]),
+        subsim(solution_vectors[:, :k], low_vectors[:, :k]),
+    )
+
+
+def group_summary(rows: list[dict[str, Any]]) -> dict[str, dict[str, float | int]]:
+    result: dict[str, dict[str, float | int]] = {}
+    for name, group in (
+        ("correct", [row for row in rows if row["correct"]]),
+        ("incorrect", [row for row in rows if not row["correct"]]),
+    ):
+        count = len(group)
+        result[name] = {
+            "n": count,
+            "mean_V_i": sum(row["V_i"] for row in group) / count if count else 0.0,
+            "mean_subsim_high": sum(row["subsim_high"] for row in group) / count
+            if count
+            else 0.0,
+            "mean_subsim_low": sum(row["subsim_low"] for row in group) / count
+            if count
+            else 0.0,
+        }
+    return result
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -73,6 +106,7 @@ def sentence_final_states(
 
 
 def solution_eigensystem(states: torch.Tensor, K: int):
+    """Return sentence covariance eigenvectors capped at ``min(K, T_i - 1)``."""
     values = states.to(torch.float64)
     if values.shape[0] == 0:
         return (
@@ -143,7 +177,8 @@ def run(args: argparse.Namespace) -> None:
             )
             eig = bases[layer]
             k = cfg.d_model // 3
-            high, low = eig[1][:, :k], eig[1][:, -k:]
+            high_slice, _, low_slice = band_slices(eig[1].shape[0])
+            u_high, u_low = eig[1][:, high_slice], eig[1][:, low_slice]
             _, items = common.load_items(domain, args.limit, args.scale == "tiny")
             from postdyn import bench
 
@@ -174,30 +209,22 @@ def run(args: argparse.Namespace) -> None:
                     generation.prompt_token_len,
                 )
                 vals, vectors, k = solution_eigensystem(states, k)
+                subsim_high, subsim_low = (
+                    comparison_subsims(vectors, u_high, u_low) if k else (0.0, 0.0)
+                )
                 row = {
                     "item_id": item.id,
                     "correct": bool(
                         verify(BENCHMARKS[domain], generation.text, item.reference)
                     ),
                     "V_i": float(vals.sum().item()) if vals.numel() else 0.0,
-                    "subsim_high": subsim(vectors, high[:, :k]) if k else 0.0,
-                    "subsim_low": subsim(vectors, low[:, :k]) if k else 0.0,
+                    "subsim_high": subsim_high,
+                    "subsim_low": subsim_low,
                     "n_sentences": int(states.shape[0]),
                 }
                 common.append(path, row)
             rows = [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
-            correct = [x for x in rows if x["correct"]]
-            incorrect = [x for x in rows if not x["correct"]]
-            mean = lambda group, key: (
-                sum(x[key] for x in group) / len(group) if group else 0.0
-            )
-            summaries[domain] = {
-                "n": len(rows),
-                "mean_V_correct": mean(correct, "V_i"),
-                "mean_V_incorrect": mean(incorrect, "V_i"),
-                "mean_subsim_high": mean(rows, "subsim_high"),
-                "mean_subsim_low": mean(rows, "subsim_low"),
-            }
+            summaries[domain] = group_summary(rows)
         atomic_write_json(root / "summary.json", summaries)
 
 

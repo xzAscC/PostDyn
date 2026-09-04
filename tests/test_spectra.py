@@ -136,6 +136,16 @@ def test_match_eigenvectors_recovers_known_signed_permutation_deterministically(
     assert torch.equal(recovered, recovered_again)
 
 
+def test_match_eigenvectors_uses_squared_overlap_objective() -> None:
+    # With U_a=I, these are the requested diagonal/cross overlap candidates:
+    # diagonal squares sum to 0.9**2 + 0.9**2, while cross squares sum to
+    # 0.5**2 + 0.5**2. The unsquared absolute sums are tied.
+    u_a = torch.eye(2, dtype=DTYPE)
+    u_b = torch.tensor([[0.9, 0.5], [0.5, 0.9]], dtype=DTYPE)
+
+    assert torch.equal(match_eigenvectors(u_a, u_b), torch.tensor([0, 1]))
+
+
 def test_rank_displacement_is_absolute_rank_difference() -> None:
     permutation = torch.tensor([2, 0, 1], dtype=torch.long)
 

@@ -51,14 +51,19 @@ def test_real_tiny_gpt2_ablation_hook_is_cleanly_removable() -> None:
     inputs = tokenizer("hello", return_tensors="pt")
     baseline = model(**inputs).logits
     d = model.config.n_embd
-    handle = register_ablation_hook(model, 0, torch.eye(d)[:, :1], 1.0, "dimensionless")
+    layer = 0
+    handle = register_ablation_hook(
+        model, layer, torch.eye(d)[:, :1], 1.0, "dimensionless"
+    )
     altered = model(**inputs).logits
     assert not torch.allclose(altered, baseline)
     handle.remove()
     torch.testing.assert_close(model(**inputs).logits, baseline)
-    measured = mean_hidden_norm(model, tokenizer, ["hello"], 0)
+    measured = mean_hidden_norm(model, tokenizer, ["hello"], layer)
     with torch.no_grad():
-        manual = model(**inputs, output_hidden_states=True).hidden_states[1][0, -1]
+        manual = model(**inputs, output_hidden_states=True).hidden_states[layer + 1][
+            0, -1
+        ]
     assert isinstance(measured, float)
     assert measured == pytest.approx(torch.linalg.vector_norm(manual).item())
 
@@ -76,11 +81,14 @@ def test_mean_hidden_norm_uses_final_tokens_with_left_padding() -> None:
         pytest.skip(f"tiny-gpt2 is not cached: {exc}")
     model.eval()
     prompts = ["short", "a much longer prompt for padding"]
-    measured = mean_hidden_norm(model, tokenizer, prompts, 0, batch_size=2)
+    layer = 0
+    measured = mean_hidden_norm(model, tokenizer, prompts, layer, batch_size=2)
     with torch.no_grad():
         manual = []
         for prompt in prompts:
             encoded = tokenizer(prompt, return_tensors="pt")
-            hidden = model(**encoded, output_hidden_states=True).hidden_states[1]
+            hidden = model(**encoded, output_hidden_states=True).hidden_states[
+                layer + 1
+            ]
             manual.append(hidden[0, -1].norm())
     assert measured == pytest.approx(torch.stack(manual).mean().item())

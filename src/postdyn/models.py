@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 from importlib import import_module
@@ -14,6 +15,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, BitsAndBytesConfig
 _config = import_module("postdyn.config")
 CheckpointRef = _config.CheckpointRef
 MODEL_FAMILIES = _config.MODEL_FAMILIES
+_logger = logging.getLogger(__name__)
 
 
 _DTYPES: dict[str, torch.dtype] = {
@@ -147,7 +149,7 @@ def release_model(model: Any) -> None:
 def prune_revision_cache(
     checkpoint: CheckpointRef, hub_cache: str | Path | None = None
 ) -> None:
-    """Remove only the cached snapshot and ref for ``checkpoint.revision``."""
+    """Remove the revision snapshot and ref, leaving shared blobs untouched."""
 
     cache_root = Path(
         hub_cache
@@ -157,10 +159,24 @@ def prune_revision_cache(
         / "hub"
     )
     repo_dir = cache_root / ("models--" + checkpoint.repo.replace("/", "--"))
-    shutil.rmtree(repo_dir / "snapshots" / checkpoint.revision, ignore_errors=True)
     ref = repo_dir / "refs" / checkpoint.revision
-    if ref.is_file() or ref.is_symlink():
+    if ref.is_file():
+        commit_hash = ref.read_text().strip()
+        if commit_hash:
+            shutil.rmtree(repo_dir / "snapshots" / commit_hash, ignore_errors=True)
         ref.unlink()
+        return
+
+    legacy_snapshot = repo_dir / "snapshots" / checkpoint.revision
+    if legacy_snapshot.exists():
+        shutil.rmtree(legacy_snapshot)
+        return
+
+    _logger.debug(
+        "No cached snapshot or ref found for %s revision %s",
+        checkpoint.repo,
+        checkpoint.revision,
+    )
 
 
 def hidden_dimension(model: Any) -> int:

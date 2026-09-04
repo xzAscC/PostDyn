@@ -10,14 +10,15 @@ GPU memory). The 32B family runs on an H100 with bf16 weights.
 # Enumerate distinct Dolci dataset_source values (sanity check, offline)
 uv run python scripts/enumerate_domain_sources.py
 
-# Materialize the four fixed domain pools (n = 3 x d_model of 32B = 15,360;
-# 7B consumes the deterministic 12,288 prefix). Requires the cached
+# Materialize the four fixed domain pools (n = 2 x max(3d) = 30,720;
+# 7B consumes the deterministic 12,288 prefix). The extra headroom is needed
+# for genuine independent robustness resampling. Requires the cached
 # allenai/Dolci-Think-SFT-7B snapshot (~34 GB).
 uv run python - <<'PY'
 import sys
 sys.path.insert(0, "src")
 from postdyn.data import materialize_pools
-materialize_pools("configs/domain_sources.json", "data/domain_prompts", n=15360)
+materialize_pools("configs/domain_sources.json", "data/domain_prompts", n=30720)
 PY
 ```
 
@@ -56,7 +57,7 @@ runs resume where they stopped.
 ```bash
 uv sync --group dev
 
-# Q1 full trajectory (22 checkpoints, d=5120, n=15,360 per domain)
+# Q1 full trajectory (22 checkpoints, d=5120, n=30,720 materialized per domain)
 uv run python scripts/run_q1.py --family 32b --scale full \
     --dtype bfloat16 --device cuda --output logs/q1/32b
 
@@ -75,6 +76,10 @@ uv run python scripts/run_q2_exp3.py --family 32b --q1-root logs/q1/32b \
 
 The 32B SFT trajectory defaults to the `1e-4-` learning-rate branch
 (README-official example); pass `--sft-lr 5e-5` anywhere to switch.
+
+The general-reasoning pool has only 6,210 records and therefore requires
+`--allow-short-pool` for Q1. Other pools should be materialized at `n=30,720`
+to retain the 2x headroom needed by robustness resampling.
 
 Local 32B fallback (no H100): append `--quantization nf4` to any 32B command;
 the loader checks the measured free-VRAM budget before loading.

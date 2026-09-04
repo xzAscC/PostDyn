@@ -237,7 +237,7 @@ def test_extract_layer_hiddens_uses_raw_text_left_padding_and_final_tokens(
     monkeypatch.setattr(tracking_tokenizer, "apply_chat_template", fail_chat_template)
     extracted = extract_layer_hiddens(
         model,
-        tracking_tokenizer,
+        cast(Any, tracking_tokenizer),
         prompts,
         layers=[0, 1],
         batch_size=5,
@@ -263,7 +263,7 @@ def test_extract_layer_hiddens_uses_raw_text_left_padding_and_final_tokens(
     short_last = int(left_inputs["attention_mask"][0].nonzero()[-1].item())
     assert short_last == left_inputs["input_ids"].shape[1] - 1
     torch.testing.assert_close(
-        extracted[1][0], left_hidden[1][0, short_last].cpu(), atol=1e-4, rtol=1e-4
+        extracted[1][0], left_hidden[2][0, short_last].cpu(), atol=1e-4, rtol=1e-4
     )
 
     right_inputs, right_hidden = _forward_hidden_states(
@@ -271,7 +271,7 @@ def test_extract_layer_hiddens_uses_raw_text_left_padding_and_final_tokens(
     )
     assert right_inputs["attention_mask"][0, -1].item() == 0
     assert not torch.allclose(
-        extracted[1][0], right_hidden[1][0, -1].cpu(), atol=1e-4, rtol=1e-4
+        extracted[1][0], right_hidden[2][0, -1].cpu(), atol=1e-4, rtol=1e-4
     )
 
 
@@ -283,7 +283,7 @@ def test_extract_final_token_matches_single_unpadded_forward(
     prompts = [prompt, "this second prompt is substantially longer than the first"]
     extracted = extract_layer_hiddens(
         model,
-        tokenizer,
+        cast(Any, tokenizer),
         prompts,
         layers=[0, 1],
         batch_size=2,
@@ -299,7 +299,22 @@ def test_extract_final_token_matches_single_unpadded_forward(
 
     for layer in [0, 1]:
         torch.testing.assert_close(
-            extracted[layer][0], single_hidden[layer][0, -1].cpu(), atol=1e-4, rtol=1e-4
+            extracted[layer][0],
+            single_hidden[layer + 1][0, -1].cpu(),
+            atol=1e-4,
+            rtol=1e-4,
+        )
+
+
+def test_extract_rejects_model_layer_count_as_requested_layer(
+    tiny_model_and_tokenizer: tuple[Any, _Tokenizer],
+) -> None:
+    model, tokenizer = tiny_model_and_tokenizer
+    n_layers = model.config.n_layer
+
+    with pytest.raises(ValueError, match="outside model layer range"):
+        extract_layer_hiddens(
+            model, cast(Any, tokenizer), ["prompt"], layers=[n_layers]
         )
 
 
@@ -320,10 +335,10 @@ def test_extract_token_budget_preserves_order_and_shrinks_long_batches(
     long_prompt = "word " * 64
     prompts = ["short one", long_prompt, "tiny", "another short", long_prompt]
     with_budget = extract_layer_hiddens(
-        model, tokenizer, prompts, layers=[0, 1], token_budget=24
+        model, cast(Any, tokenizer), prompts, layers=[0, 1], token_budget=24
     )
     without_budget = extract_layer_hiddens(
-        model, tokenizer, prompts, layers=[0, 1], token_budget=None
+        model, cast(Any, tokenizer), prompts, layers=[0, 1], token_budget=None
     )
     for layer in (0, 1):
         torch.testing.assert_close(with_budget[layer], without_budget[layer])

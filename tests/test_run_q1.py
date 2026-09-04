@@ -61,6 +61,9 @@ def test_q1_writes_metrics_eigensystems_analysis_and_resumes(tmp_path: Path) -> 
     assert summary["adjacent_pairs"]
     assert {"high", "mid", "low"}.issubset(summary["adjacent_pairs"][0]["subsim"])
     assert "mean" in summary["adjacent_pairs"][0]["reordering"]
+    unit = summary["adjacent_pairs"][0]["reordering"]["by_unit"]["layer_0/math"]
+    assert len(unit["pi"]) == len(unit["D"]) == 8
+    assert "subsim_bands" in unit
     assert "vs_base" in summary["checkpoints"]["rlvr"]
     assert "vs_stage_final" in summary["checkpoints"]["sft"]
 
@@ -89,6 +92,11 @@ def test_q1_uses_per_domain_pool_sizes_and_manifest_maps(
     monkeypatch.setattr(q1, "_load_pools", pools)
     args = _run_args(output)
     args[-1] = "32"
+    with pytest.raises(
+        SystemExit, match="rematerialize larger pools.*allow-short-pool"
+    ):
+        q1.main(args)
+    args.append("--allow-short-pool")
     assert q1.main(args) == 0
     rows = [
         json.loads(line) for line in (output / "metrics.jsonl").read_text().splitlines()
@@ -98,6 +106,7 @@ def test_q1_uses_per_domain_pool_sizes_and_manifest_maps(
     manifest = json.loads((output / "manifest.json").read_text())
     assert manifest["n"] == {"math": 32, "code": 20}
     assert manifest["actual_n"] == {"math": 32, "code": 20}
+    assert manifest["short_pool"] is True
 
 
 def test_q1_rejects_checkpoint_manifest_mismatch(tmp_path: Path) -> None:
@@ -154,14 +163,19 @@ def test_robustness_writes_repeat_files_and_spread_summary(tmp_path: Path) -> No
     assert robustness.main(args) == 0
 
     root = output / "7b" / "rlvr" / "math"
+    record_sets = []
     for repeat in range(3):
         payload = json.loads((root / f"repeat_{repeat}.json").read_text())
         assert payload["repeat"] == repeat
         assert len(payload["eigenvalues"]) == 2
         assert "rank_stability" in payload
+        assert "subsim_low_vs_first" in payload
+        record_sets.append(set(payload["record_ids"]))
+    assert len({frozenset(record_set) for record_set in record_sets}) == 3
     summary = json.loads((root / "summary.json").read_text())
     assert len(summary["spread"]["std_effective_rank"]) == 2
     assert "mean_subsim_high_across_pairs" in summary["spread"]
+    assert "mean_subsim_low_across_pairs" in summary["spread"]
 
 
 def test_cli_validation_rejects_bad_family_and_small_repeat_count() -> None:

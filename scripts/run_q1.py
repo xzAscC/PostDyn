@@ -133,6 +133,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--token-budget", type=int, default=4096)
     parser.add_argument("--attention-budget", type=int, default=8_388_608)
+    parser.add_argument("--allow-short-pool", action="store_true")
     parser.add_argument("--max-length", type=int, default=2048)
     parser.add_argument("--limit", type=int, default=None)
     return parser.parse_args(argv)
@@ -221,14 +222,30 @@ def _eigensystem_complete(
 def _write_analysis(
     run: RunDir, checkpoints: list[CheckpointRef], layers: list[int], domains: list[str]
 ) -> None:
-    loaded: dict[tuple[str, int, str], tuple[torch.Tensor, torch.Tensor]] = {}
-    for checkpoint in checkpoints:
-        for layer in layers:
-            for domain in domains:
-                loaded[(checkpoint.name, layer, domain)] = load_eigensystem(
-                    _base_path(run, checkpoint.name, layer, domain)
-                )
     bands = ("high", "mid", "low")
+
+    def compare(
+        first: CheckpointRef, second: CheckpointRef, layer: int, domain: str
+    ) -> dict[str, Any]:
+        _, first_vectors = load_eigensystem(_base_path(run, first.name, layer, domain))
+        _, second_vectors = load_eigensystem(
+            _base_path(run, second.name, layer, domain)
+        )
+        slices = band_slices(first_vectors.shape[0])
+        subsim_bands = {
+            band: subsim(first_vectors[:, sl], second_vectors[:, sl])
+            for band, sl in zip(bands, slices)
+        }
+        pi = match_eigenvectors(first_vectors, second_vectors)
+        displacement = rank_displacement(pi)
+        result = {
+            "pi": pi.tolist(),
+            "D": displacement.tolist(),
+            "subsim_bands": subsim_bands,
+        }
+        del first_vectors, second_vectors
+        return result
+
     adjacent: list[dict[str, Any]] = []
     for first, second in zip(checkpoints, checkpoints[1:]):
         record: dict[str, Any] = {
@@ -237,20 +254,14 @@ def _write_analysis(
             "subsim": {},
             "reordering": {},
         }
+        by_unit: dict[str, dict[str, Any]] = {}
         for layer in layers:
             for domain in domains:
-                _, u_first = loaded[(first.name, layer, domain)]
-                _, u_second = loaded[(second.name, layer, domain)]
-                slices = band_slices(u_first.shape[0])
-                values = {
-                    band: subsim(u_first[:, sl], u_second[:, sl])
-                    for band, sl in zip(bands, slices)
-                }
-                displacement = rank_displacement(
-                    match_eigenvectors(u_first, u_second)
-                ).tolist()
+                comparison = compare(first, second, layer, domain)
                 key = f"layer_{layer}/{domain}"
-                record["subsim"][key] = values
+                displacement = comparison["D"]
+                by_unit[key] = comparison
+                record["subsim"][key] = comparison["subsim_bands"]
                 record["reordering"][key] = {
                     "mean": mean(displacement),
                     "median": median(displacement),
@@ -261,6 +272,7 @@ def _write_analysis(
             stat: mean(item[stat] for item in all_displacements)
             for stat in ("mean", "median", "p90")
         }
+        record["reordering"]["by_unit"] = by_unit
         record["subsim"] = {
             **{
                 band: mean(item[band] for item in record["subsim"].values())
@@ -284,30 +296,27 @@ def _write_analysis(
         )
         for layer in layers:
             for domain in domains:
-                _, current = loaded[(checkpoint.name, layer, domain)]
-                _, base_vectors = loaded[(base.name, layer, domain)]
-                _, final_vectors = loaded[(stage_final.name, layer, domain)]
-                slices = band_slices(current.shape[0])
+                current_values, _ = load_eigensystem(
+                    _base_path(run, checkpoint.name, layer, domain)
+                )
+                metrics = spectral_metrics(current_values)
+                del current_values
+                base_comparison = compare(checkpoint, base, layer, domain)
+                final_comparison = compare(checkpoint, stage_final, layer, domain)
                 item[f"layer_{layer}/{domain}"] = {
-                    "vs_base": {
-                        band: subsim(current[:, sl], base_vectors[:, sl])
-                        for band, sl in zip(bands, slices)
-                    },
-                    "vs_stage_final": {
-                        band: subsim(current[:, sl], final_vectors[:, sl])
-                        for band, sl in zip(bands, slices)
-                    },
-                    "metrics": spectral_metrics(
-                        loaded[(checkpoint.name, layer, domain)][0]
-                    ),
+                    "vs_base": base_comparison,
+                    "vs_stage_final": final_comparison,
+                    "metrics": metrics,
                 }
         unit_values = [value for key, value in item.items() if key.startswith("layer_")]
         item["vs_base"] = {
-            band: mean(value["vs_base"][band] for value in unit_values)
+            band: mean(value["vs_base"]["subsim_bands"][band] for value in unit_values)
             for band in bands
         }
         item["vs_stage_final"] = {
-            band: mean(value["vs_stage_final"][band] for value in unit_values)
+            band: mean(
+                value["vs_stage_final"]["subsim_bands"][band] for value in unit_values
+            )
             for band in bands
         }
         summary["checkpoints"][checkpoint.name] = item
@@ -329,6 +338,12 @@ def run(args: argparse.Namespace) -> int:
         domain: min(requested_n, pools[domain].actual_n) for domain in domains
     }
     actual_n_by_domain = {domain: pools[domain].actual_n for domain in domains}
+    required_pool_n = 3 * 8 if args.scale == "tiny" else family.n_samples()
+    short_domains = {
+        domain: pools[domain].actual_n
+        for domain in domains
+        if pools[domain].actual_n < required_pool_n
+    }
     pool_fingerprints = {domain: pools[domain].fingerprint for domain in domains}
     if any(n <= 0 for n in n_by_domain.values()):
         raise ValueError("selected domain pools contain no records")
@@ -357,6 +372,15 @@ def run(args: argparse.Namespace) -> int:
                 + ", ".join(mismatches)
                 + "; pick a fresh --output directory"
             )
+    if short_domains and not args.allow_short_pool:
+        details = ", ".join(
+            f"{domain} ({actual}/{required_pool_n})"
+            for domain, actual in short_domains.items()
+        )
+        raise SystemExit(
+            f"short domain pools: {details}; rematerialize larger pools or pass "
+            "--allow-short-pool"
+        )
     manifest.update(
         {
             "family": args.family,
@@ -367,6 +391,7 @@ def run(args: argparse.Namespace) -> int:
             "n": n_by_domain,
             "actual_n": actual_n_by_domain,
             "pool_fingerprints": pool_fingerprints,
+            "short_pool": bool(short_domains),
         }
     )
     atomic_write_json(run_dir.path("manifest.json"), manifest)
@@ -427,6 +452,7 @@ def run(args: argparse.Namespace) -> int:
                             "domain": domain,
                             **spectral_metrics(values),
                             "n": n_by_domain[domain],
+                            "short_pool": bool(short_domains),
                         }
                         append_jsonl(run_dir.path("metrics.jsonl"), row)
                         completed.add(unit)

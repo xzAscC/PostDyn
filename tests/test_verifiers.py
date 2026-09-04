@@ -27,7 +27,9 @@ def test_malformed_references_are_unverifiable() -> None:
     assert not verifiers.verify("livecodebench", "print(1)", {"cases": [{"stdin": 1}]})
     assert not verifiers.verify("math500", "42", {})
     assert not verifiers.verify("mmlu_pro", "A", {})
-    assert not verifiers.verify("ifeval", "anything", {"instructions": [1]})
+    assert not verifiers.verify(
+        "ifeval", "anything", {"instruction_id_list": [1], "kwargs": [{}]}
+    )
 
 
 def test_preexec_guard_is_platform_specific(monkeypatch) -> None:
@@ -117,18 +119,41 @@ def test_livecodebench_large_output_is_bounded_and_verifies() -> None:
     )
 
 
-def test_ifeval_delegates_prompt_and_response_to_official_checker(monkeypatch) -> None:
-    calls = []
-
-    def checker(prompt, response):
-        calls.append((prompt, response))
-        return response == "no commas"
-
-    monkeypatch.setattr(verifiers, "check_prompt_level", checker)
-    reference = cast(dict[str, object], {"instruction": "no commas"})
+def test_ifeval_dispatches_namespaced_punctuation_instruction() -> None:
+    reference = cast(
+        dict[str, object],
+        {"instruction_id_list": ["punctuation:no_comma"], "kwargs": [{}]},
+    )
     assert verifiers.verify("ifeval", "no commas", reference)
-    assert calls == [("no commas", "no commas")]
     assert not verifiers.verify("ifeval", "has, comma", reference)
+
+
+def test_ifeval_dispatches_parametrized_common_instruction_types() -> None:
+    assert verifiers.verify(
+        "ifeval",
+        "one two",
+        {
+            "instruction_id_list": ["length_constraints:number_words"],
+            "kwargs": [{"num_words": 2}],
+        },
+    )
+    assert verifiers.verify(
+        "ifeval",
+        "keyword keyword",
+        {
+            "instruction_id_list": ["keywords:frequency"],
+            "kwargs": [{"keyword": "keyword", "frequency": 2}],
+        },
+    )
+
+
+def test_ifeval_unknown_namespaced_instruction_is_false(caplog) -> None:
+    reference = cast(
+        dict[str, object],
+        {"instruction_id_list": ["unknown:not_implemented"], "kwargs": [{}]},
+    )
+    assert not verifiers.verify("ifeval", "anything", reference)
+    assert "Unsupported IFEval instruction" in caplog.text
 
 
 def test_split_sentences_handles_punctuation_think_blocks_and_whitespace() -> None:
