@@ -275,6 +275,21 @@ def test_extract_layer_hiddens_uses_raw_text_left_padding_and_final_tokens(
     )
 
 
+def test_extract_layer_hiddens_return_device_cpu_contract(
+    tiny_model_and_tokenizer: tuple[Any, _Tokenizer],
+) -> None:
+    model, tokenizer = tiny_model_and_tokenizer
+    assert model.device == torch.device("cpu")
+    extracted = extract_layer_hiddens(
+        model,
+        cast(Any, tokenizer),
+        ["prompt"],
+        layers=[0],
+        return_device="cpu",
+    )
+    assert extracted[0].device == torch.device("cpu")
+
+
 def test_extract_final_token_matches_single_unpadded_forward(
     tiny_model_and_tokenizer: tuple[Any, _Tokenizer],
 ) -> None:

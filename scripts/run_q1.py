@@ -375,11 +375,19 @@ def run(args: argparse.Namespace) -> int:
         expected = {
             "family": args.family,
             "scale": args.scale,
-            "checkpoints": [c.name for c in checkpoints],
+            "checkpoints": [[c.repo, c.revision] for c in checkpoints],
             "domains": domains,
             "layers": layers,
             "n": n_by_domain,
             "pool_fingerprints": pool_fingerprints,
+            "sft_lr": args.sft_lr,
+            "dtype": args.dtype,
+            "quantization": args.quantization,
+            "max_length": args.max_length,
+            "token_budget": args.token_budget,
+            "attention_budget": args.attention_budget,
+            "batch_size": args.batch_size,
+            "device": args.device,
         }
         mismatches = [
             key for key, value in expected.items() if previous.get(key) != value
@@ -403,13 +411,21 @@ def run(args: argparse.Namespace) -> int:
         {
             "family": args.family,
             "scale": args.scale,
-            "checkpoints": [c.name for c in checkpoints],
+            "checkpoints": [[c.repo, c.revision] for c in checkpoints],
             "layers": layers,
             "domains": domains,
             "n": n_by_domain,
             "actual_n": actual_n_by_domain,
             "pool_fingerprints": pool_fingerprints,
             "short_pool_domains": sorted(short_domains),
+            "sft_lr": args.sft_lr,
+            "dtype": args.dtype,
+            "quantization": args.quantization,
+            "max_length": args.max_length,
+            "token_budget": args.token_budget,
+            "attention_budget": args.attention_budget,
+            "batch_size": args.batch_size,
+            "device": args.device,
         }
     )
     atomic_write_json(run_dir.path("manifest.json"), manifest)
@@ -444,6 +460,7 @@ def run(args: argparse.Namespace) -> int:
                             args.max_length,
                             token_budget=args.token_budget,
                             attention_budget=args.attention_budget,
+                            return_device=getattr(model, "device", args.device),
                         )
                         print(
                             f"checkpoint={checkpoint.name} domain={domain} "
@@ -460,8 +477,8 @@ def run(args: argparse.Namespace) -> int:
                         values, vectors = eigensystem(covariance.covariance)
                         save_eigensystem(
                             _base_path(run_dir, checkpoint.name, layer, domain),
-                            values,
-                            vectors,
+                            values.cpu(),
+                            vectors.cpu(),
                         )
                         row = {
                             "unit": list(unit),

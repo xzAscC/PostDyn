@@ -129,6 +129,84 @@ def test_q1_rejects_checkpoint_manifest_mismatch(tmp_path: Path) -> None:
         q1.main(_run_args(output))
 
 
+def test_q1_resume_identity_rejects_same_names_from_different_sft_schedule(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "q1"
+    args = [
+        "--family",
+        "32b",
+        "--scale",
+        "tiny",
+        "--output",
+        str(output),
+        "--checkpoints",
+        "base,sft,dpo,rlvr",
+        "--domains",
+        "math",
+        "--limit",
+        "6",
+        "--device",
+        "cpu",
+    ]
+    assert q1.main(args) == 0
+
+    manifest_path = output / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["checkpoints"][0] == ["allenai/Olmo-3-1125-32B", "main"]
+
+    assert q1.main(args) == 0
+    changed = args + ["--sft-lr", "5e-5"]
+    with pytest.raises(SystemExit, match="checkpoints.*sft_lr"):
+        q1.main(changed)
+
+
+def test_q1_resume_identity_stores_runtime_parameters(tmp_path: Path) -> None:
+    output = tmp_path / "q1"
+    args = _run_args(output) + [
+        "--dtype",
+        "float32",
+        "--quantization",
+        "nf4",
+        "--max-length",
+        "128",
+        "--token-budget",
+        "64",
+        "--attention-budget",
+        "4096",
+        "--batch-size",
+        "4",
+        "--device",
+        "cpu",
+    ]
+    assert q1.main(args) == 0
+    manifest = json.loads((output / "manifest.json").read_text())
+    assert manifest["sft_lr"] == "1e-4"
+    assert manifest["dtype"] == "float32"
+    assert manifest["quantization"] == "nf4"
+    assert manifest["max_length"] == 128
+    assert manifest["token_budget"] == 64
+    assert manifest["attention_budget"] == 4096
+    assert manifest["batch_size"] == 4
+    assert manifest["device"] == "cpu"
+
+
+def test_q1_passes_model_device_to_extraction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed: list[object] = []
+    original = q1.extract_layer_hiddens
+
+    def extract(*args: object, **kwargs: object) -> dict[int, torch.Tensor]:
+        observed.append(kwargs["return_device"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(q1, "extract_layer_hiddens", extract)
+    assert q1.main(_run_args(tmp_path / "q1") + ["--device", "cpu"]) == 0
+    assert observed
+    assert all(device == torch.device("cpu") for device in observed)
+
+
 def test_q1_recomputes_unit_when_safetensors_is_missing(tmp_path: Path) -> None:
     output = tmp_path / "q1"
     assert q1.main(_run_args(output)) == 0

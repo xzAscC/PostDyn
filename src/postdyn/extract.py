@@ -59,7 +59,7 @@ class OnlineCovariance:
         if x.shape[0] == 0:
             return
 
-        values = x.to(dtype=torch.float64)
+        values = x.to(device=x.device, dtype=torch.float64)
         batch_sum = values.sum(dim=0)
         batch_sum_xx = values.T @ values
 
@@ -160,6 +160,7 @@ def extract_layer_hiddens(
     chat_template: bool = False,
     token_budget: int | None = None,
     attention_budget: int = 8_388_608,
+    return_device: str | torch.device = "cpu",
 ) -> dict[int, torch.Tensor]:
     """Extract final non-pad token states for the requested transformer blocks.
 
@@ -173,7 +174,8 @@ def extract_layer_hiddens(
     memory is quadratic in sequence length). Prompts are sorted by token
     length (descending) and batches shrink automatically for long sequences.
     Results are always returned in the original prompt order regardless of
-    batching.
+    batching. ``return_device`` controls where the returned float32 rows are
+    placed; the default keeps the historical CPU contract.
     """
     layer_list = list(layers)
     if not layer_list:
@@ -197,7 +199,9 @@ def extract_layer_hiddens(
     hidden_size = _model_hidden_size(model)
     if not prompt_list:
         return {
-            layer: torch.empty(0, hidden_size, dtype=torch.float32)
+            layer: torch.empty(
+                0, hidden_size, dtype=torch.float32, device=return_device
+            )
             for layer in layer_list
         }
 
@@ -319,7 +323,9 @@ def extract_layer_hiddens(
                 )
                 indices = last_indices.to(device=hidden.device)
                 final_tokens = hidden[batch_indices, indices, :]
-                rows = final_tokens.detach().cpu().float()
+                rows = final_tokens.detach().to(
+                    device=return_device, dtype=torch.float32
+                )
                 for row_position, prompt_index in enumerate(group):
                     per_layer[layer][prompt_index] = rows[row_position]
     finally:
