@@ -1,21 +1,35 @@
-# Python-generated files
 __pycache__/
-*.py[oc]
+*.pyc
 build/
 dist/
 wheels/
 *.egg-info
 
 # Virtual environments
-.venv
+.venv/
 
 # Model caches
 *.safetensors
 model_cache/
 .cache/
 
-# Generated results
+# Generated experiment outputs
 results/
+logs/
+figs/
+checkpoints/
+notebooks/
+.pytest_cache/
+.ruff_cache/
+
+# Local benchmark caches and materialized prompt pools
+data/domain_prompts/
+data/*.json
+data/*.jsonl
+data/*.txt
+data/mmlu_pro.json
+data/ifeval.json
+data/livecodebench.json
 
 # IDE
 .idea/
@@ -32,11 +46,8 @@ Thumbs.db
 # Opencode
 .omo/
 
-# Latex Files
+# Slides repository
 69e5bc6d27002aeac07372b4/
 
-# data files, will handle in hf
-data/
-
-# jupyter notebook
-notebook/
+# Keep repository policy files visible
+.ignore
