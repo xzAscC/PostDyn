@@ -159,6 +159,7 @@ def extract_layer_hiddens(
     max_length: int = 2048,
     chat_template: bool = False,
     token_budget: int | None = None,
+    attention_budget: int = 8_388_608,
 ) -> dict[int, torch.Tensor]:
     """Extract final non-pad token states for the requested hidden layers.
 
@@ -166,10 +167,12 @@ def extract_layer_hiddens(
     therefore uses ``outputs.hidden_states[L]`` under this contract.
 
     When ``token_budget`` is set, prompts are grouped length-aware so each
-    forward's padded ``rows x max_length`` stays within the budget: prompts
-    are sorted by token length (descending) and batches shrink automatically
-    for long sequences. Results are always returned in the original prompt
-    order regardless of batching.
+    forward's padded ``rows x max_length`` stays within the budget, and
+    ``rows x max_length^2`` stays within ``attention_budget`` (attention
+    memory is quadratic in sequence length). Prompts are sorted by token
+    length (descending) and batches shrink automatically for long sequences.
+    Results are always returned in the original prompt order regardless of
+    batching.
     """
     layer_list = list(layers)
     if not layer_list:
@@ -227,9 +230,11 @@ def extract_layer_hiddens(
         current_max = 0
         for index in order:
             candidate_max = max(current_max, lengths[index])
+            candidate_rows = len(current) + 1
             if current and (
-                len(current) >= batch_size
-                or (len(current) + 1) * candidate_max > token_budget
+                candidate_rows > batch_size
+                or candidate_rows * candidate_max > token_budget
+                or candidate_rows * candidate_max * candidate_max > attention_budget
             ):
                 batch_groups.append(current)
                 current = []
