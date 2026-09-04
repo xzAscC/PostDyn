@@ -132,9 +132,15 @@ def load_model(
 
 
 def release_model(model: Any) -> None:
-    """Release a model reference and clear CUDA's allocator cache."""
+    """Clear CUDA's allocator cache after the caller drops its own reference.
 
-    del model
+    Callers must rebind or delete their model variable: this function only
+    receives a borrowed reference and cannot clear external references.
+    """
+
+    import gc
+
+    gc.collect()
     torch.cuda.empty_cache()
 
 
