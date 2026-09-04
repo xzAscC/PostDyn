@@ -7,7 +7,7 @@ import json
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 SAMPLING_SEED = 42
 
@@ -159,6 +159,22 @@ def load_domain_rows(
     return revision, rows
 
 
+def _iter_snapshot_rows(
+    mapped_sources: set[str],
+    snapshot_dir: str | Path | None,
+) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Yield ``(dataset_source, row)`` for mapped sources in one shard pass."""
+    import pyarrow.parquet as pq
+
+    path = Path(snapshot_dir) if snapshot_dir is not None else _default_snapshot()
+    for shard in sorted(path.rglob("*.parquet")):
+        table = pq.read_table(shard, columns=["dataset_source", "id", "messages"])
+        for row in table.to_pylist():
+            source = row.get("dataset_source")
+            if source is not None and str(source) in mapped_sources:
+                yield str(source), row
+
+
 def materialize_pools(
     mapping_path: str | Path,
     out_dir: str | Path,
@@ -169,19 +185,69 @@ def materialize_pools(
 
     ``n`` defaults to the largest family sample count (3 x d_model of 32B) so
     smaller families consume a deterministic prefix of the same pool.
+
+    Streams the parquet shards with a bounded per-domain selection heap, so
+    memory stays ~O(n) instead of holding every mapped row. For distinct
+    prompts the selected set matches :func:`build_pool` exactly (n smallest
+    hashes); when duplicate prompts exist, the surviving record is
+    deterministic under shard order and content-identical up to row id.
     """
+    import heapq
+    import itertools
+
     mapping = load_mapping(mapping_path)
-    revision, loaded = load_domain_rows(mapping, snapshot_dir)
+    allowed = {domain: frozenset(sources) for domain, sources in mapping.items()}
+    source_to_domain = {
+        source: domain for domain, sources in mapping.items() for source in sources
+    }
+    path = Path(snapshot_dir) if snapshot_dir is not None else _default_snapshot()
+    revision = path.parent.name if path.parent.name != "snapshots" else "unknown"
+    domains = ("math", "code", "instruction_following", "general_reasoning")
+    heaps: dict[str, list[tuple[int, str, int, PromptRecord]]] = {
+        d: [] for d in domains
+    }
+    seen: dict[str, set[str]] = {d: set() for d in domains}
+    counters = itertools.count()
+    for source, row in _iter_snapshot_rows(set(source_to_domain), snapshot_dir):
+        domain = source_to_domain[source]
+        prompt = _first_user(row)
+        if prompt is None or not prompt.strip():
+            continue
+        record = PromptRecord(str(row["id"]), prompt, source)
+        key = f"{SAMPLING_SEED}|{revision}|{record.id}|{record.prompt}"
+        digest = hashlib.sha256(key.encode()).hexdigest()
+        numkey = int(digest[:16], 16)
+        heap = heaps[domain]
+        full = len(heap) == n
+        if full and numkey >= -heap[0][0]:
+            continue
+        normalized = re.sub(r"\s+", " ", record.prompt.strip())
+        if normalized in seen[domain]:
+            continue
+        if full:
+            _, _, _, evicted = heapq.heappop(heap)
+            seen[domain].discard(re.sub(r"\s+", " ", evicted.prompt.strip()))
+        heapq.heappush(heap, (-numkey, digest, next(counters), record))
+        seen[domain].add(normalized)
+
     target = Path(out_dir)
     target.mkdir(parents=True, exist_ok=True)
-    for domain in ("math", "code", "instruction_following", "general_reasoning"):
-        pool = build_pool(
+    for domain in domains:
+        ordered = sorted(heaps[domain], key=lambda item: item[1])
+        records = [item[3] for item in ordered]
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                [(r.id, r.prompt) for r in records], separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+        pool = DomainPool(
             domain,
-            loaded.get(domain, {}),
+            tuple(records),
             n,
+            len(records),
+            revision,
             SAMPLING_SEED,
-            dataset_revision=revision,
-            allowed_sources=frozenset(mapping.get(domain, ())),
+            fingerprint,
         )
         (target / f"{domain}.json").write_text(
             json.dumps(asdict(pool), ensure_ascii=False, indent=2), encoding="utf-8"
