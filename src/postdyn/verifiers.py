@@ -21,6 +21,7 @@ except ImportError:
     resource: Any = None
 
 logger = logging.getLogger(__name__)
+_punkt_provision_attempted = False
 
 
 def split_sentences(text: str) -> list[str]:
@@ -180,11 +181,7 @@ def _stdio_outputs_equal(predicted: str, expected: str) -> bool:
 
 def _normalize_json_value(value: Any) -> Any:
     if isinstance(value, tuple):
-        return [_normalize_json_value(item) for item in value]
-    if isinstance(value, list):
-        return [_normalize_json_value(item) for item in value]
-    if isinstance(value, dict):
-        return {key: _normalize_json_value(item) for key, item in value.items()}
+        return list(value)
     return value
 
 
@@ -355,7 +352,7 @@ def _response_language(kwargs: dict[str, Any], response: str) -> bool:
     try:
         return langdetect.detect(response) == language.lower()
     except getattr(langdetect, "LangDetectException", Exception):
-        return False
+        return True
 
 
 def _count_words(response: str) -> int:
@@ -364,7 +361,32 @@ def _count_words(response: str) -> int:
 
 
 def _count_sentences(response: str) -> int:
+    """Count sentences, downloading Punkt once if the local NLTK data is absent.
+
+    The first tokenizer use may need network access for the one-time Punkt
+    download. A failed download raises a clear error instead of silently
+    changing verifier results.
+    """
     nltk = importlib.import_module("nltk")
+    global _punkt_provision_attempted
+    try:
+        nltk.data.find("tokenizers/punkt_tab")
+    except LookupError:
+        try:
+            nltk.data.find("tokenizers/punkt")
+        except LookupError:
+            if not _punkt_provision_attempted:
+                _punkt_provision_attempted = True
+                if not nltk.download("punkt_tab", quiet=True):
+                    raise RuntimeError(
+                        "NLTK Punkt data is unavailable and its one-time download failed"
+                    ) from None
+                try:
+                    nltk.data.find("tokenizers/punkt_tab")
+                except LookupError:
+                    raise RuntimeError(
+                        "NLTK Punkt data is unavailable after its one-time download"
+                    ) from None
     tokenizer = nltk.data.load("nltk:tokenizers/punkt/english.pickle")
     return len(tokenizer.tokenize(response))
 
@@ -483,15 +505,19 @@ def _json_format(kwargs: dict[str, Any], response: str) -> bool:
 
 
 def _title(kwargs: dict[str, Any], response: str) -> bool:
-    return bool(re.search(r"<<[^<>]+>>", response))
+    return len(re.findall(r"<<.*>>", response)) == 1
 
 
 def _two_responses(kwargs: dict[str, Any], response: str) -> bool:
     parts = response.split("******")
+    while parts and not parts[0].strip():
+        parts.pop(0)
+    while parts and not parts[-1].strip():
+        parts.pop()
     if len(parts) != 2:
         return False
     first, second = (part.strip() for part in parts)
-    return first != second and bool(first or second)
+    return first != second and bool(first) and bool(second)
 
 
 def _repeat_prompt(kwargs: dict[str, Any], response: str) -> bool:
@@ -509,7 +535,7 @@ def _end_checker(kwargs: dict[str, Any], response: str) -> bool:
         return False
     candidate = response.strip()
     if candidate.startswith('"') and candidate.endswith('"'):
-        candidate = candidate[1:-1].strip()
+        candidate = candidate[1:-1]
     return candidate.lower().endswith(phrase.lower())
 
 

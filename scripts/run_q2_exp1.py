@@ -101,6 +101,25 @@ def _evaluate(
     ]
 
 
+def identity_for(args: argparse.Namespace) -> dict[str, Any]:
+    cfg = common.family_config(args.family, args.scale)
+    return {
+        "family": args.family,
+        "q1_root": str(args.q1_root.resolve()),
+        "dtype": args.dtype,
+        "quantization": args.quantization,
+        "device": args.device,
+        "batch_size": args.batch_size,
+        "limit": args.limit,
+        "checkpoints": common.checkpoint_pairs(args.family, ("rlvr",)),
+        "domains": args.domains,
+        "k": cfg.d_model // 3,
+        "alphas": list(ALPHAS),
+        "alpha_mode": "dimensionless",
+        "scale": args.scale,
+    }
+
+
 def run(args: argparse.Namespace) -> None:
     cfg = common.family_config(args.family, args.scale)
     output = common.output_root(args, "exp1")
@@ -108,17 +127,7 @@ def run(args: argparse.Namespace) -> None:
     output.mkdir(parents=True, exist_ok=True)
     common.write_identity_manifest(
         output,
-        {
-            "family": args.family,
-            "q1_root": str(q1_root.resolve()),
-            "dtype": args.dtype,
-            "quantization": args.quantization,
-            "domains": args.domains,
-            "k": cfg.d_model // 3,
-            "alphas": list(ALPHAS),
-            "alpha_mode": "dimensionless",
-            "scale": args.scale,
-        },
+        identity_for(args),
     )
     if args.scale == "tiny":
         common.tiny_bases(q1_root, args.domains, cfg.layers, ("rlvr",))

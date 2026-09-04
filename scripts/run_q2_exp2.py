@@ -69,6 +69,47 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def identity_for(
+    args: argparse.Namespace,
+    selected_path: Path,
+    effective_selection: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    cfg = common.family_config(args.family, args.scale)
+    return {
+        "family": args.family,
+        "q1_root": str(args.q1_root.resolve()),
+        "dtype": args.dtype,
+        "quantization": args.quantization,
+        "device": args.device,
+        "batch_size": args.batch_size,
+        "limit": args.limit,
+        "checkpoints": common.checkpoint_pairs(args.family, ("rlvr",)),
+        "domains": args.domains,
+        "k": cfg.d_model // 3,
+        "alphas": list(ALPHAS),
+        "alpha_mode": "dimensionless",
+        "scale": args.scale,
+        "selected_layers": {
+            domain: int(choice["layer"])
+            for domain, choice in effective_selection.items()
+        },
+        "selected_alphas": {
+            domain: float(choice["alpha"])
+            for domain, choice in effective_selection.items()
+        },
+        "layer": {
+            domain: int(choice["layer"])
+            for domain, choice in effective_selection.items()
+        },
+        "alpha": {
+            domain: float(choice["alpha"])
+            for domain, choice in effective_selection.items()
+        },
+        "selection_source": str(selected_path.resolve()),
+        "selection_source_hash": common.file_hash(selected_path),
+    }
+
+
 def sentence_final_states(
     tokenizer: Any,
     token_ids: list[int],
@@ -148,19 +189,7 @@ def run(args: argparse.Namespace) -> None:
     cfg = common.family_config(args.family, args.scale)
     root = common.output_root(args, "exp2")
     q1 = args.q1_root
-    common_identity = {
-        "family": args.family,
-        "q1_root": str(q1.resolve()),
-        "dtype": args.dtype,
-        "quantization": args.quantization,
-        "domains": args.domains,
-        "k": cfg.d_model // 3,
-        "alphas": list(ALPHAS),
-        "alpha_mode": "dimensionless",
-        "scale": args.scale,
-    }
     root.mkdir(parents=True, exist_ok=True)
-    common.write_identity_manifest(root, common_identity)
     selected_path = (
         args.exp1_output
         if args.exp1_output
@@ -174,22 +203,30 @@ def run(args: argparse.Namespace) -> None:
         and args.layer not in common.family_config(args.family, args.scale).layers
     ):
         raise SystemExit(f"layer must be one of configured layers: {args.layer}")
+    effective_selection: dict[str, dict[str, Any]] = {
+        domain: {
+            "layer": args.layer
+            if args.layer is not None
+            else int(selected.get(domain, {"layer": 0})["layer"]),
+            "alpha": args.alpha
+            if args.alpha is not None
+            else float(selected.get(domain, {"alpha": 1.0})["alpha"]),
+        }
+        for domain in args.domains
+    }
+    common.write_identity_manifest(
+        root, identity_for(args, selected_path, effective_selection)
+    )
     if args.scale != "tiny":
         for domain in args.domains:
-            layer = (
-                args.layer
-                if args.layer is not None
-                else int(selected.get(domain, {"layer": 0})["layer"])
-            )
+            layer = effective_selection[domain]["layer"]
             common.require_bases(q1, domain, (layer,), "rlvr")
     model, tokenizer = common.load_runtime(args, "rlvr")
     summaries: dict[str, Any] = {}
     with tee_log(RunDir(root)):
         for domain in args.domains:
-            choice = selected.get(domain, {"layer": 0, "alpha": 1.0})
-            layer = args.layer if args.layer is not None else int(choice["layer"])
-            if args.alpha is not None:
-                choice["alpha"] = args.alpha
+            choice = effective_selection[domain]
+            layer = choice["layer"]
             bases = (
                 common.require_bases(q1, domain, (layer,), "rlvr")
                 if args.scale != "tiny"
