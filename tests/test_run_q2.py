@@ -57,19 +57,28 @@ def test_exp2_sentence_final_states_use_offsets() -> None:
                 ]
             }
 
-    captured = torch.arange(10 * 3, dtype=torch.float32).reshape(1, 10, 3)
+    # Captured states longer than prompt + re-tokenized generation (trailing
+    # tokens beyond the generated span, e.g. boundary merges or appended
+    # EOS). The old `state[-len(offsets):]` formula then misaligns by the
+    # surplus: it would select rows [6, 8, 11]; prompt-relative selection
+    # must be rows [4, 6, 9].
+    trailing = torch.arange(12 * 3, dtype=torch.float32).reshape(1, 12, 3)
     states = exp2.sentence_final_states(
-        Tokenizer(), [10, 11, 12], "a. b. c.", {2: captured}, prompt_token_len=3
+        Tokenizer(), [10, 11, 12], "a. b. c.", {2: trailing}, prompt_token_len=3
     )
-    # The old state[-len(offsets):] formula selected rows [7, 8, 9] and then
-    # attempted to index them with [1, 3, 6]. Prompt-relative positions are
-    # instead rows [4, 6, 9].
-    torch.testing.assert_close(states, captured[0, [4, 6, 9]])
+    torch.testing.assert_close(states, trailing[0, [4, 6, 9]])
+    assert not torch.allclose(states, trailing[0, [6, 8, 11]])
+
+    aligned = torch.arange(10 * 3, dtype=torch.float32).reshape(1, 10, 3)
+    states = exp2.sentence_final_states(
+        Tokenizer(), [10, 11, 12], "a. b. c.", {2: aligned}, prompt_token_len=3
+    )
+    torch.testing.assert_close(states, aligned[0, [4, 6, 9]])
 
     zero_prompt = exp2.sentence_final_states(
-        Tokenizer(), [], "a. b. c.", {2: captured[0, :7]}, prompt_token_len=0
+        Tokenizer(), [], "a. b. c.", {2: aligned[0, :7]}, prompt_token_len=0
     )
-    torch.testing.assert_close(zero_prompt, captured[0, [1, 3, 6]])
+    torch.testing.assert_close(zero_prompt, aligned[0, [1, 3, 6]])
 
 
 def test_exp1_resume_with_completed_validation_preserves_selection(
