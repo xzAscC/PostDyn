@@ -58,10 +58,12 @@ runs resume where they stopped.
 ```bash
 uv sync --group dev
 
-# Q1 full trajectory (22 checkpoints, d=5120, n=30,720 materialized per domain)
+# Q1 full trajectory (22 checkpoints, d=5120, n=30,720 materialized per domain).
+# The GR domain has only 6,210 unique prompts (< n=3d): Q1 fails closed unless
+# you explicitly accept the reduced GR sample by appending --allow-short-pool
+# (deviation recorded per-domain in manifests/metrics; see PR #7 open decision).
 uv run python scripts/run_q1.py --family 32b --scale full \
-    --dtype bfloat16 --device cuda --output logs/q1/32b --allow-short-pool
-# GR pool: 6210 unique < n=3d — explicit deviation, see PR #7
+    --dtype bfloat16 --device cuda --output logs/q1/32b
 
 # Q1 robustness on the final RLVR checkpoint (Math, R=5)
 uv run python scripts/run_q1_robustness.py --family 32b --repeats 5 \

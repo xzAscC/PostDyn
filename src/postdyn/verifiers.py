@@ -503,18 +503,27 @@ def _json_format(kwargs: dict[str, Any], response: str) -> bool:
 
 
 def _title(kwargs: dict[str, Any], response: str) -> bool:
-    return re.search(r"<<[^\n]+>>", response) is not None
+    for title in re.findall(r"<<[^\n]+>>", response):
+        if title.lstrip("<").rstrip(">").strip():
+            return True
+    return False
 
 
 def _two_responses(kwargs: dict[str, Any], response: str) -> bool:
     parts = response.split("******")
-    if len(parts) == 3 and not parts[0].strip():
-        parts = parts[1:]
+    if len(parts) == 2:
+        selected = parts
+    elif len(parts) == 3 and not parts[0].strip():
+        selected = parts[1:]
     elif len(parts) == 3 and not parts[-1].strip():
-        parts = parts[:-1]
-    if len(parts) != 2:
+        selected = parts[:-1]
+    elif len(parts) == 4 and not parts[0].strip() and not parts[-1].strip():
+        selected = parts[1:-1]
+    else:
         return False
-    first, second = (part.strip() for part in parts)
+    if len(selected) != 2:
+        return False
+    first, second = (part.strip() for part in selected)
     return bool(first) and bool(second) and first != second
 
 
