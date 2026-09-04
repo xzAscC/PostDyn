@@ -27,9 +27,17 @@ run_stage() {
     fi
 }
 
+# The GR domain has only 6,210 unique prompts (< n=3d). Q1 therefore fails
+# closed unless the operator explicitly accepts the reduced GR sample:
+#   ALLOW_SHORT_POOL=1 gpu-queue add postdyn-7b-overnight bash scripts/run_7b_overnight.sh
+SHORT_POOL_FLAG=()
+if [ "${ALLOW_SHORT_POOL:-0}" = "1" ]; then
+    SHORT_POOL_FLAG=(--allow-short-pool)
+fi
+
 run_stage q1_full \
     uv run python scripts/run_q1.py --family 7b --scale full --output logs/q1/7b \
-    --allow-short-pool # GR pool: 6210 unique < n=3d — explicit deviation, see PR #7
+    "${SHORT_POOL_FLAG[@]}"
 
 run_stage q1_robustness \
     uv run python scripts/run_q1_robustness.py --family 7b --repeats "${REPEATS}" \

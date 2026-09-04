@@ -497,6 +497,11 @@ def test_ifeval_official_regex_and_normalization_semantics() -> None:
         "first******second******",
         {"instruction_id_list": ["combination:two_responses"], "kwargs": [{}]},
     )
+    assert verifiers.verify(
+        "ifeval",
+        "******first******second******",
+        {"instruction_id_list": ["combination:two_responses"], "kwargs": [{}]},
+    )
     assert not verifiers.verify(
         "ifeval",
         "************first******second",
@@ -550,6 +555,8 @@ def test_ifeval_title_and_end_checker_match_upstream_normalization() -> None:
     )
     assert verifiers.verify("ifeval", "<<one>> <<two>>", title)
     assert not verifiers.verify("ifeval", "<<>>", title)
+    assert not verifiers.verify("ifeval", "<<   >>", title)
+    assert not verifiers.verify("ifeval", "<<<<>>>>", title)
     # instructions.py:1266-1301: strip outer whitespace and ALL outer quotes
     # (.strip().strip('"')); do not strip whitespace introduced inside them.
     end = cast(
@@ -718,6 +725,7 @@ def test_split_sentences_handles_punctuation_think_blocks_and_whitespace() -> No
         "c d.",
     ]
 
+
 def test_nltk_legacy_punkt_without_punkt_tab_raises_clear_error(monkeypatch) -> None:
     class FakeData:
         def __init__(self):
@@ -738,7 +746,9 @@ def test_nltk_legacy_punkt_without_punkt_tab_raises_clear_error(monkeypatch) -> 
         {
             "data": data,
             "download": staticmethod(
-                lambda resource, quiet: setattr(data, "download_calls", data.download_calls + 1) or False
+                lambda resource, quiet: (
+                    setattr(data, "download_calls", data.download_calls + 1) or False
+                )
             ),
         },
     )
@@ -764,7 +774,11 @@ def test_nltk_tokenizer_load_failure_raises_clear_error(monkeypatch) -> None:
         def load(self, _resource):
             raise ValueError("corrupt tokenizer resource")
 
-    fake_nltk = type("FakeNltk", (), {"data": FakeData(), "download": staticmethod(lambda r, q: True)})
+    fake_nltk = type(
+        "FakeNltk",
+        (),
+        {"data": FakeData(), "download": staticmethod(lambda r, q: True)},
+    )
     monkeypatch.setattr(verifiers, "_punkt_provision_attempted", False)
     monkeypatch.setattr(verifiers.importlib, "import_module", lambda name: fake_nltk)
     reference = cast(
