@@ -14,6 +14,7 @@ dependencies = [
     "scipy>=1.14.0",
     "datasets>=4.8.5",
     "langdetect>=1.0.9",
+    "nltk>=3.9",
     "math-verify[antlr4-13-2]==0.9.0",
 ]
 

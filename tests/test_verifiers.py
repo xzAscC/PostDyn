@@ -485,8 +485,14 @@ def test_ifeval_official_regex_and_normalization_semantics() -> None:
             "kwargs": [{"num_words": 3, "relation": "less than"}],
         },
     )
-    # instructions.py:1171-1210: empty outer separator fragments are allowed.
+    # instructions.py:1171-1210: exactly two nonempty distinct responses;
+    # empty outer separator fragments are ignored.
     assert verifiers.verify(
+        "ifeval",
+        "******first******second",
+        {"instruction_id_list": ["combination:two_responses"], "kwargs": [{}]},
+    )
+    assert not verifiers.verify(
         "ifeval",
         "first******",
         {"instruction_id_list": ["combination:two_responses"], "kwargs": [{}]},
@@ -502,8 +508,8 @@ def test_ifeval_official_regex_and_normalization_semantics() -> None:
     )
 
 
-def test_ifeval_language_detection_failure_is_false(monkeypatch) -> None:
-    # instructions.py:113-164: LangDetectException is a failed language check.
+def test_ifeval_language_detection_failure_counts_as_followed(monkeypatch) -> None:
+    # instructions.py:113-164: LangDetectException counts as followed.
     class FakeLangDetectException(Exception):
         pass
 
@@ -515,7 +521,7 @@ def test_ifeval_language_detection_failure_is_false(monkeypatch) -> None:
             raise FakeLangDetectException
 
     monkeypatch.setitem(sys.modules, "langdetect", FakeLangdetect)
-    assert not verifiers.verify(
+    assert verifiers.verify(
         "ifeval",
         "text",
         {
@@ -523,6 +529,80 @@ def test_ifeval_language_detection_failure_is_false(monkeypatch) -> None:
             "kwargs": [{"language": "en"}],
         },
     )
+
+
+def test_ifeval_title_and_end_checker_match_upstream_normalization() -> None:
+    # instructions.py:1013-1037: one <<.*>> title is required.
+    title = cast(
+        dict[str, object],
+        {"instruction_id_list": ["detectable_format:title"], "kwargs": [{}]},
+    )
+    assert verifiers.verify("ifeval", "<<>>", title)
+    assert not verifiers.verify("ifeval", "<<one>> <<two>>", title)
+    # instructions.py:1266-1301: strip outer whitespace and optional quotes;
+    # do not strip whitespace introduced inside those quotes.
+    end = cast(
+        dict[str, object],
+        {
+            "instruction_id_list": ["startend:end_checker"],
+            "kwargs": [{"end_phrase": "THE END"}],
+        },
+    )
+    assert verifiers.verify("ifeval", '"Answer. THE END"', end)
+    assert not verifiers.verify("ifeval", '"Answer. THE END "', end)
+
+
+def test_ifeval_capital_word_frequency_uses_regexp_tokenizer() -> None:
+    # instructions_util.py:125-130: RegexpTokenizer(r"\w+") supplies tokens.
+    reference = cast(
+        dict[str, object],
+        {
+            "instruction_id_list": ["change_case:capital_word_frequency"],
+            "kwargs": [{"capital_frequency": 2, "capital_relation": "at least"}],
+        },
+    )
+    assert verifiers.verify("ifeval", "NASA-API", reference)
+
+
+def test_nltk_sentence_resource_is_provisioned_lazily(monkeypatch) -> None:
+    class FakeData:
+        def __init__(self):
+            self.find_calls = []
+            self.downloaded = False
+
+        def find(self, resource):
+            self.find_calls.append(resource)
+            if self.downloaded and resource == "tokenizers/punkt_tab":
+                return object()
+            if resource == "tokenizers/punkt_tab":
+                raise LookupError(resource)
+            if resource == "tokenizers/punkt":
+                raise LookupError(resource)
+            return object()
+
+        def load(self, _resource):
+            return type("Tokenizer", (), {"tokenize": lambda _self, text: [text]})()
+
+    data = FakeData()
+    downloads = []
+    fake_nltk = type(
+        "FakeNltk",
+        (),
+        {
+            "data": data,
+            "download": staticmethod(
+                lambda resource, quiet: (
+                    downloads.append((resource, quiet))
+                    or setattr(data, "downloaded", True)
+                    or True
+                )
+            ),
+        },
+    )
+    monkeypatch.setattr(verifiers, "_punkt_provision_attempted", False)
+    monkeypatch.setattr(verifiers.importlib, "import_module", lambda name: fake_nltk)
+    assert verifiers._count_sentences("one") == 1
+    assert downloads == [("punkt_tab", True)]
 
 
 def test_ifeval_multiple_sections_is_at_least_numbered_markers() -> None:
@@ -568,6 +648,11 @@ def test_livecodebench_functional_json_numeric_equality() -> None:
     assert verifiers._functional_outputs_equal("4.0", "4")
     assert verifiers._functional_outputs_equal("[4.0, 5]", "[4, 5]")
     assert not verifiers._functional_outputs_equal('"4.0"', "4")
+
+
+def test_livecodebench_tuple_normalization_is_top_level_only() -> None:
+    # testing_util.py:190-193: only the prediction's top-level tuple is listed.
+    assert verifiers._normalize_json_value((1, (2,))) == [1, (2,)]
 
 
 def test_livecodebench_stdin_and_functional_paths_share_sandbox(monkeypatch) -> None:

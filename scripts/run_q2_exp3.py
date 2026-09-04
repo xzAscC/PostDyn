@@ -31,24 +31,35 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def identity_for(args: argparse.Namespace) -> dict[str, Any]:
+    cfg = common.family_config(args.family, args.scale)
+    return {
+        "family": args.family,
+        "q1_root": str(args.q1_root.resolve()),
+        "sft_lr": args.sft_lr,
+        "dtype": args.dtype,
+        "quantization": args.quantization,
+        "device": args.device,
+        "batch_size": args.batch_size,
+        "limit": args.limit,
+        "checkpoints": common.checkpoint_pairs(
+            args.family, ("sft", "rlvr"), args.sft_lr
+        ),
+        "domains": args.domains,
+        "k": cfg.d_model // 3,
+        "alphas": list(ALPHAS),
+        "alpha_mode": "dimensionless",
+        "scale": args.scale,
+    }
+
+
 def run(args: argparse.Namespace) -> None:
     cfg = common.family_config(args.family, args.scale)
     output = common.output_root(args, "exp3")
     output.mkdir(parents=True, exist_ok=True)
     common.write_identity_manifest(
         output,
-        {
-            "family": args.family,
-            "q1_root": str(args.q1_root.resolve()),
-            "sft_lr": args.sft_lr,
-            "dtype": args.dtype,
-            "quantization": args.quantization,
-            "domains": args.domains,
-            "k": cfg.d_model // 3,
-            "alphas": list(ALPHAS),
-            "alpha_mode": "dimensionless",
-            "scale": args.scale,
-        },
+        identity_for(args),
     )
     if args.scale == "tiny":
         common.tiny_bases(args.q1_root, args.domains, cfg.layers, ("sft", "rlvr"))

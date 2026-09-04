@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -283,14 +284,32 @@ def write_identity_manifest(run_dir: Path, identity: dict[str, Any]) -> None:
     path = run_dir / "manifest.json"
     if path.is_file():
         existing = json.loads(path.read_text(encoding="utf-8"))
-        mismatched = [
-            key for key, value in identity.items() if existing.get(key) != value
-        ]
-        if mismatched:
-            raise SystemExit(
-                f"resume identity mismatch: {','.join(sorted(mismatched))}"
-            )
+        validate_identity(existing, identity)
     atomic_write_json(path, identity)
+
+
+def validate_identity(existing: dict[str, Any], identity: dict[str, Any]) -> None:
+    mismatched = [key for key, value in identity.items() if existing.get(key) != value]
+    if mismatched:
+        raise SystemExit(f"resume identity mismatch: {','.join(sorted(mismatched))}")
+
+
+def final_checkpoint_pair(family: str, stage: str, sft_lr: str = "1e-4") -> list[str]:
+    refs = MODEL_FAMILIES[family].checkpoints(sft_lr)
+    checkpoint = next(ref for ref in reversed(refs) if ref.stage == stage)
+    return [checkpoint.repo, checkpoint.revision]
+
+
+def checkpoint_pairs(
+    family: str, stages: tuple[str, ...], sft_lr: str = "1e-4"
+) -> list[list[str]]:
+    return [final_checkpoint_pair(family, stage, sft_lr) for stage in stages]
+
+
+def file_hash(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def append(path: Path, row: dict[str, Any]) -> None:

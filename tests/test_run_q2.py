@@ -143,6 +143,123 @@ def test_exp1_resume_rejects_different_q1_root(tmp_path: Path) -> None:
     assert "resume identity mismatch" in mismatch.stderr
 
 
+def test_exp1_identity_includes_runtime_and_rlvr_checkpoint() -> None:
+    exp1 = load_script("run_q2_exp1")
+    identity = exp1.identity_for(
+        exp1.parse_args(
+            [
+                "--family",
+                "7b",
+                "--scale",
+                "tiny",
+                "--q1-root",
+                "/tmp/q1",
+                "--device",
+                "cpu",
+                "--batch-size",
+                "3",
+                "--limit",
+                "2",
+            ]
+        )
+    )
+    assert identity["checkpoints"] == [["allenai/Olmo-3-7B-Think", "main"]]
+    assert identity["device"] == "cpu"
+    assert identity["batch_size"] == 3
+    assert identity["limit"] == 2
+
+
+def test_exp2_identity_binds_effective_selection_source_and_override(
+    tmp_path: Path,
+) -> None:
+    exp2 = load_script("run_q2_exp2")
+    selected_path = tmp_path / "selected.json"
+    selected_path.write_text(json.dumps({"math": {"layer": 6, "alpha": 10.0}}))
+    identity = exp2.identity_for(
+        exp2.parse_args(
+            [
+                "--family",
+                "7b",
+                "--scale",
+                "tiny",
+                "--q1-root",
+                "/tmp/q1",
+                "--exp1-output",
+                str(tmp_path),
+                "--domains",
+                "math",
+                "--layer",
+                "3",
+                "--alpha",
+                "1.0",
+            ]
+        ),
+        selected_path,
+        {"math": {"layer": 3, "alpha": 1.0}},
+    )
+    assert identity["selected_layers"] == {"math": 3}
+    assert identity["selected_alphas"] == {"math": 1.0}
+    assert identity["layer"] == {"math": 3}
+    assert identity["alpha"] == {"math": 1.0}
+    assert identity["selection_source"] == str(selected_path.resolve())
+    assert identity["selection_source_hash"]
+
+
+def test_exp3_identity_includes_both_base_checkpoints_and_sft_lr() -> None:
+    exp3 = load_script("run_q2_exp3")
+    identity = exp3.identity_for(
+        exp3.parse_args(
+            [
+                "--family",
+                "7b",
+                "--scale",
+                "tiny",
+                "--q1-root",
+                "/tmp/q1",
+                "--sft-lr",
+                "5e-5",
+            ]
+        )
+    )
+    assert identity["checkpoints"] == [
+        ["allenai/Olmo-3-7B-Think-SFT", "main"],
+        ["allenai/Olmo-3-7B-Think", "main"],
+    ]
+    assert identity["sft_lr"] == "5e-5"
+
+
+@pytest.mark.parametrize(
+    ("flag", "value", "identity_key"),
+    [("--device", "cpu", "device"), ("--limit", "2", "limit")],
+)
+def test_exp1_resume_identity_rejects_runtime_changes(
+    flag: str, value: str, identity_key: str
+) -> None:
+    exp1 = load_script("run_q2_exp1")
+    first = {"family": "7b", "scale": "tiny", identity_key: "original"}
+    second = dict(first, **{identity_key: value})
+    with pytest.raises(SystemExit, match="resume identity mismatch"):
+        exp1.common.validate_identity(first, second)
+
+
+def test_exp2_resume_identity_rejects_layer_override() -> None:
+    exp2 = load_script("run_q2_exp2")
+    with pytest.raises(SystemExit, match="resume identity mismatch"):
+        exp2.common.validate_identity(
+            {"selected_layers": {"math": 3}},
+            {"selected_layers": {"math": 6}},
+        )
+
+
+def test_exp3_resume_identity_rejects_sft_lr() -> None:
+    exp3 = load_script("run_q2_exp3")
+    with pytest.raises(SystemExit, match="resume identity mismatch"):
+        exp3.common.validate_identity(
+            {"sft_lr": "1e-4"},
+            {"sft_lr": "5e-5"},
+        )
+
+
 def test_exp3_resume_with_completed_validation_preserves_selection(
     tmp_path: Path,
 ) -> None:
