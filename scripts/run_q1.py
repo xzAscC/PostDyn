@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import sys
 import time
 from pathlib import Path
@@ -208,6 +209,15 @@ def _base_path(run: RunDir, checkpoint: str, layer: int, domain: str) -> Path:
     return run.path("eigensystems", checkpoint, str(layer), domain)
 
 
+def _eigensystem_complete(
+    run: RunDir, checkpoint: str, layer: int, domain: str
+) -> bool:
+    base = _base_path(run, checkpoint, layer, domain)
+    return all(
+        base.with_suffix(suffix).is_file() for suffix in (".json", ".safetensors")
+    )
+
+
 def _write_analysis(
     run: RunDir, checkpoints: list[CheckpointRef], layers: list[int], domains: list[str]
 ) -> None:
@@ -322,6 +332,24 @@ def run(args: argparse.Namespace) -> int:
     run_dir = RunDir(output)
     completed = run_dir.completed_units()
     manifest = run_dir.manifest()
+    manifest_path = run_dir.path("manifest.json")
+    if manifest_path.is_file():
+        previous = json.loads(manifest_path.read_text(encoding="utf-8"))
+        expected = {
+            "family": args.family,
+            "scale": args.scale,
+            "domains": domains,
+            "layers": layers,
+        }
+        mismatches = [
+            key for key, value in expected.items() if previous.get(key) != value
+        ]
+        if mismatches:
+            raise SystemExit(
+                "resume manifest mismatch for "
+                + ", ".join(mismatches)
+                + "; pick a fresh --output directory"
+            )
     manifest.update(
         {
             "family": args.family,
@@ -343,9 +371,9 @@ def run(args: argparse.Namespace) -> int:
                         layer
                         for layer in layers
                         if (checkpoint.name, layer, domain) not in completed
-                        or not _base_path(run_dir, checkpoint.name, layer, domain)
-                        .with_suffix(".json")
-                        .is_file()
+                        or not _eigensystem_complete(
+                            run_dir, checkpoint.name, layer, domain
+                        )
                     ]
                     hidden = {}
                     if missing:
@@ -370,12 +398,7 @@ def run(args: argparse.Namespace) -> int:
                         )
                     for layer in layers:
                         unit = (checkpoint.name, layer, domain)
-                        if (
-                            unit in completed
-                            and _base_path(run_dir, *unit)
-                            .with_suffix(".json")
-                            .is_file()
-                        ):
+                        if unit in completed and _eigensystem_complete(run_dir, *unit):
                             print(f"[skip] {unit}")
                             continue
                         covariance = OnlineCovariance()

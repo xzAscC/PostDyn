@@ -106,3 +106,25 @@ def test_generate_is_greedy_batches_and_returns_decoded_generations() -> None:
     assert len(generations) == 3
     assert [generation.item_id for generation in generations] == ["0", "1", "2"]
     assert all(generation.text.startswith("decoded-") for generation in generations)
+
+
+def test_generate_moves_all_inputs_through_model_device_helper(monkeypatch) -> None:
+    tokenizer = FakeTokenizer()
+    seen = []
+
+    def ensure_device(inputs, device):
+        seen.append((inputs, device))
+        return inputs
+
+    monkeypatch.setattr(bench, "_ensure_device", ensure_device)
+
+    class Model:
+        def parameters(self):
+            return iter(())
+
+        def generate(self, input_ids, attention_mask, **kwargs):
+            return [[*row, 99] for row in input_ids]
+
+    bench.generate(Model(), tokenizer, [bench.BenchItem("0", "p", {})])
+    assert len(seen) == 1
+    assert set(seen[0][0]) == {"input_ids", "attention_mask"}

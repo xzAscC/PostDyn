@@ -193,26 +193,10 @@ def run(args: argparse.Namespace) -> None:
                                 "accuracy": accuracy,
                             }
                         )
-            existing = []
             validation_path = output / "validation.jsonl"
-            if validation_path.is_file():
-                grouped: dict[tuple[Any, ...], list[bool]] = {}
-                for line in validation_path.read_text().splitlines():
-                    row = json.loads(line)
-                    if row.get("domain") == domain:
-                        grouped.setdefault(
-                            (row["layer"], row["alpha"], row["condition"]), []
-                        ).append(bool(row["correct"]))
-                existing = [
-                    {
-                        "layer": key[0],
-                        "alpha": key[1],
-                        "condition": key[2],
-                        "accuracy": sum(values) / len(values),
-                    }
-                    for key, values in grouped.items()
-                ]
-            val_summary.extend(existing)
+            expected = len(cfg.layers) * len(ALPHAS) * 3
+            if len(val_summary) < expected:
+                val_summary = common.validation_scores(validation_path, domain)
             choice = prior_selected.get(domain, select_best(val_summary))
             selected[domain] = choice
             if "r_bar" not in choice:

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import inspect
+import io
+import sys
 import subprocess
+from typing import cast
 
 import postdyn.verifiers as verifiers
 
@@ -22,28 +25,82 @@ def test_mmlu_pro_uses_first_standalone_option_letter() -> None:
 def test_livecodebench_runs_isolated_subprocess_with_timeout(monkeypatch) -> None:
     calls = []
 
-    def fake_run(*args, **kwargs):
-        calls.append((args, kwargs))
-        return subprocess.CompletedProcess(args, 0, stdout="3\n", stderr="")
+    class FakeProcess:
+        pid = 123
+        returncode = 0
 
-    monkeypatch.setattr(verifiers.subprocess, "run", fake_run)
-    reference = {"code": "print(a+b)", "cases": [{"stdin": "1 2", "stdout": "3"}]}
+        def __init__(self):
+            self.stdin = io.BytesIO()
+            self.stdout = io.BytesIO(b"3\n")
+            self.stderr = io.BytesIO()
+
+        def wait(self, **kwargs):
+            return self.returncode
+
+    def fake_popen(*args, **kwargs):
+        calls.append((args, kwargs))
+        return FakeProcess()
+
+    monkeypatch.setattr(verifiers.subprocess, "Popen", fake_popen)
+    reference = cast(
+        dict[str, object],
+        {"code": "print(a+b)", "cases": [{"stdin": "1 2", "stdout": "3"}]},
+    )
     assert verifiers.verify("livecodebench", "print(a+b)", reference)
-    assert calls and calls[0][1]["timeout"] > 0
+    assert calls and calls[0][1]["start_new_session"]
     assert "exec(" not in inspect.getsource(verifiers.verify)
 
 
 def test_livecodebench_timeout_is_false(monkeypatch) -> None:
-    def timeout(*args, **kwargs):
-        raise subprocess.TimeoutExpired("python", 1)
+    class TimeoutProcess:
+        pid = 123
+        returncode = -9
+        stdin = io.BytesIO()
+        stdout = io.BytesIO()
+        stderr = io.BytesIO()
+
+        def __init__(self):
+            self.waited = False
+
+        def wait(self, **kwargs):
+            if not self.waited:
+                self.waited = True
+                raise subprocess.TimeoutExpired("python", 1)
+            return None
 
     monkeypatch.setattr(
         verifiers.subprocess,
-        "run",
-        timeout,
+        "Popen",
+        lambda *args, **kwargs: TimeoutProcess(),
     )
     assert not verifiers.verify(
         "livecodebench", "print(1)", {"cases": [{"stdin": "", "stdout": "1"}]}
+    )
+
+
+def test_livecodebench_timeout_kills_process_group() -> None:
+    code = (
+        "import subprocess; subprocess.Popen([%r, '-c', 'import time; time.sleep(30)'])"
+        % sys.executable
+    )
+    assert not verifiers.verify(
+        "livecodebench", code, {"cases": [{"stdin": "", "stdout": ""}]}
+    )
+
+
+def test_livecodebench_memory_limit_returns_false() -> None:
+    code = "x = bytearray(4 * 1024 * 1024 * 1024)"
+    assert not verifiers.verify(
+        "livecodebench", code, {"cases": [{"stdin": "", "stdout": ""}]}
+    )
+
+
+def test_livecodebench_large_output_is_bounded_and_verifies() -> None:
+    code = "import sys; print('3'); sys.stderr.write('x' * (10 * 1024 * 1024))"
+    assert verifiers.verify(
+        "livecodebench",
+        code,
+        {"cases": [{"stdin": "", "stdout": "3"}]},
     )
 
 
@@ -55,7 +112,7 @@ def test_ifeval_delegates_prompt_and_response_to_official_checker(monkeypatch) -
         return response == "no commas"
 
     monkeypatch.setattr(verifiers, "check_prompt_level", checker)
-    reference = {"instruction": "no commas"}
+    reference = cast(dict[str, object], {"instruction": "no commas"})
     assert verifiers.verify("ifeval", "no commas", reference)
     assert calls == [("no commas", "no commas")]
     assert not verifiers.verify("ifeval", "has, comma", reference)

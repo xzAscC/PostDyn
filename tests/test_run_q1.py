@@ -68,6 +68,27 @@ def test_q1_writes_metrics_eigensystems_analysis_and_resumes(tmp_path: Path) -> 
     assert (output / "metrics.jsonl").read_text() == before
 
 
+def test_q1_recomputes_unit_when_safetensors_is_missing(tmp_path: Path) -> None:
+    output = tmp_path / "q1"
+    assert q1.main(_run_args(output)) == 0
+
+    missing = output / "eigensystems" / "base" / "0" / "math.safetensors"
+    missing.unlink()
+
+    assert q1.main(_run_args(output)) == 0
+    assert missing.is_file()
+
+
+def test_q1_rejects_resume_with_different_domains(tmp_path: Path) -> None:
+    output = tmp_path / "q1"
+    assert q1.main(_run_args(output)) == 0
+
+    changed = _run_args(output)
+    changed[changed.index("math,code")] = "math"
+    with pytest.raises(SystemExit, match="mismatch.*fresh --output"):
+        q1.main(changed)
+
+
 def test_robustness_writes_repeat_files_and_spread_summary(tmp_path: Path) -> None:
     output = tmp_path / "robustness"
     args = [
