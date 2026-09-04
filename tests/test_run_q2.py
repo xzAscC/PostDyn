@@ -208,6 +208,29 @@ def test_exp2_covariance_uses_float64_and_t_minus_one_cap() -> None:
     assert vals.shape == (2,)
 
 
+def test_exp2_item_k_is_recomputed_for_each_solution() -> None:
+    exp2 = load_script("run_q2_exp2")
+    high = torch.eye(4, dtype=torch.float64)[:, :3]
+    low = torch.eye(4, dtype=torch.float64)[:, 1:]
+    first = torch.tensor([[1.0, 0.0, 0.0, 0.0], [-1.0, 0.0, 0.0, 0.0]])
+    second = torch.tensor(
+        [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
+
+    _, first_subsims, first_k = exp2.item_subsims(first, 3, high, low)
+    _, second_subsims, second_k = exp2.item_subsims(second, 3, high, low)
+
+    assert first_k == 1
+    assert first_subsims == (1.0, 0.0)
+    assert second_k == 3
+    assert second_subsims == pytest.approx((0.75, 0.75))
+
+
 def test_exp2_subsim_vs_band_normalizes_by_solution_width() -> None:
     exp2 = load_script("run_q2_exp2")
     solution = torch.eye(4, dtype=torch.float64)[:, :2]

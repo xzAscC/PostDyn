@@ -409,7 +409,7 @@ def run(args: argparse.Namespace) -> int:
             "n": n_by_domain,
             "actual_n": actual_n_by_domain,
             "pool_fingerprints": pool_fingerprints,
-            "short_pool": bool(short_domains),
+            "short_pool_domains": sorted(short_domains),
         }
     )
     atomic_write_json(run_dir.path("manifest.json"), manifest)
@@ -470,7 +470,7 @@ def run(args: argparse.Namespace) -> int:
                             "domain": domain,
                             **spectral_metrics(values),
                             "n": n_by_domain[domain],
-                            "short_pool": bool(short_domains),
+                            "short_pool": domain in short_domains,
                         }
                         append_jsonl(run_dir.path("metrics.jsonl"), row)
                         completed.add(unit)

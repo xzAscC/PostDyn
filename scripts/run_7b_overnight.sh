@@ -33,7 +33,7 @@ run_stage q1_full \
 
 run_stage q1_robustness \
     uv run python scripts/run_q1_robustness.py --family 7b --repeats "${REPEATS}" \
-    --output logs/q1_robustness/7b --allow-short-pool # GR pool: 6210 unique < n=3d — explicit deviation, see PR #7
+    --output logs/q1_robustness/7b
 
 run_stage q2_exp1 \
     uv run python scripts/run_q2_exp1.py --family 7b --q1-root logs/q1/7b \

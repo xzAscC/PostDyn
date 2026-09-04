@@ -67,10 +67,23 @@ def _code(generation: str, reference: dict[str, Any]) -> bool:
     cases = reference.get("cases", reference.get("test_cases", []))
     if not cases:
         return False
+    func_name = reference.get("func_name")
     with tempfile.TemporaryDirectory(prefix="postdyn-code-") as directory:
         script = Path(directory) / "solution.py"
         script.write_text(code, encoding="utf-8")
         for case in cases:
+            functional = isinstance(case, dict) and (
+                case.get("testtype") == "functional"
+                or "args" in case
+                or "expected_output" in case
+            )
+            if functional:
+                if not isinstance(func_name, str) or not func_name:
+                    logger.warning("LiveCodeBench functional case has no func_name")
+                    return False
+                if not _run_functional_case(directory, script, case, func_name):
+                    return False
+                continue
             stdin = (
                 case.get("input", case.get("stdin", ""))
                 if isinstance(case, dict)
@@ -138,6 +151,67 @@ def _code(generation: str, reference: dict[str, Any]) -> bool:
             ):
                 return False
     return True
+
+
+def _run_functional_case(
+    directory: str, script: Path, case: dict[str, Any], func_name: str
+) -> bool:
+    """Call the named solution function and compare stripped ``str`` values.
+
+    LiveCodeBench encodes each positional argument as one JSON line in
+    ``input``; a one-line case is one argument even when its JSON value is a
+    list. The official-style comparison is ``str(result).strip()`` against
+    ``str(output).strip()``.
+    """
+    driver = Path(directory) / "functional_driver.py"
+    driver.write_text(
+        "import importlib.util\n"
+        "import json\n"
+        "import sys\n"
+        "spec = importlib.util.spec_from_file_location('solution', sys.argv[1])\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(module)\n"
+        "name = sys.argv[2]\n"
+        "function = getattr(module, name, None)\n"
+        "if function is None and hasattr(module, 'Solution'):\n"
+        "    function = getattr(module.Solution(), name, None)\n"
+        "if function is None:\n"
+        "    raise AttributeError(name)\n"
+        "lines = sys.stdin.read().splitlines()\n"
+        "args = []\n"
+        "for line in lines:\n"
+        "    try:\n"
+        "        args.append(json.loads(line))\n"
+        "    except json.JSONDecodeError:\n"
+        "        args.append(line)\n"
+        "result = function(*args)\n"
+        "sys.stdout.write(str(result))\n",
+        encoding="utf-8",
+    )
+    value = case.get("input", case.get("args", ""))
+    if isinstance(value, list):
+        input_text = "\n".join(json.dumps(item) for item in value)
+    else:
+        input_text = str(value)
+    expected = case.get("output", case.get("expected_output", ""))
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-I", str(driver), str(script), func_name],
+            input=input_text.encode(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=directory,
+            start_new_session=True,
+            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return (
+        completed.returncode == 0
+        and completed.stdout.decode(errors="replace").strip() == str(expected).strip()
+    )
 
 
 def _read_capped(stream: Any, chunks: list[bytes], cap: int = 1_048_576) -> None:
@@ -276,8 +350,15 @@ def _number_words(kwargs: dict[str, Any], response: str) -> bool:
     )
 
 
+def _number_paragraphs(kwargs: dict[str, Any], response: str) -> bool:
+    paragraphs = [
+        paragraph for paragraph in response.split("\n\n") if paragraph.strip()
+    ]
+    return len(paragraphs) == int(kwargs["num_paragraphs"])
+
+
 def _nth_paragraph_first_word(kwargs: dict[str, Any], response: str) -> bool:
-    paragraphs = [paragraph.strip() for paragraph in response.split("***")]
+    paragraphs = [paragraph.strip() for paragraph in response.split("\n\n")]
     index = int(kwargs["nth_paragraph"]) - 1
     return (
         len(paragraphs) == int(kwargs["num_paragraphs"])
@@ -288,11 +369,7 @@ def _nth_paragraph_first_word(kwargs: dict[str, Any], response: str) -> bool:
 
 
 def _number_placeholders(kwargs: dict[str, Any], response: str) -> bool:
-    return _relation(
-        len(re.findall(r"\[[^\[\]]+\]", response)),
-        int(kwargs["num_placeholders"]),
-        kwargs["relation"],
-    )
+    return len(re.findall(r"\[[^\[\]]+\]", response)) >= int(kwargs["num_placeholders"])
 
 
 def _postscript(kwargs: dict[str, Any], response: str) -> bool:
@@ -303,11 +380,7 @@ def _postscript(kwargs: dict[str, Any], response: str) -> bool:
 
 
 def _number_bullet_lists(kwargs: dict[str, Any], response: str) -> bool:
-    return _relation(
-        len(re.findall(r"(?m)^\* ", response)),
-        int(kwargs["num_bullets"]),
-        kwargs["relation"],
-    )
+    return len(re.findall(r"(?m)^\* ", response)) >= int(kwargs["num_bullets"])
 
 
 def _constrained_response(kwargs: dict[str, Any], response: str) -> bool:
@@ -317,7 +390,7 @@ def _constrained_response(kwargs: dict[str, Any], response: str) -> bool:
 
 def _number_highlighted_sections(kwargs: dict[str, Any], response: str) -> bool:
     spans = re.findall(r"\*{1,2}[^*\n]+\*{1,2}", response)
-    return _relation(len(spans), int(kwargs["num_highlights"]), kwargs["relation"])
+    return len(spans) >= int(kwargs["num_highlights"])
 
 
 def _multiple_sections(kwargs: dict[str, Any], response: str) -> bool:
@@ -325,7 +398,7 @@ def _multiple_sections(kwargs: dict[str, Any], response: str) -> bool:
     if not isinstance(divider, str) or not divider:
         return False
     sections = [section for section in response.split(divider) if section.strip()]
-    return _relation(len(sections), int(kwargs["num_sections"]), kwargs["relation"])
+    return len(sections) == int(kwargs["num_sections"])
 
 
 def _json_format(kwargs: dict[str, Any], response: str) -> bool:
@@ -389,10 +462,6 @@ def _no_comma(kwargs: dict[str, Any], response: str) -> bool:
     return "," not in response
 
 
-def _punctuation_frequency(kwargs: dict[str, Any], response: str) -> bool:
-    return _relation(response.count(","), int(kwargs["frequency"]), kwargs["relation"])
-
-
 class _IFEvalRegistry(dict[str, Any]):
     """Complete official 25-ID namespaced IFEval checker registry."""
 
@@ -406,6 +475,7 @@ IFEVAL_CHECKERS = _IFEvalRegistry(
         "language:response_language": _response_language,
         "length_constraints:number_sentences": _number_sentences,
         "length_constraints:number_words": _number_words,
+        "length_constraints:number_paragraphs": _number_paragraphs,
         "length_constraints:nth_paragraph_first_word": _nth_paragraph_first_word,
         "detectable_content:number_placeholders": _number_placeholders,
         "detectable_content:postscript": _postscript,
@@ -423,7 +493,6 @@ IFEVAL_CHECKERS = _IFEvalRegistry(
         "change_case:english_capital": _english_capital,
         "change_case:english_lowercase": _english_lowercase,
         "punctuation:no_comma": _no_comma,
-        "punctuation:frequency": _punctuation_frequency,
     }
 )
 
@@ -471,8 +540,7 @@ def verify(benchmark: str, generation_text: str, reference: dict[str, object]) -
         try:
             cases = reference.get("cases", reference.get("test_cases", []))
             if not isinstance(cases, list) or any(
-                not isinstance(case, dict) or not isinstance(case.get("stdin", ""), str)
-                for case in cases
+                not isinstance(case, dict) for case in cases
             ):
                 return False
             return _code(generation_text, reference)

@@ -61,7 +61,7 @@ def test_livecodebench_runs_isolated_subprocess_with_timeout(monkeypatch) -> Non
     monkeypatch.setattr(verifiers.subprocess, "Popen", fake_popen)
     reference = cast(
         dict[str, object],
-        {"code": "print(a+b)", "cases": [{"stdin": "1 2", "stdout": "3"}]},
+        {"cases": [{"input": "1 2", "output": "3", "testtype": "stdin"}]},
     )
     assert verifiers.verify("livecodebench", "print(a+b)", reference)
     assert calls and calls[0][1]["start_new_session"]
@@ -91,7 +91,9 @@ def test_livecodebench_timeout_is_false(monkeypatch) -> None:
         lambda *args, **kwargs: TimeoutProcess(),
     )
     assert not verifiers.verify(
-        "livecodebench", "print(1)", {"cases": [{"stdin": "", "stdout": "1"}]}
+        "livecodebench",
+        "print(1)",
+        {"cases": [{"input": "", "output": "1", "testtype": "stdin"}]},
     )
 
 
@@ -101,14 +103,18 @@ def test_livecodebench_timeout_kills_process_group() -> None:
         % sys.executable
     )
     assert not verifiers.verify(
-        "livecodebench", code, {"cases": [{"stdin": "", "stdout": ""}]}
+        "livecodebench",
+        code,
+        {"cases": [{"input": "", "output": "", "testtype": "stdin"}]},
     )
 
 
 def test_livecodebench_memory_limit_returns_false() -> None:
     code = "x = bytearray(4 * 1024 * 1024 * 1024)"
     assert not verifiers.verify(
-        "livecodebench", code, {"cases": [{"stdin": "", "stdout": ""}]}
+        "livecodebench",
+        code,
+        {"cases": [{"input": "", "output": "", "testtype": "stdin"}]},
     )
 
 
@@ -117,7 +123,7 @@ def test_livecodebench_large_output_is_bounded_and_verifies() -> None:
     assert verifiers.verify(
         "livecodebench",
         code,
-        {"cases": [{"stdin": "", "stdout": "3"}]},
+        {"cases": [{"input": "", "output": "3", "testtype": "stdin"}]},
     )
 
 
@@ -185,11 +191,16 @@ IFEVAL_CASES = [
     (
         "length_constraints:nth_paragraph_first_word",
         {"num_paragraphs": 2, "nth_paragraph": 2, "first_word": "Start"},
-        "First paragraph\n***\nStart here",
+        "First paragraph\n\nStart here",
+    ),
+    (
+        "length_constraints:number_paragraphs",
+        {"num_paragraphs": 2},
+        "First\n\nSecond",
     ),
     (
         "detectable_content:number_placeholders",
-        {"num_placeholders": 2, "relation": "at least"},
+        {"num_placeholders": 2},
         "Use [one] and [two].",
     ),
     (
@@ -199,7 +210,7 @@ IFEVAL_CASES = [
     ),
     (
         "detectable_format:number_bullet_lists",
-        {"num_bullets": 2, "relation": "at least"},
+        {"num_bullets": 2},
         "* one\n* two",
     ),
     (
@@ -209,12 +220,12 @@ IFEVAL_CASES = [
     ),
     (
         "detectable_format:number_highlighted_sections",
-        {"num_highlights": 2, "relation": "at least"},
+        {"num_highlights": 2},
         "*one* and **two**",
     ),
     (
         "detectable_format:multiple_sections",
-        {"num_sections": 2, "relation": "at least"},
+        {"num_sections": 2, "section_spliter": "---"},
         "one\n---\ntwo",
     ),
     ("detectable_format:json_format", {}, '{"answer": 1}'),
@@ -235,7 +246,6 @@ IFEVAL_CASES = [
     ("change_case:english_capital", {}, "ALL CAPITAL"),
     ("change_case:english_lowercase", {}, "all lowercase"),
     ("punctuation:no_comma", {}, "No commas"),
-    ("punctuation:frequency", {"frequency": 2, "relation": "at least"}, "a,b,c"),
 ]
 
 
@@ -261,7 +271,8 @@ def test_ifeval_official_registry_false_case(
         "language:response_language": "Bonjour tout le monde.",
         "length_constraints:number_sentences": "Only one sentence.",
         "length_constraints:number_words": "one",
-        "length_constraints:nth_paragraph_first_word": "First paragraph\n***\nWrong here",
+        "length_constraints:nth_paragraph_first_word": "First paragraph\n\nWrong here",
+        "length_constraints:number_paragraphs": "Only one paragraph",
         "detectable_content:number_placeholders": "Use [one].",
         "detectable_content:postscript": "Answer only.",
         "detectable_format:number_bullet_lists": "* one",
@@ -278,7 +289,6 @@ def test_ifeval_official_registry_false_case(
         "change_case:english_capital": "ALL Capital",
         "change_case:english_lowercase": "all Lower",
         "punctuation:no_comma": "Has, comma",
-        "punctuation:frequency": "a,b",
     }
     reference = cast(
         dict[str, object], {"instruction_id_list": [instruction_id], "kwargs": [kwargs]}
@@ -286,9 +296,81 @@ def test_ifeval_official_registry_false_case(
     assert not verifiers.verify("ifeval", false_responses[instruction_id], reference)
 
 
-def test_ifeval_registry_has_exactly_the_official_ids() -> None:
-    assert len(verifiers.IFEVAL_CHECKERS) == 25
-    assert {case[0] for case in IFEVAL_CASES} == set(verifiers.IFEVAL_CHECKERS)
+REAL_IFEVAL_IDS = [
+    "change_case:capital_word_frequency",
+    "change_case:english_capital",
+    "change_case:english_lowercase",
+    "combination:repeat_prompt",
+    "combination:two_responses",
+    "detectable_content:number_placeholders",
+    "detectable_content:postscript",
+    "detectable_format:constrained_response",
+    "detectable_format:json_format",
+    "detectable_format:multiple_sections",
+    "detectable_format:number_bullet_lists",
+    "detectable_format:number_highlighted_sections",
+    "detectable_format:title",
+    "keywords:existence",
+    "keywords:forbidden_words",
+    "keywords:frequency",
+    "keywords:letter_frequency",
+    "language:response_language",
+    "length_constraints:nth_paragraph_first_word",
+    "length_constraints:number_paragraphs",
+    "length_constraints:number_sentences",
+    "length_constraints:number_words",
+    "punctuation:no_comma",
+    "startend:end_checker",
+    "startend:quotation",
+]
+
+REAL_IFEVAL_ROW_FIXTURES = [
+    ("keywords:existence", {"keywords": ["correlated", "experiencing"]}),
+    (
+        "keywords:frequency",
+        {"relation": "at least", "keyword": "story", "frequency": 2},
+    ),
+    ("length_constraints:number_paragraphs", {"num_paragraphs": 2}),
+    (
+        "detectable_format:multiple_sections",
+        {"section_spliter": "PARAGRAPH", "num_sections": 2},
+    ),
+    (
+        "length_constraints:nth_paragraph_first_word",
+        {"first_word": "weekend", "num_paragraphs": 4, "nth_paragraph": 1},
+    ),
+]
+
+
+def test_ifeval_registry_has_exactly_the_real_ids() -> None:
+    assert set(verifiers.IFEVAL_CHECKERS) == set(REAL_IFEVAL_IDS)
+
+
+def test_ifeval_real_row_fixture_kwargs_are_supported() -> None:
+    assert all(
+        instruction_id in verifiers.IFEVAL_CHECKERS
+        for instruction_id, _ in REAL_IFEVAL_ROW_FIXTURES
+    )
+
+
+def test_livecodebench_functional_case_calls_named_function() -> None:
+    assert verifiers.verify(
+        "livecodebench",
+        "def add(a, b):\n    return a + b",
+        {
+            "func_name": "add",
+            "cases": [{"input": "2\n3", "output": "5", "testtype": "functional"}],
+        },
+    )
+
+
+def test_livecodebench_functional_case_requires_function_name(caplog) -> None:
+    assert not verifiers.verify(
+        "livecodebench",
+        "def add(a):\n    return a",
+        {"cases": [{"input": "2", "output": "2", "testtype": "functional"}]},
+    )
+    assert "func_name" in caplog.text
 
 
 def test_ifeval_malformed_kwargs_are_false() -> None:

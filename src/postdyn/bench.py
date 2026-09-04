@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import base64
-import binascii
 import hashlib
 import json
 import logging
+import pickle
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -128,32 +128,47 @@ def _load_ifeval(source: str | Path | None = None) -> list[BenchItem]:
     ]
 
 
-def _livecodebench_cases(row: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
-    """Return public then private LCB cases in the verifier reference payload.
+def _livecodebench_cases(row: dict[str, Any]) -> dict[str, Any]:
+    """Decode and merge public then private LiveCodeBench cases.
 
-    ``stdin`` cases run as-is. Other ``testtype`` values are passed through;
-    the verifier treats them through the same subprocess, and the functional-
-    style cases in ``code_generation_lite`` carry stdin-equivalent payloads.
-    Each case retains its ``input``, ``output``, and ``testtype`` fields.
+    Release v6 stores private cases as base64, zlib-compressed pickle bytes;
+    the pickle payload is a JSON string containing the case list.
     """
-    cases = list(json.loads(row["public_test_cases"]))
+    question_id = str(row.get("question_id", "<unknown>"))
+    try:
+        cases = json.loads(row["public_test_cases"])
+        if not isinstance(cases, list):
+            raise ValueError("public cases are not a list")
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"invalid public test cases for question_id {question_id}"
+        ) from exc
     private_test_cases = row.get("private_test_cases")
     if private_test_cases:
         try:
-            private = json.loads(
-                zlib.decompress(base64.b64decode(private_test_cases)).decode("utf-8")
+            decoded = pickle.loads(
+                zlib.decompress(base64.b64decode(private_test_cases, validate=True))
             )
-        except (
-            ValueError,
-            TypeError,
-            binascii.Error,
-            zlib.error,
-            UnicodeDecodeError,
-        ) as exc:
-            logger.warning("Skipping invalid LiveCodeBench private test cases: %s", exc)
-        else:
-            cases.extend(private)
-    return {"cases": cases}
+            if isinstance(decoded, str):
+                private = json.loads(decoded)
+            else:
+                private = decoded
+            if not isinstance(private, list):
+                raise ValueError("private cases are not a list")
+        except Exception as exc:
+            raise ValueError(
+                f"invalid private test cases for question_id {question_id}"
+            ) from exc
+        cases.extend(private)
+    metadata = row.get("metadata", {})
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    return {"cases": cases, "func_name": metadata.get("func_name")}
 
 
 def _load_livecodebench(source: str | Path | None = None) -> list[BenchItem]:

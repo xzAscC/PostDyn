@@ -110,10 +110,12 @@ def test_q1_uses_per_domain_pool_sizes_and_manifest_maps(
     ]
     assert {row["n"] for row in rows if row["domain"] == "math"} == {32}
     assert {row["n"] for row in rows if row["domain"] == "code"} == {20}
+    assert {row["short_pool"] for row in rows if row["domain"] == "math"} == {False}
+    assert {row["short_pool"] for row in rows if row["domain"] == "code"} == {True}
     manifest = json.loads((output / "manifest.json").read_text())
     assert manifest["n"] == {"math": 32, "code": 20}
     assert manifest["actual_n"] == {"math": 32, "code": 20}
-    assert manifest["short_pool"] is True
+    assert manifest["short_pool_domains"] == ["code"]
 
 
 def test_q1_rejects_checkpoint_manifest_mismatch(tmp_path: Path) -> None:
