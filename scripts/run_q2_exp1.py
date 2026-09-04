@@ -33,13 +33,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def require_bases(
     root: Path,
-    family: str,
     domain: str,
     layers: list[int] | tuple[int, ...],
-    k: int,
     stage: str = "rlvr",
 ):
-    del family, k
     return common.require_bases(root, domain, tuple(layers), stage)
 
 
@@ -115,7 +112,7 @@ def run(args: argparse.Namespace) -> None:
     common.write_manifest(output, args, "exp1")
     if args.scale != "tiny":
         for domain in args.domains:
-            require_bases(q1_root, args.family, domain, cfg.layers, cfg.d_model // 3)
+            require_bases(q1_root, domain, cfg.layers)
     with tee_log(run_dir):
         model, tokenizer = common.load_runtime(args, "rlvr")
         prior_selected = (
@@ -127,9 +124,7 @@ def run(args: argparse.Namespace) -> None:
         for domain in args.domains:
             benchmark = BENCHMARKS[domain]
             val, test = common.load_items(domain, args.limit, args.scale == "tiny")
-            eig = require_bases(
-                q1_root, args.family, domain, cfg.layers, cfg.d_model // 3
-            )
+            eig = require_bases(q1_root, domain, cfg.layers)
             k = cfg.d_model // 3
             bases = {
                 "high": {l: v[1][:, :k] for l, v in eig.items()},

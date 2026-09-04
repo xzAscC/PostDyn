@@ -25,7 +25,7 @@ def load_script(name: str):
 def test_exp1_missing_final_bases_fails_clearly(tmp_path: Path) -> None:
     exp1 = load_script("run_q2_exp1")
     with pytest.raises(SystemExit, match="Q1.*rlvr.*bases"):
-        exp1.require_bases(tmp_path, "7b", "math", [0], 1, "rlvr")
+        exp1.require_bases(tmp_path, "math", [0], "rlvr")
 
 
 def test_selection_ties_layer_then_alpha() -> None:
