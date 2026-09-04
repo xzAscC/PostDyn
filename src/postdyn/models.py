@@ -161,19 +161,32 @@ def prune_revision_cache(
     repo_dir = cache_root / ("models--" + checkpoint.repo.replace("/", "--"))
     ref = repo_dir / "refs" / checkpoint.revision
     if ref.is_file():
-        commit_hash = ref.read_text().strip()
-        if commit_hash:
-            shutil.rmtree(repo_dir / "snapshots" / commit_hash, ignore_errors=True)
+        try:
+            lines = ref.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError):
+            _logger.debug(
+                "Unable to decode cached ref for %s revision %s",
+                checkpoint.repo,
+                checkpoint.revision,
+            )
+            return
+        if (
+            len(lines) != 1
+            or len(lines[0]) != 40
+            or any(character not in "0123456789abcdef" for character in lines[0])
+        ):
+            _logger.debug(
+                "Unable to decode cached ref for %s revision %s",
+                checkpoint.repo,
+                checkpoint.revision,
+            )
+            return
+        shutil.rmtree(repo_dir / "snapshots" / lines[0], ignore_errors=True)
         ref.unlink()
         return
 
-    legacy_snapshot = repo_dir / "snapshots" / checkpoint.revision
-    if legacy_snapshot.exists():
-        shutil.rmtree(legacy_snapshot)
-        return
-
     _logger.debug(
-        "No cached snapshot or ref found for %s revision %s",
+        "No cached ref found for %s revision %s",
         checkpoint.repo,
         checkpoint.revision,
     )

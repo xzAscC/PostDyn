@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -99,7 +100,7 @@ def _code(generation: str, reference: dict[str, Any]) -> bool:
             )
             if not ok:
                 return False
-            if stdout_text.strip() != str(expected).strip():
+            if not _stdio_outputs_equal(stdout_text, str(expected)):
                 return False
     return True
 
@@ -157,6 +158,24 @@ def _functional_outputs_equal(expected: str, captured: str) -> bool:
     return _normalize_json_value(expected_value) == _normalize_json_value(
         captured_value
     )
+
+
+def _stdio_outputs_equal(predicted: str, expected: str) -> bool:
+    predicted_lines = [line.strip() for line in predicted.strip().split("\n")]
+    expected_lines = [line.strip() for line in expected.strip().split("\n")]
+    if len(predicted_lines) != len(expected_lines):
+        return False
+    for predicted_line, expected_line in zip(predicted_lines, expected_lines):
+        if predicted_line == expected_line:
+            continue
+        try:
+            predicted_tokens = [Decimal(token) for token in predicted_line.split()]
+            expected_tokens = [Decimal(token) for token in expected_line.split()]
+        except (InvalidOperation, ValueError):
+            return False
+        if predicted_tokens != expected_tokens:
+            return False
+    return True
 
 
 def _normalize_json_value(value: Any) -> Any:
@@ -280,7 +299,7 @@ def _keywords_existence(kwargs: dict[str, Any], response: str) -> bool:
         isinstance(keywords, list)
         and bool(keywords)
         and all(
-            isinstance(keyword, str) and keyword.lower() in response.lower()
+            isinstance(keyword, str) and re.search(keyword, response, re.I)
             for keyword in keywords
         )
     )
@@ -292,7 +311,7 @@ def _keywords_frequency(kwargs: dict[str, Any], response: str) -> bool:
         isinstance(keyword, str)
         and bool(keyword)
         and _relation(
-            response.lower().count(keyword.lower()),
+            len(re.findall(keyword, response, re.I)),
             int(kwargs["frequency"]),
             kwargs["relation"],
         )
@@ -305,7 +324,7 @@ def _keywords_forbidden(kwargs: dict[str, Any], response: str) -> bool:
         isinstance(words, list)
         and bool(words)
         and all(
-            isinstance(word, str) and word.lower() not in response.lower()
+            isinstance(word, str) and not re.search(rf"\b{word}\b", response, re.I)
             for word in words
         )
     )
@@ -329,20 +348,30 @@ def _response_language(kwargs: dict[str, Any], response: str) -> bool:
     if not isinstance(language, str) or len(language) != 2:
         return False
     try:
-        detect = importlib.import_module("langdetect").detect
+        langdetect = importlib.import_module("langdetect")
     except ImportError:
         logger.warning("langdetect is unavailable; response language check failed")
         return False
     try:
-        return detect(response) == language.lower()
-    except Exception:
+        return langdetect.detect(response) == language.lower()
+    except getattr(langdetect, "LangDetectException", Exception):
         return False
 
 
+def _count_words(response: str) -> int:
+    nltk = importlib.import_module("nltk")
+    return len(nltk.tokenize.RegexpTokenizer(r"\w+").tokenize(response))
+
+
+def _count_sentences(response: str) -> int:
+    nltk = importlib.import_module("nltk")
+    tokenizer = nltk.data.load("nltk:tokenizers/punkt/english.pickle")
+    return len(tokenizer.tokenize(response))
+
+
 def _number_sentences(kwargs: dict[str, Any], response: str) -> bool:
-    sentences = re.findall(r"[^.!?]+(?:[.!?]+(?=\s|$)|$)", response)
     return _relation(
-        len([sentence for sentence in sentences if sentence.strip()]),
+        _count_sentences(response),
         int(kwargs["num_sentences"]),
         kwargs["relation"],
     )
@@ -350,97 +379,138 @@ def _number_sentences(kwargs: dict[str, Any], response: str) -> bool:
 
 def _number_words(kwargs: dict[str, Any], response: str) -> bool:
     return _relation(
-        len(response.split()), int(kwargs["num_words"]), kwargs["relation"]
+        _count_words(response), int(kwargs["num_words"]), kwargs["relation"]
     )
 
 
 def _number_paragraphs(kwargs: dict[str, Any], response: str) -> bool:
-    paragraphs = [paragraph for paragraph in response.split("***") if paragraph.strip()]
+    paragraphs = re.split(r"\s?\*\*\*\s?", response)
+    count = len(paragraphs)
+    for index, paragraph in enumerate(paragraphs):
+        if not paragraph.strip():
+            if index in (0, len(paragraphs) - 1):
+                count -= 1
+            else:
+                return False
     target = int(kwargs["num_paragraphs"])
-    relation = kwargs.get("relation") or "exact"
-    if relation == "at least":
-        return len(paragraphs) >= target
-    return relation == "exact" and len(paragraphs) == target
+    return count == target
 
 
 def _nth_paragraph_first_word(kwargs: dict[str, Any], response: str) -> bool:
-    paragraphs = [paragraph.strip() for paragraph in response.split("\n\n")]
+    paragraphs = re.split(r"\n\n", response)
+    count = len(paragraphs)
+    for paragraph in paragraphs:
+        if not paragraph.strip():
+            count -= 1
     index = int(kwargs["nth_paragraph"]) - 1
+    if not 0 <= index < len(paragraphs) or not paragraphs[index].strip():
+        return False
+    word = paragraphs[index].strip().split()[0].lstrip("'\"")
+    punctuation = {".", ",", "?", "!", "'", '"'}
+    first_word = ""
+    for letter in word:
+        if letter in punctuation:
+            break
+        first_word += letter.lower()
     return (
-        len(paragraphs) == int(kwargs["num_paragraphs"])
-        and 0 <= index < len(paragraphs)
-        and bool(paragraphs[index])
-        and paragraphs[index].split()[0] == kwargs["first_word"]
+        count == int(kwargs["num_paragraphs"])
+        and first_word == str(kwargs["first_word"]).lower()
     )
 
 
 def _number_placeholders(kwargs: dict[str, Any], response: str) -> bool:
-    return len(re.findall(r"\[[^\[\]]+\]", response)) >= int(kwargs["num_placeholders"])
+    return len(re.findall(r"\[.*?\]", response)) >= int(kwargs["num_placeholders"])
 
 
 def _postscript(kwargs: dict[str, Any], response: str) -> bool:
     marker = kwargs["postscript_marker"]
-    return (
-        isinstance(marker, str) and bool(marker) and marker.lower() in response.lower()
-    )
+    if not isinstance(marker, str) or not marker:
+        return False
+    if marker == "P.P.S":
+        pattern = r"\s*p\.\s?p\.\s?s.*$"
+    elif marker == "P.S.":
+        pattern = r"\s*p\.\s?s\..*$"
+    else:
+        pattern = rf"\s*{marker.lower()}.*$"
+    return bool(re.findall(pattern, response.lower(), re.M))
 
 
 def _number_bullet_lists(kwargs: dict[str, Any], response: str) -> bool:
-    return len(re.findall(r"(?m)^\* ", response)) == int(kwargs["num_bullets"])
+    bullets = re.findall(r"^\s*\*[^\*].*$", response, re.M)
+    bullets.extend(re.findall(r"^\s*-.*$", response, re.M))
+    return len(bullets) == int(kwargs["num_bullets"])
 
 
 def _constrained_response(kwargs: dict[str, Any], response: str) -> bool:
     choices = ("My answer is yes.", "My answer is no.", "My answer is maybe.")
-    return sum(response.count(choice) for choice in choices) == 1
+    return any(choice in response.strip() for choice in choices)
 
 
 def _number_highlighted_sections(kwargs: dict[str, Any], response: str) -> bool:
-    spans = re.findall(r"\*{1,2}[^*\n]+\*{1,2}", response)
-    return len(spans) >= int(kwargs["num_highlights"])
+    highlights = re.findall(r"\*[^\n\*]*\*", response)
+    double_highlights = re.findall(r"\*\*[^\n\*]*\*\*", response)
+    count = sum(bool(highlight.strip("*").strip()) for highlight in highlights)
+    count += sum(
+        bool(highlight.removeprefix("**").removesuffix("**").strip())
+        for highlight in double_highlights
+    )
+    return count >= int(kwargs["num_highlights"])
 
 
 def _multiple_sections(kwargs: dict[str, Any], response: str) -> bool:
     marker = kwargs.get("section_spliter")
     if not isinstance(marker, str) or not marker:
         return False
-    sections = re.findall(rf"(?im)\b{re.escape(marker)}\s+\d+\b", response)
-    return len(sections) >= int(kwargs["num_sections"])
+    sections = re.split(rf"\s?{marker}\s?\d+\s?", response)
+    return len(sections) - 1 >= int(kwargs["num_sections"])
 
 
 def _json_format(kwargs: dict[str, Any], response: str) -> bool:
-    candidate = response.strip()
-    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", candidate, re.S | re.I)
-    if fenced:
-        candidate = fenced.group(1).strip()
+    candidate = (
+        response.strip()
+        .removeprefix("```json")
+        .removeprefix("```Json")
+        .removeprefix("```JSON")
+        .removeprefix("```")
+        .removesuffix("```")
+        .strip()
+    )
     try:
-        parsed = json.loads(candidate)
-        return isinstance(parsed, (dict, list))
-    except (TypeError, json.JSONDecodeError):
+        json.loads(candidate)
+    except (TypeError, ValueError):
         return False
+    return True
 
 
 def _title(kwargs: dict[str, Any], response: str) -> bool:
-    title = kwargs.get("title")
-    return bool(re.search(r"<<[^<>]+>>", response)) and (
-        not title or f"<<{title}>>" in response
-    )
+    return bool(re.search(r"<<[^<>]+>>", response))
 
 
 def _two_responses(kwargs: dict[str, Any], response: str) -> bool:
     parts = response.split("******")
-    return len(parts) == 2 and all(part.strip() for part in parts)
+    if len(parts) != 2:
+        return False
+    first, second = (part.strip() for part in parts)
+    return first != second and bool(first or second)
 
 
 def _repeat_prompt(kwargs: dict[str, Any], response: str) -> bool:
     prompt = kwargs["prompt_to_repeat"]
-    return isinstance(prompt, str) and bool(prompt) and response.startswith(prompt)
+    return (
+        isinstance(prompt, str)
+        and bool(prompt.strip())
+        and response.strip().lower().startswith(prompt.strip().lower())
+    )
 
 
 def _end_checker(kwargs: dict[str, Any], response: str) -> bool:
     phrase = kwargs["end_phrase"]
-    return (
-        isinstance(phrase, str) and bool(phrase) and response.strip().endswith(phrase)
-    )
+    if not isinstance(phrase, str) or not phrase:
+        return False
+    candidate = response.strip()
+    if candidate.startswith('"') and candidate.endswith('"'):
+        candidate = candidate[1:-1].strip()
+    return candidate.lower().endswith(phrase.lower())
 
 
 def _quotation(kwargs: dict[str, Any], response: str) -> bool:
@@ -449,19 +519,34 @@ def _quotation(kwargs: dict[str, Any], response: str) -> bool:
 
 
 def _capital_word_frequency(kwargs: dict[str, Any], response: str) -> bool:
+    nltk = importlib.import_module("nltk")
+    tokens = nltk.tokenize.RegexpTokenizer(r"\w+").tokenize(response)
     return _relation(
-        len(re.findall(r"\b[A-Z]+\b", response)),
+        len([token for token in tokens if token.isupper()]),
         int(kwargs["capital_frequency"]),
         kwargs["capital_relation"],
     )
 
 
 def _english_capital(kwargs: dict[str, Any], response: str) -> bool:
-    return bool(response) and response == response.upper()
+    return _case_and_language(response, str.isupper)
 
 
 def _english_lowercase(kwargs: dict[str, Any], response: str) -> bool:
-    return bool(response) and response == response.lower()
+    return _case_and_language(response, str.islower)
+
+
+def _case_and_language(response: str, case_fn: Any) -> bool:
+    if not response or not case_fn(response):
+        return False
+    try:
+        langdetect = importlib.import_module("langdetect")
+    except ImportError:
+        return False
+    try:
+        return langdetect.detect(response) == "en"
+    except getattr(langdetect, "LangDetectException", Exception):
+        return False
 
 
 def _no_comma(kwargs: dict[str, Any], response: str) -> bool:

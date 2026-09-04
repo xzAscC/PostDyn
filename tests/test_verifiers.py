@@ -419,6 +419,112 @@ def test_ifeval_number_bullets_rejects_surplus_bullets() -> None:
     assert not verifiers.verify("ifeval", "* one\n* two\n* three", reference)
 
 
+def test_ifeval_official_edge_checker_semantics() -> None:
+    # instructions.py:280-326: the official regex accepts both * and - markers.
+    assert verifiers.verify(
+        "ifeval",
+        "- one\n- two",
+        {
+            "instruction_id_list": ["detectable_format:number_bullet_lists"],
+            "kwargs": [{"num_bullets": 2}],
+        },
+    )
+    # instructions.py:873-905: json.loads accepts every JSON value, including scalars.
+    assert verifiers.verify(
+        "ifeval",
+        "42",
+        {"instruction_id_list": ["detectable_format:json_format"], "kwargs": [{}]},
+    )
+    # instructions.py:329-363: any allowed phrase is sufficient.
+    assert verifiers.verify(
+        "ifeval",
+        "My answer is yes. My answer is no.",
+        {
+            "instruction_id_list": ["detectable_format:constrained_response"],
+            "kwargs": [{}],
+        },
+    )
+    # instructions.py:908-1010: first-word comparison is case-insensitive.
+    assert verifiers.verify(
+        "ifeval",
+        "First paragraph\n\nstart here",
+        {
+            "instruction_id_list": ["length_constraints:nth_paragraph_first_word"],
+            "kwargs": [
+                {"num_paragraphs": 2, "nth_paragraph": 2, "first_word": "Start"}
+            ],
+        },
+    )
+
+
+def test_ifeval_official_regex_and_normalization_semantics() -> None:
+    # instructions.py:703-810: keyword checks use unescaped regex searches.
+    assert verifiers.verify(
+        "ifeval",
+        "a.b",
+        {
+            "instruction_id_list": ["keywords:existence"],
+            "kwargs": [{"keywords": ["a.b"]}],
+        },
+    )
+    # instructions.py:1070-1112: forbidden words are whole-word regex matches.
+    assert verifiers.verify(
+        "ifeval",
+        "secretary",
+        {
+            "instruction_id_list": ["keywords:forbidden_words"],
+            "kwargs": [{"forbidden_words": ["secret"]}],
+        },
+    )
+    # instructions_util.py:125-130: words are \w+ tokens, not whitespace tokens.
+    assert verifiers.verify(
+        "ifeval",
+        "one-two",
+        {
+            "instruction_id_list": ["length_constraints:number_words"],
+            "kwargs": [{"num_words": 3, "relation": "less than"}],
+        },
+    )
+    # instructions.py:1171-1210: empty outer separator fragments are allowed.
+    assert verifiers.verify(
+        "ifeval",
+        "first******",
+        {"instruction_id_list": ["combination:two_responses"], "kwargs": [{}]},
+    )
+    # instructions.py:1213-1247: prompt and response are stripped and compared ignoring case.
+    assert verifiers.verify(
+        "ifeval",
+        "  REPEAT THIS, then answer",
+        {
+            "instruction_id_list": ["combination:repeat_prompt"],
+            "kwargs": [{"prompt_to_repeat": "Repeat this"}],
+        },
+    )
+
+
+def test_ifeval_language_detection_failure_is_false(monkeypatch) -> None:
+    # instructions.py:113-164: LangDetectException is a failed language check.
+    class FakeLangDetectException(Exception):
+        pass
+
+    class FakeLangdetect:
+        LangDetectException = FakeLangDetectException
+
+        @staticmethod
+        def detect(_response):
+            raise FakeLangDetectException
+
+    monkeypatch.setitem(sys.modules, "langdetect", FakeLangdetect)
+    assert not verifiers.verify(
+        "ifeval",
+        "text",
+        {
+            "instruction_id_list": ["language:response_language"],
+            "kwargs": [{"language": "en"}],
+        },
+    )
+
+
 def test_ifeval_multiple_sections_is_at_least_numbered_markers() -> None:
     reference = cast(
         dict[str, object],
@@ -447,6 +553,21 @@ def test_livecodebench_functional_outputs_compare_as_json_types(
     case_output: str, captured: str, expected: bool
 ) -> None:
     assert verifiers._functional_outputs_equal(case_output, captured) is expected
+
+
+def test_livecodebench_official_stdin_decimal_line_comparison() -> None:
+    # testing_util.py:389-425: strip each line, then compare Decimal token lists.
+    compare = getattr(verifiers, "_stdio_outputs_equal")
+    assert compare("4.0\n  5  ", "4\n5")
+    assert not compare("4.01", "4")
+    assert not compare("4", "4 5")
+
+
+def test_livecodebench_functional_json_numeric_equality() -> None:
+    # testing_util.py:229-307: json.loads values use native Python equality.
+    assert verifiers._functional_outputs_equal("4.0", "4")
+    assert verifiers._functional_outputs_equal("[4.0, 5]", "[4, 5]")
+    assert not verifiers._functional_outputs_equal('"4.0"', "4")
 
 
 def test_livecodebench_stdin_and_functional_paths_share_sandbox(monkeypatch) -> None:

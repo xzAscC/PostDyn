@@ -70,7 +70,7 @@ def test_prune_revision_cache_removes_hash_snapshot_and_ref_but_keeps_blobs(
     tmp_path: Path,
 ) -> None:
     repo_dir = tmp_path / "models--org--model"
-    snapshot = repo_dir / "snapshots" / "commit-hash"
+    snapshot = repo_dir / "snapshots" / ("a" * 40)
     ref = repo_dir / "refs" / "rev-123"
     blob = repo_dir / "blobs" / "shared-blob"
     snapshot.mkdir(parents=True)
@@ -78,7 +78,7 @@ def test_prune_revision_cache_removes_hash_snapshot_and_ref_but_keeps_blobs(
     blob.parent.mkdir(parents=True)
     blob.write_text("cached")
     (snapshot / "weights.safetensors").symlink_to(blob)
-    ref.write_text("commit-hash\n")
+    ref.write_text("a" * 40 + "\n")
 
     models.prune_revision_cache(_checkpoint(), hub_cache=tmp_path)
 
@@ -87,15 +87,15 @@ def test_prune_revision_cache_removes_hash_snapshot_and_ref_but_keeps_blobs(
     assert blob.exists()
 
 
-def test_prune_revision_cache_removes_legacy_revision_snapshot(tmp_path: Path) -> None:
-    snapshot = tmp_path / "models--org--model" / "snapshots" / "rev-123"
-    snapshot.mkdir(parents=True)
-    (snapshot / "weights.safetensors").write_text("cached")
-
-    models.prune_revision_cache(_checkpoint(), hub_cache=tmp_path)
-
-    assert not snapshot.exists()
-
-
 def test_prune_revision_cache_missing_revision_is_noop(tmp_path: Path) -> None:
     models.prune_revision_cache(_checkpoint(), hub_cache=tmp_path)
+
+
+def test_prune_revision_cache_undecodable_ref_is_noop(tmp_path: Path) -> None:
+    ref = tmp_path / "models--org--model" / "refs" / "rev-123"
+    ref.parent.mkdir(parents=True)
+    ref.write_text("not a commit hash\nextra content\n")
+
+    models.prune_revision_cache(_checkpoint(), hub_cache=tmp_path)
+
+    assert ref.exists()
