@@ -94,61 +94,12 @@ def _code(generation: str, reference: dict[str, Any]) -> bool:
                 if isinstance(case, dict)
                 else ""
             )
-            process: subprocess.Popen[Any] | None = None
-            stdout_thread: threading.Thread | None = None
-            stderr_thread: threading.Thread | None = None
-            try:
-                popen_kwargs: dict[str, Any] = {
-                    "stdin": subprocess.PIPE,
-                    "stdout": subprocess.PIPE,
-                    "stderr": subprocess.PIPE,
-                    "cwd": directory,
-                    "start_new_session": True,
-                    "env": {"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
-                }
-                preexec = _preexec_fn()
-                if preexec is not None:
-                    popen_kwargs["preexec_fn"] = preexec
-                process = subprocess.Popen(
-                    [sys.executable, "-I", str(script)], **popen_kwargs
-                )
-                stdout_chunks: list[bytes] = []
-                stderr_chunks: list[bytes] = []
-                stdout_thread = threading.Thread(
-                    target=_read_capped,
-                    args=(process.stdout, stdout_chunks),
-                    daemon=True,
-                )
-                stderr_thread = threading.Thread(
-                    target=_read_capped,
-                    args=(process.stderr, stderr_chunks),
-                    daemon=True,
-                )
-                stdout_thread.start()
-                stderr_thread.start()
-                if process.stdin is not None:
-                    process.stdin.write(stdin.encode())
-                    process.stdin.close()
-                process.wait(timeout=5)
-                stdout_thread.join()
-                stderr_thread.join()
-            except subprocess.TimeoutExpired:
-                if process is not None:
-                    _kill_process_group(process.pid)
-                    process.wait()
-                    if stdout_thread is not None:
-                        stdout_thread.join()
-                    if stderr_thread is not None:
-                        stderr_thread.join()
+            ok, stdout_text = _run_sandboxed(
+                [sys.executable, "-I", str(script)], directory, stdin
+            )
+            if not ok:
                 return False
-            except OSError:
-                return False
-            stdout_text = b"".join(stdout_chunks).decode(errors="replace")
-            if (
-                process is None
-                or process.returncode != 0
-                or stdout_text.strip() != str(expected).strip()
-            ):
+            if stdout_text.strip() != str(expected).strip():
                 return False
     return True
 
@@ -156,13 +107,6 @@ def _code(generation: str, reference: dict[str, Any]) -> bool:
 def _run_functional_case(
     directory: str, script: Path, case: dict[str, Any], func_name: str
 ) -> bool:
-    """Call the named solution function and compare stripped ``str`` values.
-
-    LiveCodeBench encodes each positional argument as one JSON line in
-    ``input``; a one-line case is one argument even when its JSON value is a
-    list. The official-style comparison is ``str(result).strip()`` against
-    ``str(output).strip()``.
-    """
     driver = Path(directory) / "functional_driver.py"
     driver.write_text(
         "import importlib.util\n"
@@ -185,7 +129,7 @@ def _run_functional_case(
         "    except json.JSONDecodeError:\n"
         "        args.append(line)\n"
         "result = function(*args)\n"
-        "sys.stdout.write(str(result))\n",
+        "sys.stdout.write(json.dumps(result))\n",
         encoding="utf-8",
     )
     value = case.get("input", case.get("args", ""))
@@ -194,24 +138,84 @@ def _run_functional_case(
     else:
         input_text = str(value)
     expected = case.get("output", case.get("expected_output", ""))
-    try:
-        completed = subprocess.run(
-            [sys.executable, "-I", str(driver), str(script), func_name],
-            input=input_text.encode(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=directory,
-            start_new_session=True,
-            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
-            timeout=5,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return (
-        completed.returncode == 0
-        and completed.stdout.decode(errors="replace").strip() == str(expected).strip()
+    ok, captured = _run_sandboxed(
+        [sys.executable, "-I", str(driver), str(script), func_name],
+        directory,
+        input_text,
     )
+    if not ok:
+        return False
+    return _functional_outputs_equal(str(expected), captured)
+
+
+def _functional_outputs_equal(expected: str, captured: str) -> bool:
+    try:
+        expected_value = json.loads(expected)
+        captured_value = json.loads(captured)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    return _normalize_json_value(expected_value) == _normalize_json_value(
+        captured_value
+    )
+
+
+def _normalize_json_value(value: Any) -> Any:
+    if isinstance(value, tuple):
+        return [_normalize_json_value(item) for item in value]
+    if isinstance(value, list):
+        return [_normalize_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _normalize_json_value(item) for key, item in value.items()}
+    return value
+
+
+def _run_sandboxed(command: list[str], directory: str, stdin: str) -> tuple[bool, str]:
+    process: subprocess.Popen[Any] | None = None
+    stdout_thread: threading.Thread | None = None
+    stderr_thread: threading.Thread | None = None
+    try:
+        popen_kwargs: dict[str, Any] = {
+            "stdin": subprocess.PIPE,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "cwd": directory,
+            "start_new_session": True,
+            "env": {"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+        }
+        preexec = _preexec_fn()
+        if preexec is not None:
+            popen_kwargs["preexec_fn"] = preexec
+        process = subprocess.Popen(command, **popen_kwargs)
+        stdout_chunks: list[bytes] = []
+        stderr_chunks: list[bytes] = []
+        stdout_thread = threading.Thread(
+            target=_read_capped, args=(process.stdout, stdout_chunks), daemon=True
+        )
+        stderr_thread = threading.Thread(
+            target=_read_capped, args=(process.stderr, stderr_chunks), daemon=True
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+        if process.stdin is not None:
+            process.stdin.write(stdin.encode())
+            process.stdin.close()
+        process.wait(timeout=5)
+        stdout_thread.join()
+        stderr_thread.join()
+    except subprocess.TimeoutExpired:
+        if process is not None:
+            _kill_process_group(process.pid)
+            process.wait()
+            if stdout_thread is not None:
+                stdout_thread.join()
+            if stderr_thread is not None:
+                stderr_thread.join()
+        return False, ""
+    except OSError:
+        return False, ""
+    if process is None or process.returncode != 0:
+        return False, ""
+    return True, b"".join(stdout_chunks).decode(errors="replace")
 
 
 def _read_capped(stream: Any, chunks: list[bytes], cap: int = 1_048_576) -> None:
@@ -351,10 +355,12 @@ def _number_words(kwargs: dict[str, Any], response: str) -> bool:
 
 
 def _number_paragraphs(kwargs: dict[str, Any], response: str) -> bool:
-    paragraphs = [
-        paragraph for paragraph in response.split("\n\n") if paragraph.strip()
-    ]
-    return len(paragraphs) == int(kwargs["num_paragraphs"])
+    paragraphs = [paragraph for paragraph in response.split("***") if paragraph.strip()]
+    target = int(kwargs["num_paragraphs"])
+    relation = kwargs.get("relation", "exact")
+    if relation == "at least":
+        return len(paragraphs) >= target
+    return relation == "exact" and len(paragraphs) == target
 
 
 def _nth_paragraph_first_word(kwargs: dict[str, Any], response: str) -> bool:
@@ -380,7 +386,7 @@ def _postscript(kwargs: dict[str, Any], response: str) -> bool:
 
 
 def _number_bullet_lists(kwargs: dict[str, Any], response: str) -> bool:
-    return len(re.findall(r"(?m)^\* ", response)) >= int(kwargs["num_bullets"])
+    return len(re.findall(r"(?m)^\* ", response)) == int(kwargs["num_bullets"])
 
 
 def _constrained_response(kwargs: dict[str, Any], response: str) -> bool:
@@ -394,11 +400,11 @@ def _number_highlighted_sections(kwargs: dict[str, Any], response: str) -> bool:
 
 
 def _multiple_sections(kwargs: dict[str, Any], response: str) -> bool:
-    divider = kwargs.get("section_spliter", "---")
-    if not isinstance(divider, str) or not divider:
+    marker = kwargs.get("section_spliter")
+    if not isinstance(marker, str) or not marker:
         return False
-    sections = [section for section in response.split(divider) if section.strip()]
-    return len(sections) == int(kwargs["num_sections"])
+    sections = re.findall(rf"(?im)\b{re.escape(marker)}\s+\d+\b", response)
+    return len(sections) >= int(kwargs["num_sections"])
 
 
 def _json_format(kwargs: dict[str, Any], response: str) -> bool:
