@@ -486,7 +486,8 @@ def test_ifeval_official_regex_and_normalization_semantics() -> None:
         },
     )
     # instructions.py:1171-1210: exactly two nonempty distinct responses;
-    # at most ONE empty fragment, and only at the original first or last index.
+    # empty fragments only at the original first/last indices (both ends may
+    # each carry one).
     assert verifiers.verify(
         "ifeval",
         "******first******second",
