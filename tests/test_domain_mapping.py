@@ -157,50 +157,40 @@ def test_load_domain_rows_filters_to_mapped_sources(tmp_path: Path) -> None:
     assert isinstance(revision, str) and revision
 
 
-def test_materialize_pools_round_trips_four_domain_jsons(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_materialize_pools_streams_and_matches_build_pool(
+    tmp_path: Path,
 ) -> None:
     mapping_path = tmp_path / "mapping.json"
-    mapping_path.write_text(
-        json.dumps(
-            {
-                domain: ["mapped-source"]
-                for domain in (
-                    "math",
-                    "code",
-                    "instruction_following",
-                    "general_reasoning",
-                )
-            }
-        )
-    )
-    domains = ("math", "code", "instruction_following", "general_reasoning")
-
-    def fake_load_domain_rows(mapping, snapshot_dir=None):
-        rows: dict[str, dict[str, list[dict[str, object]]]] = {}
-        for dom in domains:
-            rows[dom] = {
-                "mapped-source": [
-                    {
-                        "id": f"{dom}-1",
-                        "dataset_source": "mapped-source",
-                        "messages": [{"role": "user", "content": f"{dom} prompt"}],
-                    }
-                ]
-            }
-        return "revision-x", rows
-
-    monkeypatch.setattr("postdyn.data.load_domain_rows", fake_load_domain_rows)
+    mapping_path.write_text(json.dumps({"math": ["source-a"], "code": ["source-b"]}))
+    data_dir = tmp_path / "rev-abc" / "data"
+    data_dir.mkdir(parents=True)
+    _write_shard(data_dir / "one.parquet", "source-a", 0, 30)
+    _write_shard(data_dir / "two.parquet", "source-a", 30, 10)
+    _write_shard(data_dir / "three.parquet", "source-b", 0, 5)
+    _write_shard(data_dir / "four.parquet", "source-unmapped", 0, 4)
     out_dir = tmp_path / "pools"
-    materialize_pools(mapping_path, out_dir, n=64)
-    for domain in domains:
+    materialize_pools(mapping_path, out_dir, n=12, snapshot_dir=data_dir)
+
+    revision, rows = load_domain_rows(
+        {"math": ["source-a"], "code": ["source-b"]}, data_dir
+    )
+    assert revision == "rev-abc"
+    for domain, expected_sources in (("math", ["source-a"]), ("code", ["source-b"])):
         loaded = load_pool(out_dir / f"{domain}.json")
-        assert loaded == DomainPool(
+        assert loaded.requested_n == 12
+        assert loaded.dataset_revision == "rev-abc"
+        assert loaded.seed == 42
+        assert all(record.source in expected_sources for record in loaded.records)
+        reference = build_pool(
             domain,
-            (PromptRecord(f"{domain}-1", f"{domain} prompt", "mapped-source"),),
-            64,
-            1,
-            "revision-x",
-            42,
-            loaded.fingerprint,
+            rows[domain],
+            12,
+            seed=42,
+            dataset_revision="rev-abc",
         )
+        assert loaded.records == reference.records
+        assert loaded.fingerprint == reference.fingerprint
+    assert not (out_dir / "general_reasoning.json").exists() or all(
+        record.source == "source-b"
+        for record in load_pool(out_dir / "general_reasoning.json").records
+    )
