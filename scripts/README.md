@@ -65,8 +65,7 @@ uv run python scripts/run_q1.py --family 32b --scale full \
 
 # Q1 robustness on the final RLVR checkpoint (Math, R=5)
 uv run python scripts/run_q1_robustness.py --family 32b --repeats 5 \
-    --dtype bfloat16 --device cuda --output logs/q1_robustness/32b --allow-short-pool
-# GR pool: 6210 unique < n=3d — explicit deviation, see PR #7
+    --dtype bfloat16 --device cuda --output logs/q1_robustness/32b
 
 # Q2 experiments (require the 32B Q1 final bases above)
 uv run python scripts/run_q2_exp1.py --family 32b --q1-root logs/q1/32b \

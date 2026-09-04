@@ -51,7 +51,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--token-budget", type=int, default=4096)
     parser.add_argument("--attention-budget", type=int, default=8_388_608)
-    parser.add_argument("--allow-short-pool", action="store_true")
     parser.add_argument("--max-length", type=int, default=2048)
     args = parser.parse_args(argv)
     if args.repeats < 2:
@@ -86,7 +85,7 @@ def run(args: argparse.Namespace) -> int:
     n = min(requested_n, pool.actual_n)
     if n <= 0:
         raise ValueError("selected domain pool contains no records")
-    if args.repeats > 1 and pool.actual_n <= n and not args.allow_short_pool:
+    if args.repeats > 1 and pool.actual_n <= n:
         raise SystemExit(
             "robustness pools must exceed 3d for genuine resampling; "
             "rematerialize with the runbook's 2x pool size"

@@ -131,6 +131,19 @@ def solution_eigensystem(states: torch.Tensor, K: int):
     return vals, vecs[:, :k], k
 
 
+def item_subsims(
+    states: torch.Tensor,
+    K: int,
+    high_vectors: torch.Tensor,
+    low_vectors: torch.Tensor,
+) -> tuple[torch.Tensor, tuple[float, float], int]:
+    vals, vectors, k_i = solution_eigensystem(states, K)
+    subsims = (
+        comparison_subsims(vectors, high_vectors, low_vectors) if k_i else (0.0, 0.0)
+    )
+    return vals, subsims, k_i
+
+
 def run(args: argparse.Namespace) -> None:
     cfg = common.family_config(args.family, args.scale)
     root = common.output_root(args, "exp2")
@@ -186,7 +199,6 @@ def run(args: argparse.Namespace) -> None:
                 )
             )
             eig = bases[layer]
-            k = cfg.d_model // 3
             K = cfg.d_model // 3
             u_high, u_low = eig[1][:, :K], eig[1][:, -K:]
             _, items = common.load_items(domain, args.limit, args.scale == "tiny")
@@ -218,9 +230,8 @@ def run(args: argparse.Namespace) -> None:
                     generation.captured or {},
                     generation.prompt_token_len,
                 )
-                vals, vectors, k = solution_eigensystem(states, k)
-                subsim_high, subsim_low = (
-                    comparison_subsims(vectors, u_high, u_low) if k else (0.0, 0.0)
+                vals, (subsim_high, subsim_low), _ = item_subsims(
+                    states, K, u_high, u_low
                 )
                 row = {
                     "item_id": item.id,
