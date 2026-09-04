@@ -396,6 +396,18 @@ def test_ifeval_number_paragraphs_uses_markdown_divider() -> None:
     assert not verifiers.verify("ifeval", "one\n***\ntwo\n***\nthree", reference)
 
 
+def test_ifeval_number_paragraphs_none_relation_defaults_to_exact() -> None:
+    reference = cast(
+        dict[str, object],
+        {
+            "instruction_id_list": ["length_constraints:number_paragraphs"],
+            "kwargs": [{"num_paragraphs": 2, "relation": None}],
+        },
+    )
+    assert verifiers.verify("ifeval", "one\n***\ntwo", reference)
+    assert not verifiers.verify("ifeval", "one\n***\ntwo\n***\nthree", reference)
+
+
 def test_ifeval_number_bullets_rejects_surplus_bullets() -> None:
     reference = cast(
         dict[str, object],
