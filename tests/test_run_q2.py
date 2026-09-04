@@ -208,6 +208,40 @@ def test_exp2_covariance_uses_float64_and_t_minus_one_cap() -> None:
     assert vals.shape == (2,)
 
 
+def test_exp2_comparisons_slice_global_bands_to_solution_k() -> None:
+    exp2 = load_script("run_q2_exp2")
+    solution = torch.eye(4, dtype=torch.float64)[:, :2]
+    high = torch.eye(4, dtype=torch.float64)[:, :3]
+    low = torch.flip(torch.eye(4, dtype=torch.float64), dims=(1,))[:, :3]
+
+    assert exp2.comparison_subsims(solution, high, low) == (1.0, 0.0)
+
+
+def test_exp2_summary_groups_both_subsims_and_variance() -> None:
+    exp2 = load_script("run_q2_exp2")
+    rows = [
+        {"correct": True, "V_i": 2.0, "subsim_high": 0.8, "subsim_low": 0.2},
+        {"correct": False, "V_i": 4.0, "subsim_high": 0.4, "subsim_low": 0.6},
+    ]
+
+    summary = exp2.group_summary(rows)
+
+    assert summary == {
+        "correct": {
+            "n": 1,
+            "mean_V_i": 2.0,
+            "mean_subsim_high": 0.8,
+            "mean_subsim_low": 0.2,
+        },
+        "incorrect": {
+            "n": 1,
+            "mean_V_i": 4.0,
+            "mean_subsim_high": 0.4,
+            "mean_subsim_low": 0.6,
+        },
+    }
+
+
 def test_exp3_has_exact_conditions_and_separate_basis_stages() -> None:
     exp3 = load_script("run_q2_exp3")
     assert exp3.CONDITIONS == ("baseline", "sft_low", "rlvr_low")

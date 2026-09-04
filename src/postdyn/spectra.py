@@ -75,12 +75,12 @@ def subsim(u_a: torch.Tensor, u_b: torch.Tensor) -> float:
 
 
 def match_eigenvectors(u_a: torch.Tensor, u_b: torch.Tensor) -> torch.Tensor:
-    """Match columns by maximum absolute overlap.
+    """Match columns by maximum squared absolute overlap.
 
     The returned ``pi`` uses the convention ``pi[i] = j`` when column ``i``
     of ``u_a`` is assigned to column ``j`` of ``u_b``.  A machine-scale
     secondary cost makes exact-overlap ties deterministic without changing
-    the primary overlap objective at normal floating-point precision.
+    the primary squared-overlap objective at normal floating-point precision.
     """
     if u_a.ndim != 2 or u_b.ndim != 2:
         raise ValueError("Eigenvector matrices must be rank-2 tensors")
@@ -94,7 +94,7 @@ def match_eigenvectors(u_a: torch.Tensor, u_b: torch.Tensor) -> torch.Tensor:
     size = int(u_a.shape[0])
     scale = max(1.0, float(overlap.max().item()) if overlap.numel() else 0.0)
     epsilon = np.finfo(np.float64).eps * scale / (16.0 * max(1, size) ** 4)
-    cost = -overlap_np.copy()
+    cost = -(overlap_np**2)
     column_rank = np.arange(size, dtype=np.float64)
     for row, priority in enumerate(range(size, 0, -1)):
         cost[row] += epsilon * priority * column_rank

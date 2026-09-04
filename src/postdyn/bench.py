@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -56,6 +58,14 @@ def _dataset(path: str, name: str | None = None) -> list[Any]:
     return _rows(load_dataset(path, name=name) if name else load_dataset(path))
 
 
+def _jsonl_rows(path: str | Path) -> list[dict[str, Any]]:
+    return [
+        json.loads(line)
+        for line in Path(path).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
 def _load_math500() -> list[BenchItem]:
     return [
         BenchItem(
@@ -67,45 +77,71 @@ def _load_math500() -> list[BenchItem]:
     ]
 
 
-def _load_mmlu_pro() -> list[BenchItem]:
+def _load_mmlu_pro(source: str | Path | None = None) -> list[BenchItem]:
+    if source is None:
+        if load_dataset is None:
+            raise ImportError("datasets is required to load benchmarks")
+        rows = _rows(load_dataset("TIGER-Lab/MMLU-Pro", split="test"))
+    else:
+        if load_dataset is None:
+            raise ImportError("datasets is required to load benchmarks")
+        rows = _rows(
+            load_dataset("parquet", data_files={"test": str(source)}, split="test")
+        )
     result = []
-    for i, r in enumerate(_dataset("TIGER-Lab/MMLU-Pro")):
-        options = r.get("options", list("ABCDEFGHIJ"))
+    for i, r in enumerate(rows):
+        options = list(r["options"])
         result.append(
             BenchItem(
-                str(r.get("id", i)),
-                r.get("question", r.get("prompt", "")),
-                {"answer": str(r.get("answer", "A")), "options": options},
+                str(r["question_id"]),
+                f"{r['question']}\n"
+                + "\n".join(
+                    f"{chr(65 + option_index)}. {option}"
+                    for option_index, option in enumerate(options)
+                )
+                + "\n\nAnswer with a single letter (A-J).",
+                {"answer": str(r["answer"])},
             )
         )
     return result
 
 
-def _load_ifeval() -> list[BenchItem]:
+def _load_ifeval(source: str | Path | None = None) -> list[BenchItem]:
+    rows = _jsonl_rows(source) if source is not None else _dataset("google/IFEval")
     return [
         BenchItem(
-            str(r.get("id", i)),
-            r.get("prompt", ""),
+            str(r["key"]),
+            r["prompt"],
             {
-                "instructions": r.get("instr", r.get("instructions", [])),
-                "kwargs": r.get("kwargs", []),
+                "instruction_id_list": r["instruction_id_list"],
+                "kwargs": r["kwargs"],
             },
         )
-        for i, r in enumerate(_dataset("google/IFEval"))
+        for r in rows
     ]
 
 
-def _load_livecodebench() -> list[BenchItem]:
+def _load_livecodebench(source: str | Path | None = None) -> list[BenchItem]:
+    if source is not None:
+        source_path = Path(source)
+        if source_path.is_dir():
+            source_path = source_path / "test6.jsonl"
+        rows = _jsonl_rows(source_path)
+    else:
+        rows = _dataset("livecodebench/code_generation_lite", name="release_v6")
     return [
         BenchItem(
-            str(r.get("id", i)),
-            r.get("prompt", r.get("question", "")),
-            {
-                "code": r.get("code", r.get("canonical_solution", "")),
-                "cases": r.get("test-cases", r.get("cases", [])),
-            },
+            str(r["question_id"]),
+            r["question_content"]
+            + (
+                "\n\nStarter code:\n```\n" + r["starter_code"] + "\n```"
+                if r["starter_code"]
+                else ""
+            )
+            + "\n\nWrite a Python solution. Read from stdin, print to stdout.",
+            {"cases": json.loads(r["public_test_cases"])},
         )
-        for i, r in enumerate(_dataset("livecodebench/code_generation_lite"))
+        for r in rows
     ]
 
 
@@ -124,14 +160,17 @@ def _model_device(model: Any) -> torch.device:
 
 
 def load_benchmark(
-    name: str, n_val: int = 30, seed: int = 42
+    name: str,
+    n_val: int = 30,
+    seed: int = 42,
+    source: str | Path | None = None,
 ) -> tuple[list[BenchItem], list[BenchItem]]:
     """Load, hash-sort, and split a benchmark; ``seed`` is part of the ordering key."""
     loaders = {
         "math500": _load_math500,
-        "mmlu_pro": _load_mmlu_pro,
-        "ifeval": _load_ifeval,
-        "livecodebench": _load_livecodebench,
+        "mmlu_pro": lambda: _load_mmlu_pro(source),
+        "ifeval": lambda: _load_ifeval(source),
+        "livecodebench": lambda: _load_livecodebench(source),
     }
     if name not in loaders:
         raise ValueError(f"unknown benchmark: {name}")

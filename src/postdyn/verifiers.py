@@ -69,8 +69,16 @@ def _code(generation: str, reference: dict[str, Any]) -> bool:
         script = Path(directory) / "solution.py"
         script.write_text(code, encoding="utf-8")
         for case in cases:
-            stdin = case.get("stdin", "") if isinstance(case, dict) else ""
-            expected = case.get("stdout", "") if isinstance(case, dict) else ""
+            stdin = (
+                case.get("input", case.get("stdin", ""))
+                if isinstance(case, dict)
+                else ""
+            )
+            expected = (
+                case.get("output", case.get("stdout", ""))
+                if isinstance(case, dict)
+                else ""
+            )
             process: subprocess.Popen[Any] | None = None
             stdout_thread: threading.Thread | None = None
             stderr_thread: threading.Thread | None = None
@@ -178,6 +186,62 @@ def _first_option(text: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _no_comma(kwargs: dict[str, Any], response: str) -> bool:
+    return "," not in response
+
+
+def _number_highlighted_sections(kwargs: dict[str, Any], response: str) -> bool:
+    expected = int(kwargs.get("num_highlights", kwargs.get("count", 0)))
+    return len(re.findall(r"\*\*.+?\*\*", response, re.S)) == expected
+
+
+def _number_words(kwargs: dict[str, Any], response: str) -> bool:
+    return len(response.split()) == int(kwargs.get("num_words", kwargs.get("count", 0)))
+
+
+def _frequency(kwargs: dict[str, Any], response: str) -> bool:
+    keyword = str(kwargs.get("keyword", kwargs.get("word", "")))
+    return response.lower().count(keyword.lower()) == int(
+        kwargs.get("frequency", kwargs.get("count", 0))
+    )
+
+
+def _response_language(kwargs: dict[str, Any], response: str) -> bool:
+    language = str(kwargs.get("language", "")).lower()
+    markers = {
+        "english": {" the ", " and ", " is "},
+        "french": {" le ", " la ", " et "},
+        "german": {" der ", " die ", " und "},
+        "spanish": {" el ", " la ", " y "},
+    }
+    padded = f" {response.lower()} "
+    return language in markers and any(marker in padded for marker in markers[language])
+
+
+def _end_checker(kwargs: dict[str, Any], response: str) -> bool:
+    end_phrase = kwargs.get("end_phrase", kwargs.get("phrase", ""))
+    start_phrase = kwargs.get("start_phrase", "")
+    return response.rstrip().endswith(str(end_phrase)) and (
+        not start_phrase or response.lstrip().startswith(str(start_phrase))
+    )
+
+
+def _repeat_prompt(kwargs: dict[str, Any], response: str) -> bool:
+    repeated = str(kwargs.get("prompt_to_repeat", kwargs.get("prompt", "")))
+    return bool(repeated) and repeated in response
+
+
+IFEVAL_CHECKERS = {
+    "punctuation:no_comma": _no_comma,
+    "detectable_format:number_highlighted_sections": _number_highlighted_sections,
+    "length_constraints:number_words": _number_words,
+    "keywords:frequency": _frequency,
+    "language:response_language": _response_language,
+    "startend:end_checker": _end_checker,
+    "combination:repeat_prompt": _repeat_prompt,
+}
+
+
 def _constraint_checker(
     instruction: str, kwargs: dict[str, Any], response: str
 ) -> bool:
@@ -254,6 +318,33 @@ def check_prompt_level(instructions: Any, kwargs_list: Any, response: str) -> bo
     )
 
 
+def _check_ifeval(reference: dict[str, object], response: str) -> bool:
+    instruction_ids = reference.get("instruction_id_list")
+    kwargs_list = reference.get("kwargs")
+    if (
+        not isinstance(instruction_ids, list)
+        or not instruction_ids
+        or not all(
+            isinstance(instruction_id, str) for instruction_id in instruction_ids
+        )
+        or not isinstance(kwargs_list, list)
+        or len(kwargs_list) != len(instruction_ids)
+        or not all(isinstance(kwargs, dict) for kwargs in kwargs_list)
+    ):
+        return False
+    for instruction_id, kwargs in zip(instruction_ids, kwargs_list):
+        checker = IFEVAL_CHECKERS.get(instruction_id.lower())
+        if checker is None:
+            logger.warning("Unsupported IFEval instruction: %s", instruction_id)
+            return False
+        try:
+            if not checker(kwargs, response):
+                return False
+        except (KeyError, TypeError, ValueError):
+            return False
+    return True
+
+
 ifeval_check = check_prompt_level
 _DEFAULT_IFEVAL_CHECK = check_prompt_level
 
@@ -282,24 +373,7 @@ def verify(benchmark: str, generation_text: str, reference: dict[str, object]) -
         except (AttributeError, TypeError):
             return False
     if benchmark == "ifeval":
-        try:
-            prompt = reference.get("instructions", reference.get("instruction", []))
-            if isinstance(prompt, list) and (
-                not prompt or not all(isinstance(item, str) for item in prompt)
-            ):
-                return False
-            if not isinstance(prompt, (str, list)):
-                return False
-            kwargs = reference.get("kwargs", [])
-        except (AttributeError, TypeError):
+        if not isinstance(reference, dict):
             return False
-        checker: Any = (
-            check_prompt_level
-            if check_prompt_level is not _DEFAULT_IFEVAL_CHECK
-            else ifeval_check
-        )
-        try:
-            return checker(prompt, kwargs, generation_text)
-        except TypeError:
-            return checker(prompt, generation_text)
+        return _check_ifeval(reference, generation_text)
     raise ValueError(f"unknown benchmark: {benchmark}")

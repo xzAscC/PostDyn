@@ -66,15 +66,36 @@ def test_release_model_empties_cuda_cache_and_drops_reference(monkeypatch) -> No
     _ = gc.collect()
 
 
-def test_prune_revision_cache_removes_revision_snapshot(
-    monkeypatch, tmp_path: Path
+def test_prune_revision_cache_removes_hash_snapshot_and_ref_but_keeps_blobs(
+    tmp_path: Path,
 ) -> None:
+    repo_dir = tmp_path / "models--org--model"
+    snapshot = repo_dir / "snapshots" / "commit-hash"
+    ref = repo_dir / "refs" / "rev-123"
+    blob = repo_dir / "blobs" / "shared-blob"
+    snapshot.mkdir(parents=True)
+    ref.parent.mkdir(parents=True)
+    blob.parent.mkdir(parents=True)
+    blob.write_text("cached")
+    (snapshot / "weights.safetensors").symlink_to(blob)
+    ref.write_text("commit-hash\n")
+
+    models.prune_revision_cache(_checkpoint(), hub_cache=tmp_path)
+
+    assert not snapshot.exists()
+    assert not ref.exists()
+    assert blob.exists()
+
+
+def test_prune_revision_cache_removes_legacy_revision_snapshot(tmp_path: Path) -> None:
     snapshot = tmp_path / "models--org--model" / "snapshots" / "rev-123"
     snapshot.mkdir(parents=True)
     (snapshot / "weights.safetensors").write_text("cached")
-    monkeypatch.setenv("HF_HOME", str(tmp_path))
-    monkeypatch.setenv("HUGGINGFACE_HUB_CACHE", str(tmp_path))
 
-    models.prune_revision_cache(_checkpoint())
+    models.prune_revision_cache(_checkpoint(), hub_cache=tmp_path)
 
     assert not snapshot.exists()
+
+
+def test_prune_revision_cache_missing_revision_is_noop(tmp_path: Path) -> None:
+    models.prune_revision_cache(_checkpoint(), hub_cache=tmp_path)

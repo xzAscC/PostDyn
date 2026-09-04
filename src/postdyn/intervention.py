@@ -93,7 +93,7 @@ def mean_hidden_norm(
     layer: int,
     batch_size: int = 8,
 ) -> float:
-    """Measure the mean final-token hidden-state norm for raw prompts."""
+    """Measure mean final-token norm at transformer block ``layer`` output."""
     old_padding = getattr(tokenizer, "padding_side", None)
     old_pad_token = getattr(tokenizer, "pad_token", None)
     tokenizer.padding_side = "left"
