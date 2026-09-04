@@ -486,10 +486,20 @@ def test_ifeval_official_regex_and_normalization_semantics() -> None:
         },
     )
     # instructions.py:1171-1210: exactly two nonempty distinct responses;
-    # empty outer separator fragments are ignored.
+    # at most ONE empty fragment, and only at the original first or last index.
     assert verifiers.verify(
         "ifeval",
         "******first******second",
+        {"instruction_id_list": ["combination:two_responses"], "kwargs": [{}]},
+    )
+    assert verifiers.verify(
+        "ifeval",
+        "first******second******",
+        {"instruction_id_list": ["combination:two_responses"], "kwargs": [{}]},
+    )
+    assert not verifiers.verify(
+        "ifeval",
+        "************first******second",
         {"instruction_id_list": ["combination:two_responses"], "kwargs": [{}]},
     )
     assert not verifiers.verify(
@@ -532,15 +542,16 @@ def test_ifeval_language_detection_failure_counts_as_followed(monkeypatch) -> No
 
 
 def test_ifeval_title_and_end_checker_match_upstream_normalization() -> None:
-    # instructions.py:1013-1037: one <<.*>> title is required.
+    # instructions.py:1286-1313: <<[^\n]+>> present with a nonempty title;
+    # multiple titles are accepted and empty <<>> is rejected.
     title = cast(
         dict[str, object],
         {"instruction_id_list": ["detectable_format:title"], "kwargs": [{}]},
     )
-    assert verifiers.verify("ifeval", "<<>>", title)
-    assert not verifiers.verify("ifeval", "<<one>> <<two>>", title)
-    # instructions.py:1266-1301: strip outer whitespace and optional quotes;
-    # do not strip whitespace introduced inside those quotes.
+    assert verifiers.verify("ifeval", "<<one>> <<two>>", title)
+    assert not verifiers.verify("ifeval", "<<>>", title)
+    # instructions.py:1266-1301: strip outer whitespace and ALL outer quotes
+    # (.strip().strip('"')); do not strip whitespace introduced inside them.
     end = cast(
         dict[str, object],
         {
@@ -549,6 +560,7 @@ def test_ifeval_title_and_end_checker_match_upstream_normalization() -> None:
         },
     )
     assert verifiers.verify("ifeval", '"Answer. THE END"', end)
+    assert verifiers.verify("ifeval", '""Answer. THE END""', end)
     assert not verifiers.verify("ifeval", '"Answer. THE END "', end)
 
 
@@ -651,7 +663,7 @@ def test_livecodebench_functional_json_numeric_equality() -> None:
 
 
 def test_livecodebench_tuple_normalization_is_top_level_only() -> None:
-    # testing_util.py:190-193: only the prediction's top-level tuple is listed.
+    # testing_util.py:263-266: only the prediction's top-level tuple is listed.
     assert verifiers._normalize_json_value((1, (2,))) == [1, (2,)]
 
 
@@ -705,3 +717,62 @@ def test_split_sentences_handles_punctuation_think_blocks_and_whitespace() -> No
         "a b.",
         "c d.",
     ]
+
+def test_nltk_legacy_punkt_without_punkt_tab_raises_clear_error(monkeypatch) -> None:
+    class FakeData:
+        def __init__(self):
+            self.download_calls = 0
+
+        def find(self, resource):
+            if resource == "tokenizers/punkt_tab":
+                raise LookupError(resource)
+            raise LookupError(resource)
+
+        def load(self, _resource):
+            raise LookupError("punkt_tab redirect target missing")
+
+    data = FakeData()
+    fake_nltk = type(
+        "FakeNltk",
+        (),
+        {
+            "data": data,
+            "download": staticmethod(
+                lambda resource, quiet: setattr(data, "download_calls", data.download_calls + 1) or False
+            ),
+        },
+    )
+    monkeypatch.setattr(verifiers, "_punkt_provision_attempted", False)
+    monkeypatch.setattr(verifiers.importlib, "import_module", lambda name: fake_nltk)
+    reference = cast(
+        dict[str, object],
+        {
+            "instruction_id_list": ["length_constraints:number_sentences"],
+            "kwargs": [{"num_sentences": 1, "relation": "at least"}],
+        },
+    )
+    with pytest.raises(RuntimeError, match="punkt_tab"):
+        verifiers.verify("ifeval", "One sentence.", reference)
+    assert data.download_calls == 1
+
+
+def test_nltk_tokenizer_load_failure_raises_clear_error(monkeypatch) -> None:
+    class FakeData:
+        def find(self, resource):
+            return object()
+
+        def load(self, _resource):
+            raise ValueError("corrupt tokenizer resource")
+
+    fake_nltk = type("FakeNltk", (), {"data": FakeData(), "download": staticmethod(lambda r, q: True)})
+    monkeypatch.setattr(verifiers, "_punkt_provision_attempted", False)
+    monkeypatch.setattr(verifiers.importlib, "import_module", lambda name: fake_nltk)
+    reference = cast(
+        dict[str, object],
+        {
+            "instruction_id_list": ["length_constraints:number_sentences"],
+            "kwargs": [{"num_sentences": 1, "relation": "at least"}],
+        },
+    )
+    with pytest.raises(RuntimeError, match="failed to load"):
+        verifiers.verify("ifeval", "One sentence.", reference)

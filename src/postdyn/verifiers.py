@@ -363,31 +363,29 @@ def _count_words(response: str) -> int:
 def _count_sentences(response: str) -> int:
     """Count sentences, downloading Punkt once if the local NLTK data is absent.
 
-    The first tokenizer use may need network access for the one-time Punkt
-    download. A failed download raises a clear error instead of silently
-    changing verifier results.
+    The tokenizer requires NLTK's ``punkt_tab`` resource; the first use may
+    need network access for the one-time download. Any provisioning or load
+    failure raises a clear error instead of silently changing results.
     """
     nltk = importlib.import_module("nltk")
     global _punkt_provision_attempted
     try:
         nltk.data.find("tokenizers/punkt_tab")
     except LookupError:
-        try:
-            nltk.data.find("tokenizers/punkt")
-        except LookupError:
-            if not _punkt_provision_attempted:
-                _punkt_provision_attempted = True
-                if not nltk.download("punkt_tab", quiet=True):
-                    raise RuntimeError(
-                        "NLTK Punkt data is unavailable and its one-time download failed"
-                    ) from None
-                try:
-                    nltk.data.find("tokenizers/punkt_tab")
-                except LookupError:
-                    raise RuntimeError(
-                        "NLTK Punkt data is unavailable after its one-time download"
-                    ) from None
-    tokenizer = nltk.data.load("nltk:tokenizers/punkt/english.pickle")
+        if _punkt_provision_attempted:
+            raise RuntimeError(
+                "NLTK punkt_tab data is missing and its one-time download "
+                "already failed"
+            ) from None
+        _punkt_provision_attempted = True
+        if not nltk.download("punkt_tab", quiet=True):
+            raise RuntimeError(
+                "NLTK punkt_tab data is unavailable and its one-time download failed"
+            ) from None
+    try:
+        tokenizer = nltk.data.load("nltk:tokenizers/punkt/english.pickle")
+    except Exception as exc:
+        raise RuntimeError(f"NLTK sentence tokenizer failed to load: {exc}") from exc
     return len(tokenizer.tokenize(response))
 
 
@@ -505,19 +503,19 @@ def _json_format(kwargs: dict[str, Any], response: str) -> bool:
 
 
 def _title(kwargs: dict[str, Any], response: str) -> bool:
-    return len(re.findall(r"<<.*>>", response)) == 1
+    return re.search(r"<<[^\n]+>>", response) is not None
 
 
 def _two_responses(kwargs: dict[str, Any], response: str) -> bool:
     parts = response.split("******")
-    while parts and not parts[0].strip():
-        parts.pop(0)
-    while parts and not parts[-1].strip():
-        parts.pop()
+    if len(parts) == 3 and not parts[0].strip():
+        parts = parts[1:]
+    elif len(parts) == 3 and not parts[-1].strip():
+        parts = parts[:-1]
     if len(parts) != 2:
         return False
     first, second = (part.strip() for part in parts)
-    return first != second and bool(first) and bool(second)
+    return bool(first) and bool(second) and first != second
 
 
 def _repeat_prompt(kwargs: dict[str, Any], response: str) -> bool:
@@ -533,9 +531,7 @@ def _end_checker(kwargs: dict[str, Any], response: str) -> bool:
     phrase = kwargs["end_phrase"]
     if not isinstance(phrase, str) or not phrase:
         return False
-    candidate = response.strip()
-    if candidate.startswith('"') and candidate.endswith('"'):
-        candidate = candidate[1:-1]
+    candidate = response.strip().strip('"')
     return candidate.lower().endswith(phrase.lower())
 
 
