@@ -8,6 +8,7 @@
 #   gpu-queue add postdyn-7b-overnight bash scripts/run_7b_overnight.sh
 #   REPEATS=5 gpu-queue add postdyn-7b-overnight bash scripts/run_7b_overnight.sh
 set -euo pipefail
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 cd "$(dirname "$0")/.."
 
 REPEATS="${REPEATS:-5}"
