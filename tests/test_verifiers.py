@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import io
+import os
 import sys
 import subprocess
 from typing import cast
@@ -20,6 +21,18 @@ def test_mmlu_pro_uses_first_standalone_option_letter() -> None:
     assert verifiers.verify("mmlu_pro", "B) explanation", {"answer": "B"})
     assert not verifiers.verify("mmlu_pro", "garbage", {"answer": "B"})
     assert verifiers.verify("mmlu_pro", "...the answer is J...", {"answer": "J"})
+
+
+def test_malformed_references_are_unverifiable() -> None:
+    assert not verifiers.verify("livecodebench", "print(1)", {"cases": [{"stdin": 1}]})
+    assert not verifiers.verify("math500", "42", {})
+    assert not verifiers.verify("mmlu_pro", "A", {})
+    assert not verifiers.verify("ifeval", "anything", {"instructions": [1]})
+
+
+def test_preexec_guard_is_platform_specific(monkeypatch) -> None:
+    monkeypatch.setattr(verifiers.os, "name", "nt")
+    assert verifiers._preexec_fn() is None
 
 
 def test_livecodebench_runs_isolated_subprocess_with_timeout(monkeypatch) -> None:

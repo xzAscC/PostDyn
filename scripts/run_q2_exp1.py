@@ -105,11 +105,24 @@ def run(args: argparse.Namespace) -> None:
     cfg = common.family_config(args.family, args.scale)
     output = common.output_root(args, "exp1")
     q1_root = args.q1_root
+    output.mkdir(parents=True, exist_ok=True)
+    common.write_identity_manifest(
+        output,
+        {
+            "family": args.family,
+            "q1_root": str(q1_root.resolve()),
+            "dtype": args.dtype,
+            "quantization": args.quantization,
+            "domains": args.domains,
+            "k": cfg.d_model // 3,
+            "alphas": list(ALPHAS),
+            "alpha_mode": "dimensionless",
+            "scale": args.scale,
+        },
+    )
     if args.scale == "tiny":
         common.tiny_bases(q1_root, args.domains, cfg.layers, ("rlvr",))
-    output.mkdir(parents=True, exist_ok=True)
     run_dir = RunDir(output)
-    common.write_manifest(output, args, "exp1")
     if args.scale != "tiny":
         for domain in args.domains:
             require_bases(q1_root, domain, cfg.layers)

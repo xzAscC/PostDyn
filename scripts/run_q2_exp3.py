@@ -34,10 +34,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def run(args: argparse.Namespace) -> None:
     cfg = common.family_config(args.family, args.scale)
     output = common.output_root(args, "exp3")
+    output.mkdir(parents=True, exist_ok=True)
+    common.write_identity_manifest(
+        output,
+        {
+            "family": args.family,
+            "q1_root": str(args.q1_root.resolve()),
+            "sft_lr": args.sft_lr,
+            "dtype": args.dtype,
+            "quantization": args.quantization,
+            "domains": args.domains,
+            "k": cfg.d_model // 3,
+            "alphas": list(ALPHAS),
+            "alpha_mode": "dimensionless",
+            "scale": args.scale,
+        },
+    )
     if args.scale == "tiny":
         common.tiny_bases(args.q1_root, args.domains, cfg.layers, ("sft", "rlvr"))
-    output.mkdir(parents=True, exist_ok=True)
-    common.write_manifest(output, args, "exp3")
     if args.scale != "tiny":
         for domain in args.domains:
             common.require_bases(args.q1_root, domain, cfg.layers, "sft")

@@ -325,8 +325,12 @@ def run(args: argparse.Namespace) -> int:
     domains = _domains(args)
     requested_n = args.limit or (32 if args.scale == "tiny" else family.n_samples())
     pools = _load_pools(args, domains, requested_n)
-    n = min(requested_n, *(pool.actual_n for pool in pools.values()))
-    if n <= 0:
+    n_by_domain = {
+        domain: min(requested_n, pools[domain].actual_n) for domain in domains
+    }
+    actual_n_by_domain = {domain: pools[domain].actual_n for domain in domains}
+    pool_fingerprints = {domain: pools[domain].fingerprint for domain in domains}
+    if any(n <= 0 for n in n_by_domain.values()):
         raise ValueError("selected domain pools contain no records")
     output = Path(args.output) if args.output else ROOT / "logs" / "q1" / args.family
     run_dir = RunDir(output)
@@ -338,8 +342,11 @@ def run(args: argparse.Namespace) -> int:
         expected = {
             "family": args.family,
             "scale": args.scale,
+            "checkpoints": [c.name for c in checkpoints],
             "domains": domains,
             "layers": layers,
+            "n": n_by_domain,
+            "pool_fingerprints": pool_fingerprints,
         }
         mismatches = [
             key for key, value in expected.items() if previous.get(key) != value
@@ -357,8 +364,9 @@ def run(args: argparse.Namespace) -> int:
             "checkpoints": [c.name for c in checkpoints],
             "layers": layers,
             "domains": domains,
-            "n": n,
-            "pool_fingerprints": {d: pools[d].fingerprint for d in domains},
+            "n": n_by_domain,
+            "actual_n": actual_n_by_domain,
+            "pool_fingerprints": pool_fingerprints,
         }
     )
     atomic_write_json(run_dir.path("manifest.json"), manifest)
@@ -384,7 +392,10 @@ def run(args: argparse.Namespace) -> int:
                         hidden = extract_layer_hiddens(
                             model,
                             tokenizer,
-                            [r.prompt for r in pools[domain].records[:n]],
+                            [
+                                r.prompt
+                                for r in pools[domain].records[: n_by_domain[domain]]
+                            ],
                             layers,
                             args.batch_size,
                             args.max_length,
@@ -415,7 +426,7 @@ def run(args: argparse.Namespace) -> int:
                             "layer": layer,
                             "domain": domain,
                             **spectral_metrics(values),
-                            "n": covariance.count,
+                            "n": n_by_domain[domain],
                         }
                         append_jsonl(run_dir.path("metrics.jsonl"), row)
                         completed.add(unit)

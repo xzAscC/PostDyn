@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parents[1]))
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 import scripts.q2_common as common
-from postdyn.config import BENCHMARKS
+from postdyn.config import ALPHAS, BENCHMARKS
 from postdyn.persistence import RunDir, tee_log, atomic_write_json
 from postdyn.spectra import eigensystem, subsim
 from postdyn.verifiers import split_sentences, verify
@@ -91,6 +91,19 @@ def run(args: argparse.Namespace) -> None:
     cfg = common.family_config(args.family, args.scale)
     root = common.output_root(args, "exp2")
     q1 = args.q1_root
+    common_identity = {
+        "family": args.family,
+        "q1_root": str(q1.resolve()),
+        "dtype": args.dtype,
+        "quantization": args.quantization,
+        "domains": args.domains,
+        "k": cfg.d_model // 3,
+        "alphas": list(ALPHAS),
+        "alpha_mode": "dimensionless",
+        "scale": args.scale,
+    }
+    root.mkdir(parents=True, exist_ok=True)
+    common.write_identity_manifest(root, common_identity)
     selected_path = (
         args.exp1_output
         if args.exp1_output
@@ -113,8 +126,6 @@ def run(args: argparse.Namespace) -> None:
             )
             common.require_bases(q1, domain, (layer,), "rlvr")
     model, tokenizer = common.load_runtime(args, "rlvr")
-    root.mkdir(parents=True, exist_ok=True)
-    common.write_manifest(root, args, "exp2")
     summaries: dict[str, Any] = {}
     with tee_log(RunDir(root)):
         for domain in args.domains:

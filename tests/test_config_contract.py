@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -103,26 +102,20 @@ def test_checkpoint_counts_stages_and_final_revisions() -> None:
         )
 
         if key == "7b":
-            revisions = [checkpoint.revision for checkpoint in sft[:-1]]
-            steps = [int(revision.removeprefix("step")) for revision in revisions]
-            assert all(re.fullmatch(r"step\d+", revision) for revision in revisions)
-            assert steps[0] == 1000
-            assert 1000 <= steps[-1] <= 43000
-            assert len({right - left for left, right in zip(steps, steps[1:])}) == 1
-            assert all(
-                re.fullmatch(r"step_\d{4}", checkpoint.revision)
-                and 25 <= int(checkpoint.revision.removeprefix("step_")) <= 1375
-                for checkpoint in rlvr[:-1]
-            )
+            assert {c.revision for c in sft[:-1]} <= {
+                f"step{i}" for i in range(1000, 43001, 1000)
+            }
+            assert {c.revision for c in rlvr[:-1]} <= {
+                f"step_{i:04d}" for i in range(25, 1376, 25)
+            }
         else:
-            assert all(
-                checkpoint.revision.startswith("1e-4-") for checkpoint in sft[:-1]
-            )
-            assert all(
-                re.fullmatch(r"step_\d{3}", checkpoint.revision)
-                and 50 <= int(checkpoint.revision.removeprefix("step_")) <= 750
-                for checkpoint in rlvr[:-1]
-            )
+            assert all(c.revision.startswith("1e-4-") for c in sft[:-1])
+            assert {c.revision.removeprefix("1e-4-step") for c in sft[:-1]} <= {
+                str(i) for i in range(1000, 10001, 1000)
+            } | {"10790"}
+            assert {c.revision for c in rlvr[:-1]} <= {
+                f"step_{i:03d}" for i in range(50, 751, 50)
+            }
 
 
 def test_32b_sft_learning_rate_prefix_switches() -> None:
@@ -139,20 +132,81 @@ def test_32b_sft_learning_rate_prefix_switches() -> None:
     )
 
 
-def test_checkpoint_selection_is_deterministic_and_uniform() -> None:
-    family = MODEL_FAMILIES["7b"]
-    first = family.checkpoints()
-    second = family.checkpoints()
-    assert first == second
-
-    sft_steps = [
-        int(checkpoint.revision.removeprefix("step"))
-        for checkpoint in first
-        if checkpoint.stage == "sft" and checkpoint.revision != "main"
-    ]
-    assert sft_steps[0] == 1000
-    assert sft_steps[-1] == 43000
-    assert len(sft_steps) == 9
+@pytest.mark.parametrize(
+    ("key", "stage", "expected"),
+    [
+        (
+            "7b",
+            "sft",
+            (
+                "step1000",
+                "step6000",
+                "step11000",
+                "step16000",
+                "step22000",
+                "step27000",
+                "step32000",
+                "step37000",
+                "step42000",
+            ),
+        ),
+        (
+            "7b",
+            "rlvr",
+            (
+                "step_0025",
+                "step_0200",
+                "step_0350",
+                "step_0525",
+                "step_0700",
+                "step_0850",
+                "step_1025",
+                "step_1175",
+                "step_1350",
+            ),
+        ),
+        (
+            "32b",
+            "sft",
+            (
+                "1e-4-step1000",
+                "1e-4-step2000",
+                "1e-4-step3000",
+                "1e-4-step4000",
+                "1e-4-step6000",
+                "1e-4-step7000",
+                "1e-4-step8000",
+                "1e-4-step9000",
+                "1e-4-step10000",
+            ),
+        ),
+        (
+            "32b",
+            "rlvr",
+            (
+                "step_050",
+                "step_150",
+                "step_200",
+                "step_300",
+                "step_400",
+                "step_450",
+                "step_550",
+                "step_600",
+                "step_700",
+            ),
+        ),
+    ],
+)
+def test_checkpoint_selection_is_deterministic_and_uniform(
+    key: str, stage: str, expected: tuple[str, ...]
+) -> None:
+    checkpoints = MODEL_FAMILIES[key].checkpoints()
+    selected = tuple(
+        checkpoint.revision
+        for checkpoint in checkpoints
+        if checkpoint.stage == stage and checkpoint.revision != "main"
+    )
+    assert selected == expected
 
 
 def test_sample_counts_and_checkpoint_ref_is_frozen() -> None:

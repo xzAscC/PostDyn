@@ -71,19 +71,23 @@ def _code(generation: str, reference: dict[str, Any]) -> bool:
         for case in cases:
             stdin = case.get("stdin", "") if isinstance(case, dict) else ""
             expected = case.get("stdout", "") if isinstance(case, dict) else ""
-            process: subprocess.Popen[bytes] | None = None
+            process: subprocess.Popen[Any] | None = None
             stdout_thread: threading.Thread | None = None
             stderr_thread: threading.Thread | None = None
             try:
+                popen_kwargs: dict[str, Any] = {
+                    "stdin": subprocess.PIPE,
+                    "stdout": subprocess.PIPE,
+                    "stderr": subprocess.PIPE,
+                    "cwd": directory,
+                    "start_new_session": True,
+                    "env": {"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+                }
+                preexec = _preexec_fn()
+                if preexec is not None:
+                    popen_kwargs["preexec_fn"] = preexec
                 process = subprocess.Popen(
-                    [sys.executable, "-I", str(script)],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    cwd=directory,
-                    start_new_session=True,
-                    preexec_fn=_resource_limits,
-                    env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+                    [sys.executable, "-I", str(script)], **popen_kwargs
                 )
                 stdout_chunks: list[bytes] = []
                 stderr_chunks: list[bytes] = []
@@ -152,6 +156,12 @@ def _resource_limits() -> None:
             resource.setrlimit(kind, value)
         except (OSError, ValueError):
             continue
+
+
+def _preexec_fn() -> Any:
+    if os.name == "posix" and resource is not None and hasattr(resource, "setrlimit"):
+        return _resource_limits
+    return None
 
 
 def _kill_process_group(pid: int | None) -> None:
@@ -251,14 +261,38 @@ _DEFAULT_IFEVAL_CHECK = check_prompt_level
 def verify(benchmark: str, generation_text: str, reference: dict[str, object]) -> bool:
     """Verify one generated answer against its benchmark payload."""
     if benchmark == "math500":
-        return _math(generation_text, str(reference["answer"]))
+        try:
+            return _math(generation_text, str(reference["answer"]))
+        except (KeyError, TypeError):
+            return False
     if benchmark == "mmlu_pro":
-        return _first_option(generation_text) == str(reference["answer"]).upper()
+        try:
+            return _first_option(generation_text) == str(reference["answer"]).upper()
+        except (KeyError, TypeError):
+            return False
     if benchmark == "livecodebench":
-        return _code(generation_text, reference)
+        try:
+            cases = reference.get("cases", reference.get("test_cases", []))
+            if not isinstance(cases, list) or any(
+                not isinstance(case, dict) or not isinstance(case.get("stdin", ""), str)
+                for case in cases
+            ):
+                return False
+            return _code(generation_text, reference)
+        except (AttributeError, TypeError):
+            return False
     if benchmark == "ifeval":
-        prompt = reference.get("instructions", reference.get("instruction", []))
-        kwargs = reference.get("kwargs", [])
+        try:
+            prompt = reference.get("instructions", reference.get("instruction", []))
+            if isinstance(prompt, list) and (
+                not prompt or not all(isinstance(item, str) for item in prompt)
+            ):
+                return False
+            if not isinstance(prompt, (str, list)):
+                return False
+            kwargs = reference.get("kwargs", [])
+        except (AttributeError, TypeError):
+            return False
         checker: Any = (
             check_prompt_level
             if check_prompt_level is not _DEFAULT_IFEVAL_CHECK
