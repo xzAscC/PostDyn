@@ -179,20 +179,18 @@ def _load_livecodebench(source: str | Path | None = None) -> list[BenchItem]:
         rows = _jsonl_rows(source_path)
     else:
         rows = _dataset("livecodebench/code_generation_lite", name="release_v6")
-    return [
-        BenchItem(
-            str(r["question_id"]),
-            r["question_content"]
-            + (
-                "\n\nStarter code:\n```\n" + r["starter_code"] + "\n```"
-                if r["starter_code"]
-                else ""
-            )
-            + "\n\nWrite a Python solution. Read from stdin, print to stdout.",
-            _livecodebench_cases(r),
-        )
-        for r in rows
-    ]
+    items = []
+    for row in rows:
+        reference = _livecodebench_cases(row)
+        prompt = row["question_content"]
+        if row["starter_code"]:
+            prompt += "\n\nStarter code:\n```\n" + row["starter_code"] + "\n```"
+        if reference["func_name"]:
+            prompt += "\n\nComplete the following function while maintaining the Solution class style."
+        else:
+            prompt += "\n\nWrite a Python solution. Read from stdin, print to stdout."
+        items.append(BenchItem(str(row["question_id"]), prompt, reference))
+    return items
 
 
 def _ensure_device(inputs: dict[str, Any], device: torch.device) -> dict[str, Any]:

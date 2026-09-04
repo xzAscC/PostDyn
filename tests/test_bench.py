@@ -110,6 +110,39 @@ def test_livecodebench_loader_reads_release_v6_jsonl_schema(tmp_path) -> None:
     assert {item.id for item in val}.isdisjoint(item.id for item in test)
 
 
+def test_livecodebench_loader_uses_function_prompt_without_stdin_instruction(
+    tmp_path,
+) -> None:
+    path = tmp_path / "test6.jsonl"
+    rows = [
+        {
+            "question_id": f"question-{i}",
+            "question_content": "Return the answer.",
+            "starter_code": "class Solution:\n    def solve(self, x):\n        pass"
+            if i == 0
+            else "",
+            "public_test_cases": json.dumps(
+                [
+                    {
+                        "input": "1",
+                        "output": "1",
+                        "testtype": "functional" if i == 0 else "stdin",
+                    }
+                ]
+            ),
+            "metadata": json.dumps({"func_name": "solve"}) if i == 0 else "{}",
+        }
+        for i in range(40)
+    ]
+    path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+    val, _ = bench.load_benchmark("livecodebench", n_val=40, source=path)
+    functional = next(item for item in val if item.id == "question-0")
+    stdin = next(item for item in val if item.id == "question-1")
+    assert "Complete the following function" in functional.prompt
+    assert "Read from stdin" not in functional.prompt
+    assert "Read from stdin" in stdin.prompt
+
+
 def test_livecodebench_loader_merges_public_then_private_cases(tmp_path) -> None:
     path = tmp_path / "test6.jsonl"
     public = [{"input": "1", "output": "1", "testtype": "stdin"}]

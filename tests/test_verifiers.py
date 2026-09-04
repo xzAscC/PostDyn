@@ -196,7 +196,7 @@ IFEVAL_CASES = [
     (
         "length_constraints:number_paragraphs",
         {"num_paragraphs": 2},
-        "First\n\nSecond",
+        "First\n***\nSecond",
     ),
     (
         "detectable_content:number_placeholders",
@@ -226,7 +226,7 @@ IFEVAL_CASES = [
     (
         "detectable_format:multiple_sections",
         {"num_sections": 2, "section_spliter": "---"},
-        "one\n---\ntwo",
+        "SECTION 1\n---\nSECTION 2\n---\nSECTION 3",
     ),
     ("detectable_format:json_format", {}, '{"answer": 1}'),
     ("detectable_format:title", {}, "<<A title>>\nAnswer"),
@@ -275,10 +275,10 @@ def test_ifeval_official_registry_false_case(
         "length_constraints:number_paragraphs": "Only one paragraph",
         "detectable_content:number_placeholders": "Use [one].",
         "detectable_content:postscript": "Answer only.",
-        "detectable_format:number_bullet_lists": "* one",
+        "detectable_format:number_bullet_lists": "* one\n* two\n* three",
         "detectable_format:constrained_response": "My answer is yes. My answer is no.",
         "detectable_format:number_highlighted_sections": "*one*",
-        "detectable_format:multiple_sections": "one",
+        "detectable_format:multiple_sections": "SECTION 1",
         "detectable_format:json_format": "not json",
         "detectable_format:title": "No title",
         "combination:two_responses": "Only one response",
@@ -382,6 +382,98 @@ def test_ifeval_malformed_kwargs_are_false() -> None:
             "kwargs": [{"keyword": "word"}],
         },
     )
+
+
+def test_ifeval_number_paragraphs_uses_markdown_divider() -> None:
+    reference = cast(
+        dict[str, object],
+        {
+            "instruction_id_list": ["length_constraints:number_paragraphs"],
+            "kwargs": [{"num_paragraphs": 2}],
+        },
+    )
+    assert verifiers.verify("ifeval", "one\n***\ntwo", reference)
+    assert not verifiers.verify("ifeval", "one\n***\ntwo\n***\nthree", reference)
+
+
+def test_ifeval_number_bullets_rejects_surplus_bullets() -> None:
+    reference = cast(
+        dict[str, object],
+        {
+            "instruction_id_list": ["detectable_format:number_bullet_lists"],
+            "kwargs": [{"num_bullets": 2}],
+        },
+    )
+    assert not verifiers.verify("ifeval", "* one\n* two\n* three", reference)
+
+
+def test_ifeval_multiple_sections_is_at_least_numbered_markers() -> None:
+    reference = cast(
+        dict[str, object],
+        {
+            "instruction_id_list": ["detectable_format:multiple_sections"],
+            "kwargs": [{"section_spliter": "SECTION", "num_sections": 2}],
+        },
+    )
+    assert verifiers.verify("ifeval", "SECTION 1\nSECTION 2\nSECTION 3", reference)
+    assert not verifiers.verify("ifeval", "SECTION 1", reference)
+
+
+@pytest.mark.parametrize(
+    ("case_output", "captured", "expected"),
+    [
+        ("true", "true", True),
+        ("[1, 4]", "[1, 4]", True),
+        ('"answer"', '"answer"', True),
+        ("false", "true", False),
+        ("[1, 2]", "[1, 3]", False),
+        ('"answer"', '"other"', False),
+        ("8", "9", False),
+    ],
+)
+def test_livecodebench_functional_outputs_compare_as_json_types(
+    case_output: str, captured: str, expected: bool
+) -> None:
+    assert verifiers._functional_outputs_equal(case_output, captured) is expected
+
+
+def test_livecodebench_stdin_and_functional_paths_share_sandbox(monkeypatch) -> None:
+    calls = []
+
+    class FakeProcess:
+        pid = 123
+        returncode = 0
+
+        def __init__(self, output: bytes):
+            self.stdin = io.BytesIO()
+            self.stdout = io.BytesIO(output)
+            self.stderr = io.BytesIO()
+
+        def wait(self, **kwargs):
+            return self.returncode
+
+    def fake_popen(command, **kwargs):
+        calls.append((command, kwargs))
+        output = b"5" if "functional_driver.py" in command[2] else b"3\n"
+        return FakeProcess(output)
+
+    monkeypatch.setattr(verifiers.subprocess, "Popen", fake_popen)
+    assert verifiers.verify(
+        "livecodebench",
+        "def add(a, b):\n    return a + b",
+        {"cases": [{"input": "1 2", "output": "3", "testtype": "stdin"}]},
+    )
+    assert verifiers.verify(
+        "livecodebench",
+        "def add(a, b):\n    return a + b",
+        {
+            "func_name": "add",
+            "cases": [{"input": "1\n2", "output": "5", "testtype": "functional"}],
+        },
+    )
+    assert len(calls) == 2
+    assert all(call[1]["start_new_session"] for call in calls)
+    assert all(call[1]["preexec_fn"] is not None for call in calls)
 
 
 def test_split_sentences_handles_punctuation_think_blocks_and_whitespace() -> None:
