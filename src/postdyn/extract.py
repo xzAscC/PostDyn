@@ -257,7 +257,16 @@ def extract_layer_hiddens(
 
             forward = cast(Callable[..., _ModelOutput], model)
             with torch.inference_mode(), torch.no_grad():
-                outputs = forward(**model_inputs, output_hidden_states=True)
+                try:
+                    # Skip full-sequence logits: only hidden states are used
+                    # and the vocabulary projection dominates VRAM otherwise.
+                    outputs = forward(
+                        **model_inputs,
+                        output_hidden_states=True,
+                        logits_to_keep=1,
+                    )
+                except TypeError:
+                    outputs = forward(**model_inputs, output_hidden_states=True)
             hidden_states = outputs.hidden_states
             state_count = len(hidden_states)
             invalid = [
