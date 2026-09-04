@@ -24,6 +24,16 @@ PY
 Benchmark caches (MATH-500, LiveCodeBench `release_v6`, IFEval, MMLU-Pro)
 are pulled automatically from the Hugging Face cache on first use.
 
+## Sandbox scope (LiveCodeBench execution)
+
+Generated solutions run via `python -I` in a temp directory with a scrubbed
+environment (PATH only), CPU/address/process/file-size rlimits, a fresh
+process group (killed on timeout), and capped output capture. This is a
+research-box mitigation, NOT full isolation: generated code still shares the
+host filesystem and network. Do not run untrusted-scale generation on a
+machine with secrets or multi-tenant exposure; use container/VM isolation
+there.
+
 ## 7B on the local queue (RTX 4090, bf16)
 
 ```bash
