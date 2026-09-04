@@ -279,5 +279,19 @@ def write_manifest(root: Path, args: argparse.Namespace, experiment: str) -> Non
     )
 
 
+def write_identity_manifest(run_dir: Path, identity: dict[str, Any]) -> None:
+    path = run_dir / "manifest.json"
+    if path.is_file():
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        mismatched = [
+            key for key, value in identity.items() if existing.get(key) != value
+        ]
+        if mismatched:
+            raise SystemExit(
+                f"resume identity mismatch: {','.join(sorted(mismatched))}"
+            )
+    atomic_write_json(path, identity)
+
+
 def append(path: Path, row: dict[str, Any]) -> None:
     append_jsonl(path, row)

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 import torch
+from postdyn.data import DomainPool
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -66,6 +67,48 @@ def test_q1_writes_metrics_eigensystems_analysis_and_resumes(tmp_path: Path) -> 
     before = (output / "metrics.jsonl").read_text()
     assert q1.main(_run_args(output)) == 0
     assert (output / "metrics.jsonl").read_text() == before
+
+
+def test_q1_uses_per_domain_pool_sizes_and_manifest_maps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "q1"
+    original = q1._load_pools
+
+    def pools(args: object, domains: list[str], n: int) -> dict[str, DomainPool]:
+        loaded = original(args, domains, n)
+        return {
+            "math": DomainPool(
+                "math", loaded["math"].records, 32, 32, "math", 42, "math"
+            ),
+            "code": DomainPool(
+                "code", loaded["code"].records[:20], 32, 20, "code", 42, "code"
+            ),
+        }
+
+    monkeypatch.setattr(q1, "_load_pools", pools)
+    args = _run_args(output)
+    args[-1] = "32"
+    assert q1.main(args) == 0
+    rows = [
+        json.loads(line) for line in (output / "metrics.jsonl").read_text().splitlines()
+    ]
+    assert {row["n"] for row in rows if row["domain"] == "math"} == {32}
+    assert {row["n"] for row in rows if row["domain"] == "code"} == {20}
+    manifest = json.loads((output / "manifest.json").read_text())
+    assert manifest["n"] == {"math": 32, "code": 20}
+    assert manifest["actual_n"] == {"math": 32, "code": 20}
+
+
+def test_q1_rejects_checkpoint_manifest_mismatch(tmp_path: Path) -> None:
+    output = tmp_path / "q1"
+    assert q1.main(_run_args(output)) == 0
+    manifest_path = output / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["checkpoints"] = ["base"]
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(SystemExit, match="checkpoints"):
+        q1.main(_run_args(output))
 
 
 def test_q1_recomputes_unit_when_safetensors_is_missing(tmp_path: Path) -> None:

@@ -22,6 +22,15 @@ K_FRACTION = 1 / 3
 VAL_N = 30
 ROBUSTNESS_DOMAIN = "math"
 
+# Real branch names, in ascending order. The final branch is represented by
+# the stage's ``main`` alias when constructing the 22-checkpoint schedule.
+SFT_7B_STEPS: tuple[str, ...] = tuple(f"step{i}" for i in range(1000, 43001, 1000))
+RLVR_7B_STEPS: tuple[str, ...] = tuple(f"step_{i:04d}" for i in range(25, 1376, 25))
+SFT_32B_STEPS: tuple[str, ...] = tuple(f"step{i}" for i in range(1000, 10001, 1000)) + (
+    "step10790",
+)
+RLVR_32B_STEPS: tuple[str, ...] = tuple(f"step_{i:03d}" for i in range(50, 751, 50))
+
 
 @dataclass(frozen=True)
 class CheckpointRef:
@@ -50,15 +59,13 @@ class FamilyConfig:
     def checkpoints(self, sft_lr: str = "1e-4") -> tuple[CheckpointRef, ...]:
         """Return 22 deterministic checkpoints spanning all four stages."""
         if self.key == "7b":
-            sft_steps = [f"step{1000 + 5250 * index}" for index in range(9)]
-            rlvr_steps = [f"step_{step:04d}" for step in range(25, 1376, 25)]
+            sft_steps = SFT_7B_STEPS
+            rlvr_steps = RLVR_7B_STEPS
         else:
             if sft_lr not in {"1e-4", "5e-5"}:
                 raise ValueError("sft_lr must be '1e-4' or '5e-5'")
-            sft_steps = [f"step{step}" for step in range(1000, 10000, 1000)] + [
-                "step10790"
-            ]
-            rlvr_steps = [f"step_{step:03d}" for step in range(50, 751, 50)]
+            sft_steps = SFT_32B_STEPS
+            rlvr_steps = RLVR_32B_STEPS
 
         sft_revisions = _uniform_with_final(sft_steps)
         rlvr_revisions = _uniform_with_final(rlvr_steps)
@@ -90,15 +97,12 @@ class FamilyConfig:
         return 3 * self.d_model
 
 
-def _uniform_with_final(steps: list[str]) -> list[str]:
-    """Select nine uniform steps and append the stage's main branch."""
-    if len(steps) <= 9:
-        selected = steps
-    else:
-        last = len(steps) - 1
-        indices = [round(i * last / 8) for i in range(9)]
-        selected = [steps[index] for index in dict.fromkeys(indices)]
-    return selected + ["main"]
+def _uniform_with_final(steps: tuple[str, ...]) -> tuple[str, ...]:
+    """Select nine pool endpoints using deterministic round-half-up indices."""
+    pool = steps[:-1]
+    last = len(pool) - 1
+    indices = [int(i * last / 8 + 0.5) for i in range(9)]
+    return tuple(pool[index] for index in indices) + ("main",)
 
 
 MODEL_FAMILIES: dict[str, FamilyConfig] = {
