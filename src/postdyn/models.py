@@ -116,6 +116,7 @@ def load_model(
         "revision": checkpoint.revision,
         "torch_dtype": _DTYPES[dtype],
         "device_map": {"": device},
+        "attn_implementation": "sdpa",
     }
     if quantization == "nf4":
         kwargs["quantization_config"] = BitsAndBytesConfig(

@@ -130,7 +130,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--domains", "--limit-domains", dest="domains", default=None)
     parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--token-budget", type=int, default=8192)
+    parser.add_argument("--token-budget", type=int, default=6144)
     parser.add_argument("--max-length", type=int, default=2048)
     parser.add_argument("--limit", type=int, default=None)
     return parser.parse_args(argv)
