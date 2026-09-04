@@ -224,11 +224,13 @@ def _write_analysis(
 ) -> None:
     bands = ("high", "mid", "low")
 
-    def compare(
+    def band_comparison(
         first: CheckpointRef, second: CheckpointRef, layer: int, domain: str
     ) -> dict[str, Any]:
-        _, first_vectors = load_eigensystem(_base_path(run, first.name, layer, domain))
-        _, second_vectors = load_eigensystem(
+        first_values, first_vectors = load_eigensystem(
+            _base_path(run, first.name, layer, domain)
+        )
+        second_values, second_vectors = load_eigensystem(
             _base_path(run, second.name, layer, domain)
         )
         slices = band_slices(first_vectors.shape[0])
@@ -236,51 +238,65 @@ def _write_analysis(
             band: subsim(first_vectors[:, sl], second_vectors[:, sl])
             for band, sl in zip(bands, slices)
         }
-        pi = match_eigenvectors(first_vectors, second_vectors)
-        displacement = rank_displacement(pi)
-        result = {
-            "pi": pi.tolist(),
-            "D": displacement.tolist(),
-            "subsim_bands": subsim_bands,
-        }
-        del first_vectors, second_vectors
-        return result
+        del first_values, first_vectors, second_values, second_vectors
+        return {"subsim_bands": subsim_bands}
 
-    adjacent: list[dict[str, Any]] = []
-    for first, second in zip(checkpoints, checkpoints[1:]):
-        record: dict[str, Any] = {
+    adjacent: list[dict[str, Any]] = [
+        {
             "from": first.name,
             "to": second.name,
             "subsim": {},
             "reordering": {},
         }
-        by_unit: dict[str, dict[str, Any]] = {}
-        for layer in layers:
-            for domain in domains:
-                comparison = compare(first, second, layer, domain)
-                key = f"layer_{layer}/{domain}"
-                displacement = comparison["D"]
-                by_unit[key] = comparison
-                record["subsim"][key] = comparison["subsim_bands"]
-                record["reordering"][key] = {
-                    "mean": mean(displacement),
-                    "median": median(displacement),
-                    "p90": sorted(displacement)[int(0.9 * (len(displacement) - 1))],
+        for first, second in zip(checkpoints, checkpoints[1:])
+    ]
+    for layer in layers:
+        for domain in domains:
+            # Keep only the previous and current eigensystems resident while shifting.
+            prev_values, prev_vectors = load_eigensystem(
+                _base_path(run, checkpoints[0].name, layer, domain)
+            )
+            for pair_index, second in enumerate(checkpoints[1:]):
+                cur_values, cur_vectors = load_eigensystem(
+                    _base_path(run, second.name, layer, domain)
+                )
+                slices = band_slices(prev_vectors.shape[0])
+                subsim_bands = {
+                    band: subsim(prev_vectors[:, sl], cur_vectors[:, sl])
+                    for band, sl in zip(bands, slices)
                 }
-        all_displacements = [value for value in record["reordering"].values()]
+                pi = match_eigenvectors(prev_vectors, cur_vectors)
+                displacement = rank_displacement(pi)
+                key = f"layer_{layer}/{domain}"
+                adjacent[pair_index]["subsim"][key] = subsim_bands
+                adjacent[pair_index]["reordering"][key] = {
+                    "mean": mean(displacement.tolist()),
+                    "median": median(displacement.tolist()),
+                    "p90": sorted(displacement.tolist())[
+                        int(0.9 * (len(displacement) - 1))
+                    ],
+                }
+                adjacent[pair_index].setdefault("_by_unit", {})[key] = {
+                    "pi": pi.tolist(),
+                    "D": displacement.tolist(),
+                    "subsim_bands": subsim_bands,
+                }
+                del prev_values, prev_vectors
+                prev_values, prev_vectors = cur_values, cur_vectors
+                del cur_values, cur_vectors
+            del prev_values, prev_vectors
+    for record in adjacent:
+        all_displacements = list(record["reordering"].values())
         record["reordering"] = {
             stat: mean(item[stat] for item in all_displacements)
             for stat in ("mean", "median", "p90")
         }
-        record["reordering"]["by_unit"] = by_unit
+        record["reordering"]["by_unit"] = record.pop("_by_unit")
+        by_unit = record["subsim"]
         record["subsim"] = {
-            **{
-                band: mean(item[band] for item in record["subsim"].values())
-                for band in bands
-            },
-            "by_unit": record["subsim"],
+            **{band: mean(item[band] for item in by_unit.values()) for band in bands},
+            "by_unit": by_unit,
         }
-        adjacent.append(record)
     summary: dict[str, Any] = {
         "checkpoints": {},
         "adjacent_pairs": adjacent,
@@ -296,13 +312,15 @@ def _write_analysis(
         )
         for layer in layers:
             for domain in domains:
-                current_values, _ = load_eigensystem(
+                current_values, current_vectors = load_eigensystem(
                     _base_path(run, checkpoint.name, layer, domain)
                 )
                 metrics = spectral_metrics(current_values)
-                del current_values
-                base_comparison = compare(checkpoint, base, layer, domain)
-                final_comparison = compare(checkpoint, stage_final, layer, domain)
+                del current_values, current_vectors
+                base_comparison = band_comparison(checkpoint, base, layer, domain)
+                final_comparison = band_comparison(
+                    checkpoint, stage_final, layer, domain
+                )
                 item[f"layer_{layer}/{domain}"] = {
                     "vs_base": base_comparison,
                     "vs_stage_final": final_comparison,

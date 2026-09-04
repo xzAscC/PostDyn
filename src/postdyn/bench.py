@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
+import logging
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import torch
+
+
+logger = logging.getLogger(__name__)
 
 try:
     from datasets import load_dataset
@@ -121,6 +128,34 @@ def _load_ifeval(source: str | Path | None = None) -> list[BenchItem]:
     ]
 
 
+def _livecodebench_cases(row: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Return public then private LCB cases in the verifier reference payload.
+
+    ``stdin`` cases run as-is. Other ``testtype`` values are passed through;
+    the verifier treats them through the same subprocess, and the functional-
+    style cases in ``code_generation_lite`` carry stdin-equivalent payloads.
+    Each case retains its ``input``, ``output``, and ``testtype`` fields.
+    """
+    cases = list(json.loads(row["public_test_cases"]))
+    private_test_cases = row.get("private_test_cases")
+    if private_test_cases:
+        try:
+            private = json.loads(
+                zlib.decompress(base64.b64decode(private_test_cases)).decode("utf-8")
+            )
+        except (
+            ValueError,
+            TypeError,
+            binascii.Error,
+            zlib.error,
+            UnicodeDecodeError,
+        ) as exc:
+            logger.warning("Skipping invalid LiveCodeBench private test cases: %s", exc)
+        else:
+            cases.extend(private)
+    return {"cases": cases}
+
+
 def _load_livecodebench(source: str | Path | None = None) -> list[BenchItem]:
     if source is not None:
         source_path = Path(source)
@@ -139,7 +174,7 @@ def _load_livecodebench(source: str | Path | None = None) -> list[BenchItem]:
                 else ""
             )
             + "\n\nWrite a Python solution. Read from stdin, print to stdout.",
-            {"cases": json.loads(r["public_test_cases"])},
+            _livecodebench_cases(r),
         )
         for r in rows
     ]

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import importlib
 import logging
 import os
 import re
@@ -186,136 +188,244 @@ def _first_option(text: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _no_comma(kwargs: dict[str, Any], response: str) -> bool:
-    return "," not in response
+def _relation(value: int, target: int, relation: Any) -> bool:
+    if relation == "at least":
+        return value >= target
+    if relation == "less than":
+        return value < target
+    return False
 
 
-def _number_highlighted_sections(kwargs: dict[str, Any], response: str) -> bool:
-    expected = int(kwargs.get("num_highlights", kwargs.get("count", 0)))
-    return len(re.findall(r"\*\*.+?\*\*", response, re.S)) == expected
+def _keywords_existence(kwargs: dict[str, Any], response: str) -> bool:
+    keywords = kwargs["keywords"]
+    return (
+        isinstance(keywords, list)
+        and bool(keywords)
+        and all(
+            isinstance(keyword, str) and keyword.lower() in response.lower()
+            for keyword in keywords
+        )
+    )
 
 
-def _number_words(kwargs: dict[str, Any], response: str) -> bool:
-    return len(response.split()) == int(kwargs.get("num_words", kwargs.get("count", 0)))
+def _keywords_frequency(kwargs: dict[str, Any], response: str) -> bool:
+    keyword = kwargs["keyword"]
+    return (
+        isinstance(keyword, str)
+        and bool(keyword)
+        and _relation(
+            response.lower().count(keyword.lower()),
+            int(kwargs["frequency"]),
+            kwargs["relation"],
+        )
+    )
 
 
-def _frequency(kwargs: dict[str, Any], response: str) -> bool:
-    keyword = str(kwargs.get("keyword", kwargs.get("word", "")))
-    return response.lower().count(keyword.lower()) == int(
-        kwargs.get("frequency", kwargs.get("count", 0))
+def _keywords_forbidden(kwargs: dict[str, Any], response: str) -> bool:
+    words = kwargs["forbidden_words"]
+    return (
+        isinstance(words, list)
+        and bool(words)
+        and all(
+            isinstance(word, str) and word.lower() not in response.lower()
+            for word in words
+        )
+    )
+
+
+def _letter_frequency(kwargs: dict[str, Any], response: str) -> bool:
+    letter = kwargs["letter"]
+    return (
+        isinstance(letter, str)
+        and len(letter) == 1
+        and _relation(
+            response.lower().count(letter.lower()),
+            int(kwargs["let_frequency"]),
+            kwargs["let_relation"],
+        )
     )
 
 
 def _response_language(kwargs: dict[str, Any], response: str) -> bool:
-    language = str(kwargs.get("language", "")).lower()
-    markers = {
-        "english": {" the ", " and ", " is "},
-        "french": {" le ", " la ", " et "},
-        "german": {" der ", " die ", " und "},
-        "spanish": {" el ", " la ", " y "},
-    }
-    padded = f" {response.lower()} "
-    return language in markers and any(marker in padded for marker in markers[language])
+    language = kwargs["language"]
+    if not isinstance(language, str) or len(language) != 2:
+        return False
+    try:
+        detect = importlib.import_module("langdetect").detect
+    except ImportError:
+        logger.warning("langdetect is unavailable; response language check failed")
+        return False
+    try:
+        return detect(response) == language.lower()
+    except Exception:
+        return False
 
 
-def _end_checker(kwargs: dict[str, Any], response: str) -> bool:
-    end_phrase = kwargs.get("end_phrase", kwargs.get("phrase", ""))
-    start_phrase = kwargs.get("start_phrase", "")
-    return response.rstrip().endswith(str(end_phrase)) and (
-        not start_phrase or response.lstrip().startswith(str(start_phrase))
+def _number_sentences(kwargs: dict[str, Any], response: str) -> bool:
+    sentences = re.findall(r"[^.!?]+(?:[.!?]+(?=\s|$)|$)", response)
+    return _relation(
+        len([sentence for sentence in sentences if sentence.strip()]),
+        int(kwargs["num_sentences"]),
+        kwargs["relation"],
     )
+
+
+def _number_words(kwargs: dict[str, Any], response: str) -> bool:
+    return _relation(
+        len(response.split()), int(kwargs["num_words"]), kwargs["relation"]
+    )
+
+
+def _nth_paragraph_first_word(kwargs: dict[str, Any], response: str) -> bool:
+    paragraphs = [paragraph.strip() for paragraph in response.split("***")]
+    index = int(kwargs["nth_paragraph"]) - 1
+    return (
+        len(paragraphs) == int(kwargs["num_paragraphs"])
+        and 0 <= index < len(paragraphs)
+        and bool(paragraphs[index])
+        and paragraphs[index].split()[0] == kwargs["first_word"]
+    )
+
+
+def _number_placeholders(kwargs: dict[str, Any], response: str) -> bool:
+    return _relation(
+        len(re.findall(r"\[[^\[\]]+\]", response)),
+        int(kwargs["num_placeholders"]),
+        kwargs["relation"],
+    )
+
+
+def _postscript(kwargs: dict[str, Any], response: str) -> bool:
+    marker = kwargs["postscript_marker"]
+    return (
+        isinstance(marker, str) and bool(marker) and marker.lower() in response.lower()
+    )
+
+
+def _number_bullet_lists(kwargs: dict[str, Any], response: str) -> bool:
+    return _relation(
+        len(re.findall(r"(?m)^\* ", response)),
+        int(kwargs["num_bullets"]),
+        kwargs["relation"],
+    )
+
+
+def _constrained_response(kwargs: dict[str, Any], response: str) -> bool:
+    choices = ("My answer is yes.", "My answer is no.", "My answer is maybe.")
+    return sum(response.count(choice) for choice in choices) == 1
+
+
+def _number_highlighted_sections(kwargs: dict[str, Any], response: str) -> bool:
+    spans = re.findall(r"\*{1,2}[^*\n]+\*{1,2}", response)
+    return _relation(len(spans), int(kwargs["num_highlights"]), kwargs["relation"])
+
+
+def _multiple_sections(kwargs: dict[str, Any], response: str) -> bool:
+    divider = kwargs.get("section_spliter", "---")
+    if not isinstance(divider, str) or not divider:
+        return False
+    sections = [section for section in response.split(divider) if section.strip()]
+    return _relation(len(sections), int(kwargs["num_sections"]), kwargs["relation"])
+
+
+def _json_format(kwargs: dict[str, Any], response: str) -> bool:
+    candidate = response.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", candidate, re.S | re.I)
+    if fenced:
+        candidate = fenced.group(1).strip()
+    try:
+        parsed = json.loads(candidate)
+        return isinstance(parsed, (dict, list))
+    except (TypeError, json.JSONDecodeError):
+        return False
+
+
+def _title(kwargs: dict[str, Any], response: str) -> bool:
+    title = kwargs.get("title")
+    return bool(re.search(r"<<[^<>]+>>", response)) and (
+        not title or f"<<{title}>>" in response
+    )
+
+
+def _two_responses(kwargs: dict[str, Any], response: str) -> bool:
+    parts = response.split("******")
+    return len(parts) == 2 and all(part.strip() for part in parts)
 
 
 def _repeat_prompt(kwargs: dict[str, Any], response: str) -> bool:
-    repeated = str(kwargs.get("prompt_to_repeat", kwargs.get("prompt", "")))
-    return bool(repeated) and repeated in response
+    prompt = kwargs["prompt_to_repeat"]
+    return isinstance(prompt, str) and bool(prompt) and response.startswith(prompt)
 
 
-IFEVAL_CHECKERS = {
-    "punctuation:no_comma": _no_comma,
-    "detectable_format:number_highlighted_sections": _number_highlighted_sections,
-    "length_constraints:number_words": _number_words,
-    "keywords:frequency": _frequency,
-    "language:response_language": _response_language,
-    "startend:end_checker": _end_checker,
-    "combination:repeat_prompt": _repeat_prompt,
-}
-
-
-def _constraint_checker(
-    instruction: str, kwargs: dict[str, Any], response: str
-) -> bool:
-    name = instruction.lower().replace(" ", "_")
-    words = response.split()
-    if name in {"num_words", "min_words", "max_words"}:
-        count = len(words)
-        if name == "num_words":
-            return count == int(kwargs.get("num_words", kwargs.get("count", 0)))
-        if name == "min_words":
-            return count >= int(kwargs.get("num_words", kwargs.get("count", 0)))
-        return count <= int(kwargs.get("num_words", kwargs.get("count", 0)))
-    if name in {"num_sentences", "min_sentences", "max_sentences"}:
-        count = len(split_sentences(response))
-        target = int(kwargs.get("num_sentences", kwargs.get("count", 0)))
-        return (
-            count == target
-            if name == "num_sentences"
-            else count >= target
-            if name == "min_sentences"
-            else count <= target
-        )
-    if name in {"num_bullets", "num_paragraphs"}:
-        count = (
-            len(re.findall(r"(?m)^\s*(?:[-*•]|\d+[.)])\s+", response))
-            if name == "num_bullets"
-            else len([p for p in re.split(r"\n\s*\n", response) if p.strip()])
-        )
-        return count == int(kwargs.get(name, kwargs.get("count", 0)))
-    if name in {"required_words", "forbidden_words"}:
-        required = kwargs.get("words", kwargs.get("word", []))
-        required = [required] if isinstance(required, str) else required
-        return (
-            all(w.lower() in response.lower() for w in required)
-            if name == "required_words"
-            else all(w.lower() not in response.lower() for w in required)
-        )
-    if name == "keyword_frequency":
-        key = str(kwargs.get("keyword", kwargs.get("word", "")))
-        return response.lower().count(key.lower()) == int(
-            kwargs.get("frequency", kwargs.get("count", 0))
-        )
-    if name == "end_phrase":
-        return response.rstrip().endswith(
-            str(kwargs.get("phrase", kwargs.get("end_phrase", "")))
-        )
-    if name == "first_word":
-        return (
-            bool(words)
-            and words[0].strip('.,:;!?"').lower() == str(kwargs.get("word", "")).lower()
-        )
-    if name == "forbidden_words":
-        return True
-    if name == "comma_frequency":
-        return response.count(",") == int(
-            kwargs.get("frequency", kwargs.get("count", 0))
-        )
-    if name == "quotation":
-        return response.count('"') >= 2
-    logger.warning("Unsupported IFEval instruction: %s", instruction)
-    return False
-
-
-def check_prompt_level(instructions: Any, kwargs_list: Any, response: str) -> bool:
-    """Check the common prompt-level IFEval constraints."""
-    if isinstance(instructions, str):
-        instructions = [instructions]
-    kwargs_list = kwargs_list or [{}]
-    return all(
-        _constraint_checker(
-            str(inst), kwargs_list[i] if i < len(kwargs_list) else {}, response
-        )
-        for i, inst in enumerate(instructions or [])
+def _end_checker(kwargs: dict[str, Any], response: str) -> bool:
+    phrase = kwargs["end_phrase"]
+    return (
+        isinstance(phrase, str) and bool(phrase) and response.strip().endswith(phrase)
     )
+
+
+def _quotation(kwargs: dict[str, Any], response: str) -> bool:
+    stripped = response.strip()
+    return len(stripped) >= 2 and stripped.startswith('"') and stripped.endswith('"')
+
+
+def _capital_word_frequency(kwargs: dict[str, Any], response: str) -> bool:
+    return _relation(
+        len(re.findall(r"\b[A-Z]+\b", response)),
+        int(kwargs["capital_frequency"]),
+        kwargs["capital_relation"],
+    )
+
+
+def _english_capital(kwargs: dict[str, Any], response: str) -> bool:
+    return bool(response) and response == response.upper()
+
+
+def _english_lowercase(kwargs: dict[str, Any], response: str) -> bool:
+    return bool(response) and response == response.lower()
+
+
+def _no_comma(kwargs: dict[str, Any], response: str) -> bool:
+    return "," not in response
+
+
+def _punctuation_frequency(kwargs: dict[str, Any], response: str) -> bool:
+    return _relation(response.count(","), int(kwargs["frequency"]), kwargs["relation"])
+
+
+class _IFEvalRegistry(dict[str, Any]):
+    """Complete official 25-ID namespaced IFEval checker registry."""
+
+
+IFEVAL_CHECKERS = _IFEvalRegistry(
+    {
+        "keywords:existence": _keywords_existence,
+        "keywords:frequency": _keywords_frequency,
+        "keywords:forbidden_words": _keywords_forbidden,
+        "keywords:letter_frequency": _letter_frequency,
+        "language:response_language": _response_language,
+        "length_constraints:number_sentences": _number_sentences,
+        "length_constraints:number_words": _number_words,
+        "length_constraints:nth_paragraph_first_word": _nth_paragraph_first_word,
+        "detectable_content:number_placeholders": _number_placeholders,
+        "detectable_content:postscript": _postscript,
+        "detectable_format:number_bullet_lists": _number_bullet_lists,
+        "detectable_format:constrained_response": _constrained_response,
+        "detectable_format:number_highlighted_sections": _number_highlighted_sections,
+        "detectable_format:multiple_sections": _multiple_sections,
+        "detectable_format:json_format": _json_format,
+        "detectable_format:title": _title,
+        "combination:two_responses": _two_responses,
+        "combination:repeat_prompt": _repeat_prompt,
+        "startend:end_checker": _end_checker,
+        "startend:quotation": _quotation,
+        "change_case:capital_word_frequency": _capital_word_frequency,
+        "change_case:english_capital": _english_capital,
+        "change_case:english_lowercase": _english_lowercase,
+        "punctuation:no_comma": _no_comma,
+        "punctuation:frequency": _punctuation_frequency,
+    }
+)
 
 
 def _check_ifeval(reference: dict[str, object], response: str) -> bool:
@@ -343,10 +453,6 @@ def _check_ifeval(reference: dict[str, object], response: str) -> bool:
         except (KeyError, TypeError, ValueError):
             return False
     return True
-
-
-ifeval_check = check_prompt_level
-_DEFAULT_IFEVAL_CHECK = check_prompt_level
 
 
 def verify(benchmark: str, generation_text: str, reference: dict[str, object]) -> bool:

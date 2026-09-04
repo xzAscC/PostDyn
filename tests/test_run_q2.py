@@ -208,12 +208,29 @@ def test_exp2_covariance_uses_float64_and_t_minus_one_cap() -> None:
     assert vals.shape == (2,)
 
 
-def test_exp2_comparisons_slice_global_bands_to_solution_k() -> None:
+def test_exp2_subsim_vs_band_normalizes_by_solution_width() -> None:
     exp2 = load_script("run_q2_exp2")
     solution = torch.eye(4, dtype=torch.float64)[:, :2]
-    high = torch.eye(4, dtype=torch.float64)[:, :3]
-    low = torch.flip(torch.eye(4, dtype=torch.float64), dims=(1,))[:, :3]
+    band = torch.eye(4, dtype=torch.float64)[:, :3]
 
+    assert exp2.subsim_vs_band(solution, band) == 1.0
+    assert (
+        exp2.subsim_vs_band(solution, torch.eye(4, dtype=torch.float64)[:, 2:]) == 0.0
+    )
+    rectangular_solution = torch.eye(4, dtype=torch.float64)[:, :1]
+    rectangular_band = torch.eye(4, dtype=torch.float64)[:, :2]
+    assert exp2.subsim_vs_band(rectangular_solution, rectangular_band) == 1.0
+
+
+def test_exp2_global_bands_use_exact_first_and_last_k_columns() -> None:
+    exp2 = load_script("run_q2_exp2")
+    eigenvectors = torch.eye(8, dtype=torch.float64)
+    K = 2
+    high = eigenvectors[:, :K]
+    low = eigenvectors[:, -K:]
+    assert torch.equal(high, eigenvectors[:, [0, 1]])
+    assert torch.equal(low, eigenvectors[:, [6, 7]])
+    solution = eigenvectors[:, :1]
     assert exp2.comparison_subsims(solution, high, low) == (1.0, 0.0)
 
 

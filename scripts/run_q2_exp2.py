@@ -14,8 +14,19 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 import scripts.q2_common as common
 from postdyn.config import ALPHAS, BENCHMARKS
 from postdyn.persistence import RunDir, tee_log, atomic_write_json
-from postdyn.spectra import band_slices, eigensystem, subsim
+from postdyn.spectra import eigensystem
 from postdyn.verifiers import split_sentences, verify
+
+
+def subsim_vs_band(solution_vectors: torch.Tensor, band_vectors: torch.Tensor) -> float:
+    """Return ``||U_sol.T @ U_band||_F^2 / k`` for solution width k and band K."""
+    k = int(solution_vectors.shape[1])
+    if k == 0:
+        return 0.0
+    overlap = solution_vectors.to(dtype=torch.float64).T @ band_vectors.to(
+        dtype=torch.float64
+    )
+    return float((overlap.square().sum() / k).item())
 
 
 def comparison_subsims(
@@ -23,11 +34,10 @@ def comparison_subsims(
     high_vectors: torch.Tensor,
     low_vectors: torch.Tensor,
 ) -> tuple[float, float]:
-    """Compare with global high/low bands sliced to the solution width."""
-    k = int(solution_vectors.shape[1])
+    """Compare solution width ``k`` with complete global bands of width ``K``."""
     return (
-        subsim(solution_vectors[:, :k], high_vectors[:, :k]),
-        subsim(solution_vectors[:, :k], low_vectors[:, :k]),
+        subsim_vs_band(solution_vectors, high_vectors),
+        subsim_vs_band(solution_vectors, low_vectors),
     )
 
 
@@ -177,8 +187,8 @@ def run(args: argparse.Namespace) -> None:
             )
             eig = bases[layer]
             k = cfg.d_model // 3
-            high_slice, _, low_slice = band_slices(eig[1].shape[0])
-            u_high, u_low = eig[1][:, high_slice], eig[1][:, low_slice]
+            K = cfg.d_model // 3
+            u_high, u_low = eig[1][:, :K], eig[1][:, -K:]
             _, items = common.load_items(domain, args.limit, args.scale == "tiny")
             from postdyn import bench
 
