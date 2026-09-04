@@ -51,6 +51,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--token-budget", type=int, default=4096)
     parser.add_argument("--attention-budget", type=int, default=8_388_608)
+    parser.add_argument("--allow-short-pool", action="store_true")
     parser.add_argument("--max-length", type=int, default=2048)
     args = parser.parse_args(argv)
     if args.repeats < 2:
@@ -85,7 +86,7 @@ def run(args: argparse.Namespace) -> int:
     n = min(requested_n, pool.actual_n)
     if n <= 0:
         raise ValueError("selected domain pool contains no records")
-    if args.repeats > 1 and pool.actual_n <= n:
+    if args.repeats > 1 and pool.actual_n <= n and not args.allow_short_pool:
         raise SystemExit(
             "robustness pools must exceed 3d for genuine resampling; "
             "rematerialize with the runbook's 2x pool size"
@@ -118,22 +119,24 @@ def run(args: argparse.Namespace) -> int:
                 )
             selected_ids.append(chosen_ids)
             records = [record.prompt for record in chosen]
+            hidden_by_layer = extract_layer_hiddens(
+                model,
+                tokenizer,
+                records,
+                layers,
+                args.batch_size,
+                args.max_length,
+                token_budget=args.token_budget,
+                attention_budget=args.attention_budget,
+            )
             values_by_layer: dict[str, list[float]] = {}
             ranks: dict[str, float] = {}
             stability: dict[str, dict[str, float]] = {}
             for layer in layers:
-                hidden = extract_layer_hiddens(
-                    model,
-                    tokenizer,
-                    records,
-                    [layer],
-                    args.batch_size,
-                    args.max_length,
-                    token_budget=args.token_budget,
-                    attention_budget=args.attention_budget,
-                )[layer]
+                hidden = hidden_by_layer[layer]
                 covariance = OnlineCovariance()
                 covariance.update(hidden)
+                del hidden
                 values, vectors = eigensystem(covariance.covariance)
                 base = root / "eigensystems" / str(repeat) / str(layer)
                 save_eigensystem(base, values, vectors)
@@ -142,7 +145,7 @@ def run(args: argparse.Namespace) -> int:
                 if repeat == 0:
                     first[layer] = (values, vectors)
                 else:
-                    _, first_vectors = first[layer]
+                    first_values, first_vectors = first[layer]
                     displacement = (
                         rank_displacement(match_eigenvectors(first_vectors, vectors))
                         .float()
@@ -160,6 +163,8 @@ def run(args: argparse.Namespace) -> int:
                             vectors[:, q1.band_slices(vectors.shape[0])[2]],
                         ),
                     }
+                    del first_values, first_vectors, values, vectors
+            del hidden_by_layer
             payload = {
                 "repeat": repeat,
                 "n": n,

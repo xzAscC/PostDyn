@@ -46,6 +46,7 @@ gpu-queue add postdyn-q1-7b-smoke \
 # -> robustness (R=5) -> Q2 exp1 -> exp2 -> exp3. Resumable per unit.
 REPEATS=5 gpu-queue add postdyn-7b-overnight bash scripts/run_7b_overnight.sh
 ```
+# GR pool: 6210 unique < n=3d — explicit deviation, see PR #7
 
 Progress: `gpu-queue list`, `tail -f logs/overnight_7b.log`,
 `ls logs/q1/7b/eigensystems/*/`. Each stage writes incremental JSON(L) after
@@ -59,11 +60,13 @@ uv sync --group dev
 
 # Q1 full trajectory (22 checkpoints, d=5120, n=30,720 materialized per domain)
 uv run python scripts/run_q1.py --family 32b --scale full \
-    --dtype bfloat16 --device cuda --output logs/q1/32b
+    --dtype bfloat16 --device cuda --output logs/q1/32b --allow-short-pool
+# GR pool: 6210 unique < n=3d — explicit deviation, see PR #7
 
 # Q1 robustness on the final RLVR checkpoint (Math, R=5)
 uv run python scripts/run_q1_robustness.py --family 32b --repeats 5 \
-    --dtype bfloat16 --device cuda --output logs/q1_robustness/32b
+    --dtype bfloat16 --device cuda --output logs/q1_robustness/32b --allow-short-pool
+# GR pool: 6210 unique < n=3d — explicit deviation, see PR #7
 
 # Q2 experiments (require the 32B Q1 final bases above)
 uv run python scripts/run_q2_exp1.py --family 32b --q1-root logs/q1/32b \
@@ -77,9 +80,10 @@ uv run python scripts/run_q2_exp3.py --family 32b --q1-root logs/q1/32b \
 The 32B SFT trajectory defaults to the `1e-4-` learning-rate branch
 (README-official example); pass `--sft-lr 5e-5` anywhere to switch.
 
-The general-reasoning pool has only 6,210 records and therefore requires
-`--allow-short-pool` for Q1. Other pools should be materialized at `n=30,720`
-to retain the 2x headroom needed by robustness resampling.
+Pools are materialized at `n=30,720`; the general-reasoning pool remains at
+6,210 records (16x duplication in OT3-science). This is below `n=3d`, so the
+explicit deviation is recorded in the manifest/metrics for each run. Other
+pools should retain the 2x headroom needed by robustness resampling.
 
 Local 32B fallback (no H100): append `--quantization nf4` to any 32B command;
 the loader checks the measured free-VRAM budget before loading.

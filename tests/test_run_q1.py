@@ -4,6 +4,7 @@ import importlib
 import json
 import sys
 from pathlib import Path
+from typing import cast
 
 import pytest
 import torch
@@ -61,9 +62,15 @@ def test_q1_writes_metrics_eigensystems_analysis_and_resumes(tmp_path: Path) -> 
     assert summary["adjacent_pairs"]
     assert {"high", "mid", "low"}.issubset(summary["adjacent_pairs"][0]["subsim"])
     assert "mean" in summary["adjacent_pairs"][0]["reordering"]
-    unit = summary["adjacent_pairs"][0]["reordering"]["by_unit"]["layer_0/math"]
-    assert len(unit["pi"]) == len(unit["D"]) == 8
-    assert "subsim_bands" in unit
+    for pair in summary["adjacent_pairs"]:
+        unit = pair["reordering"]["by_unit"]["layer_0/math"]
+        assert len(unit["pi"]) == len(unit["D"]) == 8
+        assert "subsim_bands" in unit
+    for checkpoint_item in summary["checkpoints"].values():
+        for key, value in checkpoint_item.items():
+            if key.startswith("layer_"):
+                assert set(value["vs_base"]) == {"subsim_bands"}
+                assert set(value["vs_stage_final"]) == {"subsim_bands"}
     assert "vs_base" in summary["checkpoints"]["rlvr"]
     assert "vs_stage_final" in summary["checkpoints"]["sft"]
 
@@ -139,6 +146,39 @@ def test_q1_rejects_resume_with_different_domains(tmp_path: Path) -> None:
     changed[changed.index("math,code")] = "math"
     with pytest.raises(SystemExit, match="mismatch.*fresh --output"):
         q1.main(changed)
+
+
+def test_robustness_extracts_all_layers_once_per_repeat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[int]] = []
+    original = robustness.extract_layer_hiddens
+
+    def extract(*args: object, **kwargs: object) -> dict[int, torch.Tensor]:
+        layers = cast(list[int], args[3])
+        calls.append(layers)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(robustness, "extract_layer_hiddens", extract)
+    args = [
+        "--family",
+        "7b",
+        "--scale",
+        "tiny",
+        "--checkpoint",
+        "rlvr",
+        "--domain",
+        "math",
+        "--repeats",
+        "3",
+        "--output",
+        str(tmp_path),
+        "--limit",
+        "6",
+    ]
+
+    assert robustness.main(args) == 0
+    assert calls == [[0, 1], [0, 1], [0, 1]]
 
 
 def test_robustness_writes_repeat_files_and_spread_summary(tmp_path: Path) -> None:

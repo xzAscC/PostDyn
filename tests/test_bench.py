@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import json
+import zlib
 from types import SimpleNamespace
 
 import pytest
@@ -104,6 +106,52 @@ def test_livecodebench_loader_reads_release_v6_jsonl_schema(tmp_path) -> None:
         "cases": [{"input": "1", "output": "1", "testtype": "stdin"}]
     }
     assert {item.id for item in val}.isdisjoint(item.id for item in test)
+
+
+def test_livecodebench_loader_merges_public_then_private_cases(tmp_path) -> None:
+    path = tmp_path / "test6.jsonl"
+    public = [{"input": "1", "output": "1", "testtype": "stdin"}]
+    private = [{"input": "2", "output": "2", "testtype": "functional"}]
+    encoded_private = base64.b64encode(
+        zlib.compress(json.dumps(private).encode("utf-8"))
+    ).decode("ascii")
+    rows = [
+        {
+            "question_id": f"question-{i}",
+            "question_content": f"Solve question {i}",
+            "starter_code": "",
+            "public_test_cases": json.dumps(public),
+            "private_test_cases": encoded_private,
+        }
+        for i in range(40)
+    ]
+    path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+    val, _ = bench.load_benchmark("livecodebench", n_val=30, source=path)
+
+    item = next(item for item in val if item.id == "question-0")
+    assert item.reference == {"cases": public + private}
+
+
+def test_livecodebench_loader_skips_corrupt_private_cases(tmp_path) -> None:
+    path = tmp_path / "test6.jsonl"
+    public = [{"input": "1", "output": "1", "testtype": "stdin"}]
+    rows = [
+        {
+            "question_id": f"question-{i}",
+            "question_content": f"Solve question {i}",
+            "starter_code": "",
+            "public_test_cases": json.dumps(public),
+            "private_test_cases": "not-valid-zlib-data",
+        }
+        for i in range(40)
+    ]
+    path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+    val, _ = bench.load_benchmark("livecodebench", n_val=30, source=path)
+
+    item = next(item for item in val if item.id == "question-0")
+    assert item.reference == {"cases": public}
 
 
 def test_mmlu_pro_loader_reads_test_parquet_and_formats_all_options(tmp_path) -> None:

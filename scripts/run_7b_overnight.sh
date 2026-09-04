@@ -28,11 +28,12 @@ run_stage() {
 }
 
 run_stage q1_full \
-    uv run python scripts/run_q1.py --family 7b --scale full --output logs/q1/7b
+    uv run python scripts/run_q1.py --family 7b --scale full --output logs/q1/7b \
+    --allow-short-pool # GR pool: 6210 unique < n=3d — explicit deviation, see PR #7
 
 run_stage q1_robustness \
     uv run python scripts/run_q1_robustness.py --family 7b --repeats "${REPEATS}" \
-    --output logs/q1_robustness/7b
+    --output logs/q1_robustness/7b --allow-short-pool # GR pool: 6210 unique < n=3d — explicit deviation, see PR #7
 
 run_stage q2_exp1 \
     uv run python scripts/run_q2_exp1.py --family 7b --q1-root logs/q1/7b \
