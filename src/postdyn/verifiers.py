@@ -83,6 +83,7 @@ def _code(generation: str, reference: dict[str, Any]) -> bool:
                     cwd=directory,
                     start_new_session=True,
                     preexec_fn=_resource_limits,
+                    env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
                 )
                 stdout_chunks: list[bytes] = []
                 stderr_chunks: list[bytes] = []
