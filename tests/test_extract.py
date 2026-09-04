@@ -311,3 +311,20 @@ def test_iterate_prompt_batches_preserves_order_and_batch_sizes() -> None:
     assert [len(batch) for batch in batches] == [2, 2, 1]
     assert [prompt for batch in batches for prompt in batch] == prompts
     assert all(isinstance(batch, list) for batch in batches)
+
+
+def test_extract_token_budget_preserves_order_and_shrinks_long_batches(
+    tiny_model_and_tokenizer: tuple[object, object],
+) -> None:
+    model, tokenizer = tiny_model_and_tokenizer
+    long_prompt = "word " * 64
+    prompts = ["short one", long_prompt, "tiny", "another short", long_prompt]
+    with_budget = extract_layer_hiddens(
+        model, tokenizer, prompts, layers=[0, 1], token_budget=24
+    )
+    without_budget = extract_layer_hiddens(
+        model, tokenizer, prompts, layers=[0, 1], token_budget=None
+    )
+    for layer in (0, 1):
+        torch.testing.assert_close(with_budget[layer], without_budget[layer])
+        assert with_budget[layer].shape[0] == len(prompts)

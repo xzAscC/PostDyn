@@ -158,11 +158,18 @@ def extract_layer_hiddens(
     batch_size: int = 8,
     max_length: int = 2048,
     chat_template: bool = False,
+    token_budget: int | None = None,
 ) -> dict[int, torch.Tensor]:
     """Extract final non-pad token states for the requested hidden layers.
 
     Hidden-state index ``0`` is the embedding output; transformer layer ``L``
     therefore uses ``outputs.hidden_states[L]`` under this contract.
+
+    When ``token_budget`` is set, prompts are grouped length-aware so each
+    forward's padded ``rows x max_length`` stays within the budget: prompts
+    are sorted by token length (descending) and batches shrink automatically
+    for long sequences. Results are always returned in the original prompt
+    order regardless of batching.
     """
     layer_list = list(layers)
     if not layer_list:
@@ -194,14 +201,48 @@ def extract_layer_hiddens(
         if eos_token is not None:
             tokenizer.pad_token = eos_token
 
-    per_layer: dict[int, list[torch.Tensor]] = {layer: [] for layer in layer_list}
+    per_layer: dict[int, dict[int, torch.Tensor]] = {layer: {} for layer in layer_list}
     device = _model_device(model)
+
+    if token_budget is not None and token_budget <= 0:
+        raise ValueError(f"token_budget must be positive, got {token_budget}")
+
+    prepared_prompts = [
+        _prepare_prompt(tokenizer, prompt, chat_template) for prompt in prompt_list
+    ]
+    if token_budget is None:
+        batch_groups: list[list[int]] = [
+            list(range(start, min(start + batch_size, len(prompt_list))))
+            for start in range(0, len(prompt_list), batch_size)
+        ]
+    else:
+        lengths = []
+        for text in prepared_prompts:
+            encoded = tokenizer(text, truncation=True, max_length=max_length)
+            ids = cast("Sequence[int]", encoded["input_ids"])
+            lengths.append(len(ids))
+        order = sorted(range(len(prompt_list)), key=lambda i: -lengths[i])
+        batch_groups = []
+        current: list[int] = []
+        current_max = 0
+        for index in order:
+            candidate_max = max(current_max, lengths[index])
+            if current and (
+                len(current) >= batch_size
+                or (len(current) + 1) * candidate_max > token_budget
+            ):
+                batch_groups.append(current)
+                current = []
+                current_max = 0
+                candidate_max = lengths[index]
+            current.append(index)
+            current_max = candidate_max
+        if current:
+            batch_groups.append(current)
+
     try:
-        for prompt_batch in iterate_prompt_batches(prompt_list, batch_size):
-            tokenized_prompts = [
-                _prepare_prompt(tokenizer, prompt, chat_template)
-                for prompt in prompt_batch
-            ]
+        for group in batch_groups:
+            tokenized_prompts = [prepared_prompts[index] for index in group]
             inputs = tokenizer(
                 tokenized_prompts,
                 return_tensors="pt",
@@ -257,11 +298,18 @@ def extract_layer_hiddens(
                 )
                 indices = last_indices.to(device=hidden.device)
                 final_tokens = hidden[batch_indices, indices, :]
-                per_layer[layer].append(final_tokens.detach().cpu().float())
+                rows = final_tokens.detach().cpu().float()
+                for row_position, prompt_index in enumerate(group):
+                    per_layer[layer][prompt_index] = rows[row_position]
     finally:
         tokenizer.padding_side = previous_padding_side
 
-    return {layer: torch.cat(per_layer[layer], dim=0) for layer in layer_list}
+    return {
+        layer: torch.stack(
+            [per_layer[layer][index] for index in range(len(prompt_list))], dim=0
+        )
+        for layer in layer_list
+    }
 
 
 __all__ = [

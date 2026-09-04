@@ -130,6 +130,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--domains", "--limit-domains", dest="domains", default=None)
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--token-budget", type=int, default=8192)
     parser.add_argument("--max-length", type=int, default=2048)
     parser.add_argument("--limit", type=int, default=None)
     return parser.parse_args(argv)
@@ -336,8 +337,36 @@ def run(args: argparse.Namespace) -> int:
         for checkpoint in checkpoints:
             model, tokenizer = _checkpoint_model(args, checkpoint)
             try:
-                for layer in layers:
-                    for domain in domains:
+                for domain in domains:
+                    missing = [
+                        layer
+                        for layer in layers
+                        if (checkpoint.name, layer, domain) not in completed
+                        or not _base_path(run_dir, checkpoint.name, layer, domain)
+                        .with_suffix(".json")
+                        .is_file()
+                    ]
+                    hidden = {}
+                    if missing:
+                        # One forward pass per (checkpoint, domain) covers all
+                        # layers; token-budget batching bounds the transient
+                        # hidden-state tensor inside the VRAM budget.
+                        started = time.monotonic()
+                        hidden = extract_layer_hiddens(
+                            model,
+                            tokenizer,
+                            [r.prompt for r in pools[domain].records[:n]],
+                            layers,
+                            args.batch_size,
+                            args.max_length,
+                            token_budget=args.token_budget,
+                        )
+                        print(
+                            f"checkpoint={checkpoint.name} domain={domain} "
+                            f"extracted {len(layers)} layers "
+                            f"in {time.monotonic() - started:.2f}s"
+                        )
+                    for layer in layers:
                         unit = (checkpoint.name, layer, domain)
                         if (
                             unit in completed
@@ -347,17 +376,8 @@ def run(args: argparse.Namespace) -> int:
                         ):
                             print(f"[skip] {unit}")
                             continue
-                        started = time.monotonic()
-                        hidden = extract_layer_hiddens(
-                            model,
-                            tokenizer,
-                            [r.prompt for r in pools[domain].records[:n]],
-                            [layer],
-                            args.batch_size,
-                            args.max_length,
-                        )[layer]
                         covariance = OnlineCovariance()
-                        covariance.update(hidden)
+                        covariance.update(hidden[layer])
                         values, vectors = eigensystem(covariance.covariance)
                         save_eigensystem(
                             _base_path(run_dir, checkpoint.name, layer, domain),
@@ -375,7 +395,8 @@ def run(args: argparse.Namespace) -> int:
                         append_jsonl(run_dir.path("metrics.jsonl"), row)
                         completed.add(unit)
                         print(
-                            f"checkpoint={checkpoint.name} layer={layer} domain={domain} elapsed={time.monotonic() - started:.2f}s"
+                            f"checkpoint={checkpoint.name} layer={layer} domain={domain}"
+                            f" effective_rank={row['effective_rank']:.1f} saved"
                         )
             finally:
                 if args.scale != "tiny":
