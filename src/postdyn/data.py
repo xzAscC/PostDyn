@@ -196,10 +196,17 @@ def materialize_pools(
     import itertools
 
     mapping = load_mapping(mapping_path)
-    allowed = {domain: frozenset(sources) for domain, sources in mapping.items()}
-    source_to_domain = {
-        source: domain for domain, sources in mapping.items() for source in sources
-    }
+    source_to_domain: dict[str, str] = {}
+    for domain, sources in mapping.items():
+        for source in sources:
+            if source in source_to_domain:
+                raise ValueError(
+                    f"source {source!r} mapped to multiple domains: "
+                    f"{source_to_domain[source]!r} and {domain!r}"
+                )
+            source_to_domain[source] = domain
+    if n <= 0:
+        raise ValueError(f"n must be positive, got {n}")
     path = Path(snapshot_dir) if snapshot_dir is not None else _default_snapshot()
     revision = path.parent.name if path.parent.name != "snapshots" else "unknown"
     domains = ("math", "code", "instruction_following", "general_reasoning")

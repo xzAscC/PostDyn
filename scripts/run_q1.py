@@ -275,7 +275,7 @@ def _write_analysis(
         "layers": layers,
         "domains": domains,
     }
-    base = checkpoints[0]
+    base = next((c for c in checkpoints if c.stage == "base"), checkpoints[0])
     for checkpoint in checkpoints:
         item: dict[str, Any] = {}
         stage_final = next(
