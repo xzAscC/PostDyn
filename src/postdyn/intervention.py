@@ -114,17 +114,28 @@ def mean_hidden_norm(
             )
             if device is not None:
                 encoded = {key: value.to(device) for key, value in encoded.items()}
+            if "attention_mask" in encoded:
+                mask = encoded["attention_mask"]
+                encoded["position_ids"] = (
+                    mask.to(dtype=torch.long).cumsum(dim=1) - 1
+                ).masked_fill(mask == 0, 0)
             with torch.no_grad():
-                result = model(**encoded, output_hidden_states=True)
+                try:
+                    result = model(**encoded, output_hidden_states=True)
+                except TypeError:
+                    encoded.pop("position_ids", None)
+                    result = model(**encoded, output_hidden_states=True)
             hidden = result.hidden_states[layer + 1]
             mask = encoded.get("attention_mask")
-            positions = (
-                mask.sum(dim=1) - 1
-                if mask is not None
-                else torch.full(
+            if mask is not None:
+                positions = torch.arange(mask.shape[1], device=mask.device).unsqueeze(0)
+                positions = torch.where(mask.to(dtype=torch.bool), positions, -1).amax(
+                    dim=1
+                )
+            else:
+                positions = torch.full(
                     (hidden.shape[0],), hidden.shape[1] - 1, device=hidden.device
                 )
-            )
             values.append(
                 hidden[torch.arange(hidden.shape[0], device=hidden.device), positions]
                 .norm(dim=-1)

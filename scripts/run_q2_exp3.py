@@ -106,6 +106,9 @@ def run(args: argparse.Namespace) -> None:
                                     "accuracy": scores[-1]["accuracy"],
                                 },
                             )
+            expected = len(cfg.layers) * len(ALPHAS)
+            if len(scores) < expected:
+                scores = common.validation_scores(validation_path, domain, {"sft_low"})
             selected[domain] = exp1.select_best(scores)
             choice = selected[domain]
             for condition in CONDITIONS:

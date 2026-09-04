@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 import torch
@@ -50,11 +53,67 @@ def test_exp2_sentence_final_states_use_offsets() -> None:
             assert kwargs["return_offsets_mapping"] is True
             return {"offset_mapping": [[(0, 3), (3, 4), (5, 8), (8, 9)]]}
 
-    captured = torch.arange(4 * 3, dtype=torch.float32).reshape(1, 4, 3)
+    captured = torch.arange(6 * 3, dtype=torch.float32).reshape(1, 6, 3)
     states = exp2.sentence_final_states(
-        Tokenizer(), [10, 11, 12, 13], "One. Two!", {2: captured}
+        Tokenizer(), [10, 11, 12, 13], "One. Two!", {2: captured}, prompt_token_len=2
     )
-    torch.testing.assert_close(states, captured[0, [1, 3]])
+    torch.testing.assert_close(states, captured[0, [3, 5]])
+
+
+def test_exp1_resume_with_completed_validation_preserves_selection(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "exp1"
+    command = [
+        sys.executable,
+        str(ROOT / "scripts" / "run_q2_exp1.py"),
+        "--family",
+        "7b",
+        "--scale",
+        "tiny",
+        "--q1-root",
+        str(tmp_path / "q1"),
+        "--domains",
+        "math",
+        "--limit",
+        "1",
+        "--output",
+        str(output),
+    ]
+    env = {**os.environ, "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
+    subprocess.run(command, check=True, capture_output=True, text=True, env=env)
+    selected = (output / "selected.json").read_bytes()
+    second = subprocess.run(command, capture_output=True, text=True, env=env)
+    assert second.returncode == 0, second.stderr
+    assert (output / "selected.json").read_bytes() == selected
+
+
+def test_exp3_resume_with_completed_validation_preserves_selection(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "exp3"
+    command = [
+        sys.executable,
+        str(ROOT / "scripts" / "run_q2_exp3.py"),
+        "--family",
+        "7b",
+        "--scale",
+        "tiny",
+        "--q1-root",
+        str(tmp_path / "q1"),
+        "--domains",
+        "math",
+        "--limit",
+        "1",
+        "--output",
+        str(output),
+    ]
+    env = {**os.environ, "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
+    subprocess.run(command, check=True, capture_output=True, text=True, env=env)
+    selected = (output / "selected.json").read_bytes()
+    second = subprocess.run(command, capture_output=True, text=True, env=env)
+    assert second.returncode == 0, second.stderr
+    assert (output / "selected.json").read_bytes() == selected
 
 
 def test_exp2_covariance_uses_float64_and_t_minus_one_cap() -> None:

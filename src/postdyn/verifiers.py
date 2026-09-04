@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
+
+try:
+    import resource
+except ImportError:
+    resource: Any = None
 
 logger = logging.getLogger(__name__)
 
@@ -64,20 +71,95 @@ def _code(generation: str, reference: dict[str, Any]) -> bool:
         for case in cases:
             stdin = case.get("stdin", "") if isinstance(case, dict) else ""
             expected = case.get("stdout", "") if isinstance(case, dict) else ""
+            process: subprocess.Popen[bytes] | None = None
+            stdout_thread: threading.Thread | None = None
+            stderr_thread: threading.Thread | None = None
             try:
-                result = subprocess.run(
+                process = subprocess.Popen(
                     [sys.executable, "-I", str(script)],
-                    input=stdin,
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     cwd=directory,
+                    start_new_session=True,
+                    preexec_fn=_resource_limits,
                 )
-            except (subprocess.TimeoutExpired, OSError):
+                stdout_chunks: list[bytes] = []
+                stderr_chunks: list[bytes] = []
+                stdout_thread = threading.Thread(
+                    target=_read_capped,
+                    args=(process.stdout, stdout_chunks),
+                    daemon=True,
+                )
+                stderr_thread = threading.Thread(
+                    target=_read_capped,
+                    args=(process.stderr, stderr_chunks),
+                    daemon=True,
+                )
+                stdout_thread.start()
+                stderr_thread.start()
+                if process.stdin is not None:
+                    process.stdin.write(stdin.encode())
+                    process.stdin.close()
+                process.wait(timeout=5)
+                stdout_thread.join()
+                stderr_thread.join()
+            except subprocess.TimeoutExpired:
+                if process is not None:
+                    _kill_process_group(process.pid)
+                    process.wait()
+                    if stdout_thread is not None:
+                        stdout_thread.join()
+                    if stderr_thread is not None:
+                        stderr_thread.join()
                 return False
-            if result.returncode != 0 or result.stdout.strip() != str(expected).strip():
+            except OSError:
+                return False
+            stdout_text = b"".join(stdout_chunks).decode(errors="replace")
+            if (
+                process is None
+                or process.returncode != 0
+                or stdout_text.strip() != str(expected).strip()
+            ):
                 return False
     return True
+
+
+def _read_capped(stream: Any, chunks: list[bytes], cap: int = 1_048_576) -> None:
+    captured = 0
+    while True:
+        chunk = stream.read(65_536)
+        if not chunk:
+            return
+        if captured < cap:
+            kept = chunk[: cap - captured]
+            chunks.append(kept)
+            captured += len(kept)
+
+
+def _resource_limits() -> None:
+    if resource is None:
+        return
+    limits = (
+        (resource.RLIMIT_CPU, (5, 5)),
+        (resource.RLIMIT_AS, (1 * 1024**3, 1 * 1024**3)),
+        (resource.RLIMIT_NPROC, (64, 64)),
+        (resource.RLIMIT_FSIZE, (8 * 1024**2, 8 * 1024**2)),
+    )
+    for kind, value in limits:
+        try:
+            resource.setrlimit(kind, value)
+        except (OSError, ValueError):
+            continue
+
+
+def _kill_process_group(pid: int | None) -> None:
+    if pid is None or os.name != "posix":
+        return
+    try:
+        os.killpg(pid, 9)
+    except (ProcessLookupError, PermissionError, OSError):
+        return
 
 
 def _first_option(text: str) -> str | None:

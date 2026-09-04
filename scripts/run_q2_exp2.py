@@ -27,7 +27,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def sentence_final_states(
-    tokenizer: Any, token_ids: list[int], text: str, captured: dict[int, torch.Tensor]
+    tokenizer: Any,
+    token_ids: list[int],
+    text: str,
+    captured: dict[int, torch.Tensor],
+    prompt_token_len: int = 0,
 ) -> torch.Tensor:
     del token_ids
     encoded = tokenizer(text, return_offsets_mapping=True, add_special_tokens=False)
@@ -59,9 +63,13 @@ def sentence_final_states(
         return torch.empty((0, 0), dtype=torch.float32)
     state = next(iter(captured.values()))
     state = state[0] if state.ndim == 3 else state
-    if state.shape[0] > len(offsets):
-        state = state[-len(offsets) :]
-    return state[torch.tensor(indices, dtype=torch.long)] if indices else state[:0]
+    if not indices:
+        return state[:0]
+    offset = prompt_token_len if state.shape[0] > len(offsets) else 0
+    positions = torch.tensor([offset + index for index in indices], dtype=torch.long)
+    if int(positions.max()) >= state.shape[0]:
+        raise ValueError("captured states do not cover generated sentence-final tokens")
+    return state[positions]
 
 
 def solution_eigensystem(states: torch.Tensor, K: int):
@@ -148,7 +156,11 @@ def run(args: argparse.Namespace) -> None:
                 if item.id in done:
                     continue
                 states = sentence_final_states(
-                    tokenizer, [], generation.text, generation.captured or {}
+                    tokenizer,
+                    [],
+                    generation.text,
+                    generation.captured or {},
+                    generation.prompt_token_len,
                 )
                 vals, vectors, k = solution_eigensystem(states, k)
                 row = {

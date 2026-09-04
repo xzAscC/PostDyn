@@ -61,3 +61,26 @@ def test_real_tiny_gpt2_ablation_hook_is_cleanly_removable() -> None:
         manual = model(**inputs, output_hidden_states=True).hidden_states[1][0, -1]
     assert isinstance(measured, float)
     assert measured == pytest.approx(torch.linalg.vector_norm(manual).item())
+
+
+def test_mean_hidden_norm_uses_final_tokens_with_left_padding() -> None:
+    transformers = pytest.importorskip("transformers")
+    try:
+        model = transformers.AutoModelForCausalLM.from_pretrained(
+            "sshleifer/tiny-gpt2", local_files_only=True
+        )
+        tokenizer = transformers.AutoTokenizer.from_pretrained(
+            "sshleifer/tiny-gpt2", local_files_only=True
+        )
+    except (OSError, RuntimeError) as exc:
+        pytest.skip(f"tiny-gpt2 is not cached: {exc}")
+    model.eval()
+    prompts = ["short", "a much longer prompt for padding"]
+    measured = mean_hidden_norm(model, tokenizer, prompts, 0, batch_size=2)
+    with torch.no_grad():
+        manual = []
+        for prompt in prompts:
+            encoded = tokenizer(prompt, return_tensors="pt")
+            hidden = model(**encoded, output_hidden_states=True).hidden_states[1]
+            manual.append(hidden[0, -1].norm())
+    assert measured == pytest.approx(torch.stack(manual).mean().item())

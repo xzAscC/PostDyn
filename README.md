@@ -64,31 +64,30 @@ All Q1/Q2 runs use the same 22-checkpoint post-training schedule:
 
 ## Quickstart
 
-First enumerate and materialize the prompt pools:
+Prepare the prompt pools and run the CPU test suite:
 
 ```bash
 uv run python scripts/enumerate_domain_sources.py
 uv run python - <<'PY'
+import sys
+sys.path.insert(0, "src")
 from postdyn.data import materialize_pools
 
-materialize_pools("configs/domain_sources.json", "data/domain_prompts")
+materialize_pools("configs/domain_sources.json", "data/domain_prompts", n=15360)
 PY
+uv run pytest
 ```
 
-Run Q1 on the 7B GPU queue or the 32B H100 in bf16:
+Run a tiny CPU Q1 smoke test:
 
 ```bash
-uv run python scripts/run_q1.py --model olmo3-7b-think --device cuda
-uv run python scripts/run_q1.py --model olmo3-32b-think --device cuda --dtype bfloat16
+uv run python scripts/run_q1.py --family 7b --scale tiny --device cpu \
+    --output /tmp/postdyn-q1-tiny
 ```
 
-Run the Q2 ablations:
-
-```bash
-uv run python scripts/run_q2_exp1.py --model olmo3-7b-think --device cuda
-uv run python scripts/run_q2_exp2.py --model olmo3-32b-think --device cuda --dtype bfloat16
-uv run python scripts/run_q2_exp3.py --model olmo3-32b-think --device cuda --dtype bfloat16
-```
+For queued 7B GPU smoke/overnight runs and the 32B H100 command, see
+[`scripts/README.md`](scripts/README.md), which documents the required
+`--family`, `--scale`, and `--q1-root` arguments.
 
 ## Benchmarks
 

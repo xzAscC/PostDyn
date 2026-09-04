@@ -26,6 +26,7 @@ class Generation:
     item_id: str
     text: str
     captured: dict[int, torch.Tensor] | None = None
+    prompt_token_len: int = 0
 
 
 def apply_chat_template(tokenizer: Any, prompt: str) -> str:
@@ -108,6 +109,20 @@ def _load_livecodebench() -> list[BenchItem]:
     ]
 
 
+def _ensure_device(inputs: dict[str, Any], device: torch.device) -> dict[str, Any]:
+    return {
+        key: value.to(device) if torch.is_tensor(value) else value
+        for key, value in inputs.items()
+    }
+
+
+def _model_device(model: Any) -> torch.device:
+    try:
+        return next(model.parameters()).device
+    except (AttributeError, StopIteration):
+        return torch.device("cpu")
+
+
 def load_benchmark(
     name: str, n_val: int = 30, seed: int = 42
 ) -> tuple[list[BenchItem], list[BenchItem]]:
@@ -135,11 +150,9 @@ def generate(
     greedy: bool = True,
     max_new_tokens: int = 2048,
     batch_size: int = 8,
-    hooks: Any = None,
     capture_layers: list[int] | None = None,
 ) -> list[Generation]:
     """Generate in fixed-size batches and optionally capture full-sequence hiddens."""
-    del hooks
     old_padding = getattr(tokenizer, "padding_side", None)
     old_pad_token = getattr(tokenizer, "pad_token", None)
     tokenizer.padding_side = "left"
@@ -159,6 +172,7 @@ def generate(
             encoded = tokenizer(
                 prompts, return_tensors="pt", padding=True, truncation=True
             )
+            encoded = _ensure_device(encoded, _model_device(model))
             kwargs: dict[str, Any] = {
                 "do_sample": not greedy,
                 "num_return_sequences": 1,
@@ -203,7 +217,7 @@ def generate(
                     for row in range(len(batch))
                 ]
             output.extend(
-                Generation(item.id, text, capture)
+                Generation(item.id, text, capture, input_width)
                 for item, text, capture in zip(batch, texts, captures)
             )
     finally:

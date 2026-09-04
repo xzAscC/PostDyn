@@ -92,6 +92,33 @@ def completed_item_keys(path: Path) -> set[tuple[Any, ...]]:
     return result
 
 
+def validation_scores(
+    path: Path, domain: str, conditions: set[str] | None = None
+) -> list[dict[str, Any]]:
+    grouped: dict[tuple[Any, ...], list[bool]] = {}
+    if not path.is_file():
+        return []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        if row.get("domain") != domain or (
+            conditions is not None and row.get("condition") not in conditions
+        ):
+            continue
+        key = (row["layer"], row["alpha"], row["condition"])
+        grouped.setdefault(key, []).append(bool(row["correct"]))
+    return [
+        {
+            "layer": key[0],
+            "alpha": key[1],
+            "condition": key[2],
+            "accuracy": sum(values) / len(values),
+        }
+        for key, values in grouped.items()
+    ]
+
+
 def require_bases(
     root: Path, domain: str, layers: tuple[int, ...], stage: str
 ) -> dict[int, tuple[torch.Tensor, torch.Tensor]]:
