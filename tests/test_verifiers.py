@@ -225,8 +225,8 @@ IFEVAL_CASES = [
     ),
     (
         "detectable_format:multiple_sections",
-        {"num_sections": 2, "section_spliter": "---"},
-        "SECTION 1\n---\nSECTION 2\n---\nSECTION 3",
+        {"num_sections": 2, "section_spliter": "SECTION"},
+        "SECTION 1\nSECTION 2\nSECTION 3",
     ),
     ("detectable_format:json_format", {}, '{"answer": 1}'),
     ("detectable_format:title", {}, "<<A title>>\nAnswer"),

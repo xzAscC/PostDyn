@@ -357,7 +357,7 @@ def _number_words(kwargs: dict[str, Any], response: str) -> bool:
 def _number_paragraphs(kwargs: dict[str, Any], response: str) -> bool:
     paragraphs = [paragraph for paragraph in response.split("***") if paragraph.strip()]
     target = int(kwargs["num_paragraphs"])
-    relation = kwargs.get("relation", "exact")
+    relation = kwargs.get("relation") or "exact"
     if relation == "at least":
         return len(paragraphs) >= target
     return relation == "exact" and len(paragraphs) == target
