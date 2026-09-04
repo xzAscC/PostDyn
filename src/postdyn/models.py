@@ -114,7 +114,7 @@ def load_model(
 
     kwargs: dict[str, Any] = {
         "revision": checkpoint.revision,
-        "torch_dtype": _DTYPES[dtype],
+        "dtype": _DTYPES[dtype],
         "device_map": {"": device},
         "attn_implementation": "sdpa",
     }
