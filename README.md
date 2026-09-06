@@ -2,8 +2,7 @@
 
 PostDyn studies post-training dynamics specified by the project slides:
 
-- **Q1:** domain-covariance spectra across OLMo-3 7B and 32B Think post-training
-  trajectories.
+- **Q1:** domain-covariance spectra across OLMo-3 7B and 32B Think post-training trajectories.
 - **Q2:** variance-direction ablations and their downstream effects.
 
 ## Setup

@@ -157,7 +157,10 @@ def test_q1_resume_identity_rejects_same_names_from_different_sft_schedule(
 
     assert q1.main(args) == 0
     changed = args + ["--sft-lr", "5e-5"]
-    with pytest.raises(SystemExit, match="checkpoints.*sft_lr"):
+    # Tiny scale selects only the four finals (revision "main" for every
+ # sft_lr), so the checkpoint pairs match and sft_lr alone carries the
+ # branch identity.
+    with pytest.raises(SystemExit, match="sft_lr"):
         q1.main(changed)
 
 

@@ -243,7 +243,7 @@ IFEVAL_CASES = [
         {"capital_frequency": 2, "capital_relation": "at least"},
         "NASA API",
     ),
-    ("change_case:english_capital", {}, "ALL CAPITAL"),
+    ("change_case:english_capital", {}, "THIS ENTIRE RESPONSE IS WRITTEN IN CAPITAL LETTERS AND IS CLEARLY ENGLISH PROSE"),
     ("change_case:english_lowercase", {}, "all lowercase"),
     ("punctuation:no_comma", {}, "No commas"),
 ]
@@ -276,7 +276,7 @@ def test_ifeval_official_registry_false_case(
         "detectable_content:number_placeholders": "Use [one].",
         "detectable_content:postscript": "Answer only.",
         "detectable_format:number_bullet_lists": "* one\n* two\n* three",
-        "detectable_format:constrained_response": "My answer is yes. My answer is no.",
+        "detectable_format:constrained_response": "I refuse to choose one of the options.",
         "detectable_format:number_highlighted_sections": "*one*",
         "detectable_format:multiple_sections": "SECTION 1",
         "detectable_format:json_format": "not json",
