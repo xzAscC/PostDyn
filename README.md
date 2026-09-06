@@ -1,117 +1,100 @@
 # PostDyn
 
-**Post-training dynamics** analysis for open-source LLMs.
+PostDyn studies post-training dynamics specified by the project slides:
 
-Tools and experiments for studying how models evolve under post-training (SFT,
-RL-Zero, DPO, etc.) — including effective-rank structure and concept-direction
-trajectories along training checkpoints.
-
-Python package name: `postdyn` (see `pyproject.toml`). Requires Python ≥ 3.13.
+- **Q1:** domain-covariance spectra across OLMo-3 7B and 32B Think post-training trajectories.
+- **Q2:** variance-direction ablations and their downstream effects.
 
 ## Setup
 
 ```bash
 uv sync --group dev
-```
-
-## Concept dynamics (Olmo-3-7B)
-
-Trace DiM concept directions across **59 checkpoints × 10 layers × 7 models**,
-using four **aligned paired** steering concepts:
-
-| Concept key | Source | Direction |
-|-------------|--------|-----------|
-| `python_vs_cpp` | HumanEval-X | Python − C++ |
-| `concise_math_reasoning_vs_verbose_math_reasoning` | MATH-500 | Concise − Verbose |
-| `french_vs_english_language` | FLORES+ | French − English |
-| `female_vs_male_gender` | WinoGender | Female − Male |
-
-Details: [`docs/concept_dynamics_experiment.md`](docs/concept_dynamics_experiment.md).
-
-### Preflight / data prep
-
-```bash
-# Validate 50 aligned HumanEval-X canonical pairs (sandbox + JSONL report)
-uv run python experiments/validate_humaneval_x.py
-
-# Prepare 50 verified MATH-500 concise/verbose pairs (math-verify gate)
-uv run python experiments/prepare_math_pairs.py
-```
-
-FLORES+ is gated on Hugging Face: accept terms for
-`openlanguagedata/flores_plus`, then `uv run hf auth login` or set `HF_TOKEN`.
-
-### Run extraction + dynamics
-
-```bash
-# Full run (default output: results/concept_dynamics_paired)
-experiments/run_concept_dynamics.sh full
-
-# Quick smoke test → results/concept_dynamics_paired_quick
-experiments/run_concept_dynamics.sh quick
-
-# Skip gated FLORES+ while access is pending
-uv run python experiments/run_concept_dynamics.py \
-  --concepts python_vs_cpp,concise_math_reasoning_vs_verbose_math_reasoning,female_vs_male_gender
-```
-
-Optional controls / pipelines:
-
-```bash
-# Gender surface-pronoun control vs full WinoGender direction
-uv run python experiments/analyze_gender_surface_control.py \
-  --model olmo3-rl-zero-math --checkpoint step_1900
-
-# Prefetch-overlapped FLORES+ extraction
-uv run python experiments/run_flores_pipeline.py
-```
-
-## Effective-rank pipelines
-
-```bash
-# Validate configs (no downloads)
-uv run python main.py --dry-run
-
-# Weight / activation rank analyses (see --analysis choices)
-uv run python main.py --analysis all
+uv run pytest
 ```
 
 ## Layout
 
-```
+```text
 PostDyn/
-├── main.py                 # effective-rank CLI
-├── src/
-│   ├── concept_dynamics.py # DiM extraction + stability / Gram analysis
-│   ├── contrastive_datasets.py
-│   ├── humaneval_x_validator.py
-│   ├── math_pairs.py
-│   ├── gender_surface_analysis.py
-│   └── ...                 # rank / activation / steering modules
-├── experiments/
-│   ├── run_concept_dynamics.{py,sh}
-│   ├── validate_humaneval_x.py
-│   ├── prepare_math_pairs.py
-│   ├── analyze_gender_surface_control.py
-│   └── run_flores_pipeline.py
-├── docs/                   # design, methodology, experiment notes
+├── src/postdyn/
+│   ├── config.py          # experiment and schedule contracts
+│   ├── data.py            # domain prompt loading and materialization
+│   ├── extract.py         # hidden-state extraction
+│   ├── spectra.py         # covariance and eigenspectrum analysis
+│   ├── models.py          # model and checkpoint access
+│   ├── persistence.py     # checkpointed result storage
+│   ├── intervention.py    # variance-direction ablations
+│   ├── bench.py           # downstream benchmark runners
+│   └── verifiers.py       # integrity and output checks
+├── scripts/
+│   ├── enumerate_domain_sources.py # enumerate source datasets
+│   ├── run_q1.py                  # Q1 spectrum pipeline
+│   ├── run_q1_robustness.py       # Q1 robustness checks
+│   ├── run_q2_exp1.py             # Q2 experiment 1
+│   ├── run_q2_exp2.py             # Q2 experiment 2
+│   └── run_q2_exp3.py             # Q2 experiment 3
+├── configs/domain_sources.json
 ├── tests/
-├── notebook/
-├── data/                   # local pair artifacts (e.g. MATH-500 JSONL)
-└── results/                # generated outputs (gitignored)
+└── data/domain_prompts/           # materialized local prompt pools
 ```
 
-## Tests
+## Domain mapping
+
+| Domain | Source role |
+|---|---|
+| Math | filtered mathematical reasoning post-training sources |
+| Code | Python and tool-free coding post-training sources |
+| Instruction following | verified instruction-following post-training sources |
+| General reasoning | science and general reasoning post-training sources |
+
+The source mapping is maintained in `configs/domain_sources.json`.
+
+## Checkpoint schedule
+
+All Q1/Q2 runs use the same 22-checkpoint post-training schedule:
+
+| Stage | Checkpoints | Count |
+|---|---|---:|
+| Base | `main` | 1 |
+| SFT | 9 uniformly selected revisions + `main` | 10 |
+| DPO | `main` | 1 |
+| RLVR | 9 uniformly selected revisions + `main` | 10 |
+| **Total** | | **22** |
+
+## Quickstart
+
+Prepare the prompt pools and run the CPU test suite:
 
 ```bash
+uv run python scripts/enumerate_domain_sources.py
+uv run python - <<'PY'
+import sys
+sys.path.insert(0, "src")
+from postdyn.data import materialize_pools
+
+materialize_pools("configs/domain_sources.json", "data/domain_prompts", n=15360)
+PY
 uv run pytest
 ```
 
-## Docs
+Run a tiny CPU Q1 smoke test:
 
-| Doc | Topic |
-|-----|--------|
-| [`docs/concept_dynamics_experiment.md`](docs/concept_dynamics_experiment.md) | Paired-concept trajectory experiment |
-| [`docs/humaneval_x_validation.md`](docs/humaneval_x_validation.md) | HumanEval-X sandbox preflight |
-| [`docs/design.md`](docs/design.md) | Project design |
-| [`docs/methodology.md`](docs/methodology.md) | Effective-rank methodology |
+```bash
+uv run python scripts/run_q1.py --family 7b --scale tiny --device cpu \
+    --output /tmp/postdyn-q1-tiny
+```
+
+For queued 7B GPU smoke/overnight runs and the 32B H100 command, see
+[`scripts/README.md`](scripts/README.md), which documents the required
+`--family`, `--scale`, and `--q1-root` arguments.
+
+## Benchmarks
+
+| Benchmark | Purpose |
+|---|---|
+| MATH-500 | mathematical reasoning |
+| LiveCodeBench | coding ability |
+| IFEval | instruction following |
+| MMLU-Pro | broad academic reasoning |
+
+Benchmark outputs are validated before being used in Q1/Q2 comparisons.

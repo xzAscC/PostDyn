@@ -1,0 +1,7 @@
+{
+  "math": ["saumyamalik/OpenThoughts3-full-filtered-math-decontam-v2"],
+  "code": ["saumyamalik/correct-python-sft-187k-x16-thoughts-filtered-decontam-v2", "allenai/nemotron-post-training-dataset-subset-ngram-filtered-no-tool-calls", "saumyamalik/OpenThoughts3-full-filtered-code-subsampled-decontam-v2"],
+  "instruction_following": ["allenai/persona-precise-if-r1-final-content-filtered-chinese-filtered", "saumyamalik/if_qwq_reasoning_verified_filtered_decontam_v2"],
+  "general_reasoning": ["saumyamalik/OpenThoughts3-full-filtered-science-decontam-v2"],
+  "_excluded": ["allenai/aya-100k-r1-format-filtered-keyword-filtered-filter-datecutoff-ngram-filtered", "allenai/tulu_v3.9_wildchat_100k_english-r1-final-content-filtered", "allenai/wildjailbreak-r1-v2-format-filtered-keyword-filtered-filter-datecutoff-final-content-filtered", "allenai/wildguardmix-r1-v2-all-filtered-ngram-filtered-chinese-filtered", "allenai/wildchat-r1-p2-repetition-filter", "allenai/coconot-r1-format-domain-filtered-keyword-filtered-filter-datecutoff-chinese-filtered", "allenai/oasst1-r1-format-filtered-keyword-filtered-filter-datecutoff-chinese-filtered", "allenai/tablegpt_r1-format-filtered-keyword-filtered-filter-datecutoff"]
+}
