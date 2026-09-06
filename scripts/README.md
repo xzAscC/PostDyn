@@ -42,7 +42,7 @@ gpu-queue add postdyn-q1-7b-smoke \
 # one-deep prefetch: the next checkpoint downloads while the current one
 # extracts (transient disk bound: two checkpoints; --prefetch none to
 # serialize).
-# -> robustness (R=5) -> Q2 exp1 -> exp2 -> exp3. Resumable per unit.
+# -> robustness (R=5) -> Q2 per-model orchestrator (run_q2_model.py: exp1 -> exp2 -> exp3 per single model load, once for rlvr and once for sft). Resumable per unit.
 REPEATS=5 gpu-queue add postdyn-7b-overnight bash scripts/run_7b_overnight.sh
 ```
 # GR pool: 6210 unique < n=3d — explicit deviation, see PR #7
@@ -122,3 +122,14 @@ uv run python scripts/upload_artifacts.py --prune-uploaded
 
 Uploads retry three times per file, record failures in `.upload_state.json`,
 and resume where they left off. The repo is created private on first use.
+
+## Remote H100 (self-contained)
+
+`scripts/run_7b_h100.sh` / `scripts/run_32b_h100.sh` run a full family from scratch on a
+remote H100: `uv sync`, local `HF_HOME` (`$PWD/hf_cache`, override with
+`POSTDYN_HF_HOME`), explicit Dolci snapshot download + pool materialization
+(skipped when the four pools exist), Q1 full -> Q1 robustness (`REPEATS`, default 5)
+-> Q2 orchestrator for both models. `--allow-short-pool` defaults ON for Q1
+(`ALLOW_SHORT_POOL=0` disables); `SFT_LR` (32B, default 1e-4) and
+`POSTDYN_UPLOAD_TO` pass through. `DRY_RUN=1` prints the pipeline without
+executing. No gpu-queue (local 4090 keeps run_7b_overnight.sh via gpu-queue).
