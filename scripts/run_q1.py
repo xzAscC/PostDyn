@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -255,6 +256,38 @@ def _eigensystem_complete(
     return all(
         base.with_suffix(suffix).is_file() for suffix in (".json", ".safetensors")
     )
+
+
+def _wait_for_inflight(
+    run: RunDir,
+    checkpoint: str,
+    domain: str,
+    layers: list[int],
+    completed: set[tuple[str, int, str]],
+    timeout_s: float,
+) -> list[int]:
+    """Wait for transfer-in-flight units (metrics done, files on the wire).
+
+    rsync delivers files via atomic rename, so presence means completeness.
+    Returns the layers still missing when the timeout expires; callers then
+    fall back to normal extraction for them.
+    """
+    deadline = time.monotonic() + timeout_s
+    while True:
+        awaited = [
+            layer
+            for layer in layers
+            if (checkpoint, layer, domain) in completed
+            and not _eigensystem_complete(run, checkpoint, layer, domain)
+        ]
+        if not awaited or time.monotonic() >= deadline:
+            return awaited
+        print(
+            f"[wait-transfer] {checkpoint}/{domain}: {len(awaited)} units "
+            "in flight; sleeping 30s",
+            flush=True,
+        )
+        time.sleep(30)
 
 
 def _write_analysis(
@@ -509,6 +542,26 @@ def run(args: argparse.Namespace) -> int:
                         )
                     ]
                     hidden = {}
+                    if (
+                        missing
+                        and os.environ.get("POSTDYN_WAIT_FOR_TRANSFER") == "1"
+                    ):
+                        _wait_for_inflight(
+                            run_dir,
+                            checkpoint.name,
+                            domain,
+                            layers,
+                            completed,
+                            float(os.environ.get("POSTDYN_WAIT_TIMEOUT", "21600")),
+                        )
+                        missing = [
+                            layer
+                            for layer in layers
+                            if (checkpoint.name, layer, domain) not in completed
+                            or not _eigensystem_complete(
+                                run_dir, checkpoint.name, layer, domain
+                            )
+                        ]
                     if missing:
                         # One forward pass per (checkpoint, domain) covers all
                         # layers; token-budget batching bounds the transient

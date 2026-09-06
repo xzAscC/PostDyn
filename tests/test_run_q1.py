@@ -577,3 +577,20 @@ def test_robustness_explicit_checkpoint_runs_single_without_ablation(
     assert (tmp_path / "7b" / "rlvr" / "math" / "summary.json").is_file()
     assert not (tmp_path / "7b" / "sft" / "math").exists()
     assert not (tmp_path / "7b" / "ablation.json").exists()
+
+
+def test_wait_for_inflight_units_sleeps_then_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = q1.RunDir(tmp_path)
+    (tmp_path / "eigensystems" / "ck" / "0").mkdir(parents=True)
+    sleeps: list[int] = []
+    monkeypatch.setattr(q1.time, "sleep", lambda s: sleeps.append(s))
+    unit = ("ck", 0, "math")
+    awaited = q1._wait_for_inflight(run, "ck", "math", [0], {unit}, timeout_s=5.0)
+    assert awaited == [0] and sleeps
+    (tmp_path / "eigensystems" / "ck" / "0" / "math.safetensors").write_bytes(b"x")
+    (tmp_path / "eigensystems" / "ck" / "0" / "math.json").write_text("{}")
+    sleeps.clear()
+    awaited = q1._wait_for_inflight(run, "ck", "math", [0], {unit}, timeout_s=5.0)
+    assert awaited == [] and not sleeps
