@@ -405,7 +405,6 @@ def test_exp3_has_exact_conditions_and_separate_basis_stages() -> None:
     assert exp3.SELECTION_CONDITION == "replace"
 
 
-
 def test_cli_rejects_invalid_family_and_alpha() -> None:
     exp1 = load_script("run_q2_exp1")
     with pytest.raises(SystemExit):
@@ -535,3 +534,49 @@ def test_exp3_grid_searches_layer_only_with_fixed_alpha() -> None:
         {"layer": 9, "alpha": 1.0, "accuracy": 0.8},
     ]
     assert exp3.select_layer(rows) == {"layer": 6, "alpha": 1.0}
+
+
+def test_exp1_identity_includes_sft_lr() -> None:
+    exp1 = load_script("run_q2_exp1")
+    args = exp1.parse_args(
+        [
+            "--family",
+            "32b",
+            "--scale",
+            "tiny",
+            "--q1-root",
+            "/tmp/q1",
+            "--sft-lr",
+            "5e-5",
+        ]
+    )
+    identity = exp1.identity_for(args)
+    assert identity["sft_lr"] == "5e-5"
+    assert identity["checkpoints"] == exp1.common.checkpoint_pairs(
+        "32b", (args.model,), "5e-5"
+    )
+
+
+def test_exp2_identity_includes_sft_lr(tmp_path: Path) -> None:
+    exp2 = load_script("run_q2_exp2")
+    selected_path = tmp_path / "selected.json"
+    selected_path.write_text(json.dumps({"math": {"layer": 0, "alpha": 1.0}}))
+    args = exp2.parse_args(
+        [
+            "--family",
+            "32b",
+            "--scale",
+            "tiny",
+            "--q1-root",
+            "/tmp/q1",
+            "--sft-lr",
+            "5e-5",
+        ]
+    )
+    identity = exp2.identity_for(
+        args, selected_path, {"math": {"layer": 0, "alpha": 1.0}}
+    )
+    assert identity["sft_lr"] == "5e-5"
+    assert identity["checkpoints"] == exp2.common.checkpoint_pairs(
+        "32b", (args.model,), "5e-5"
+    )

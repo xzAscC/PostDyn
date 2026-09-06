@@ -27,6 +27,8 @@ def select_layer(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Pick the best layer at the fixed alpha (ties prefer smaller layer)."""
     best = max(rows, key=lambda row: (row["accuracy"], -int(row["layer"])))
     return {"layer": int(best["layer"]), "alpha": ALPHA}
+
+
 SELECTION_CONDITION = "replace"
 
 
@@ -66,7 +68,7 @@ def identity_for(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def run(args: argparse.Namespace) -> None:
+def run_with(args: argparse.Namespace, load_runtime) -> None:
     cfg = common.family_config(args.family, args.scale)
     output = common.output_root(args, f"exp3_{args.model}")
     uploader = common.start_uploader(args, common.ROOT)
@@ -83,7 +85,7 @@ def run(args: argparse.Namespace) -> None:
             common.require_bases(args.q1_root, domain, cfg.layers, args.model)
             common.require_bases(args.q1_root, domain, cfg.layers, other)
     with tee_log(RunDir(output)):
-        model, tokenizer = common.load_runtime(args, args.model)
+        model, tokenizer = load_runtime()
         selected: dict[str, dict[str, Any]] = {}
         alignment: dict[str, dict[int, float]] = {}
         for domain in args.domains:
@@ -102,6 +104,22 @@ def run(args: argparse.Namespace) -> None:
             scores = []
             validation_path = output / "validation.jsonl"
             completed = common.completed_item_keys(validation_path)
+            persisted_correct: dict[tuple[Any, ...], dict[str, bool]] = {}
+            if validation_path.is_file():
+                for line in validation_path.read_text().splitlines():
+                    if not line.strip():
+                        continue
+                    row = json.loads(line)
+                    if row.get("domain") == domain and "correct" in row:
+                        config = (
+                            row["domain"],
+                            row["layer"],
+                            row["alpha"],
+                            row["condition"],
+                        )
+                        persisted_correct.setdefault(config, {})[row["item_id"]] = bool(
+                            row["correct"]
+                        )
             for layer in cfg.layers:
                 if all(
                     (domain, layer, ALPHA, SELECTION_CONDITION, item.id) in completed
@@ -120,13 +138,22 @@ def run(args: argparse.Namespace) -> None:
                     common.CAPS[benchmark][0],
                     SELECTION_CONDITION,
                     replacement=(u_own[layer], u_aligned[layer]),
+                    done_ids={
+                        key[4]
+                        for key in completed
+                        if key[:4] == (domain, layer, ALPHA, SELECTION_CONDITION)
+                    },
                 )
+                key = (domain, layer, ALPHA, SELECTION_CONDITION)
+                merged = {
+                    **persisted_correct.get(key, {}),
+                    **{row["item_id"]: bool(row["correct"]) for row in rows},
+                }
                 scores.append(
                     {
                         "layer": layer,
                         "alpha": ALPHA,
-                        "accuracy": sum(1 for x in rows if bool(x["correct"]))
-                        / max(1, len(rows)),
+                        "accuracy": sum(merged.values()) / max(1, len(merged)),
                     }
                 )
                 for row in rows:
@@ -163,6 +190,15 @@ def run(args: argparse.Namespace) -> None:
                     else None
                 )
                 basis = u_own[choice["layer"]] if condition == "own_only" else None
+                path = output / f"eval_{domain}_{condition}.jsonl"
+                done = (
+                    {
+                        json.loads(line)["item_id"]
+                        for line in path.read_text().splitlines()
+                    }
+                    if path.is_file()
+                    else set()
+                )
                 rows = exp1._evaluate(
                     model,
                     tokenizer,
@@ -175,15 +211,7 @@ def run(args: argparse.Namespace) -> None:
                     common.CAPS[benchmark][1],
                     condition,
                     replacement=replacement,
-                )
-                path = output / f"eval_{domain}_{condition}.jsonl"
-                done = (
-                    {
-                        json.loads(line)["item_id"]
-                        for line in path.read_text().splitlines()
-                    }
-                    if path.is_file()
-                    else set()
+                    done_ids=done,
                 )
                 for row in rows:
                     if row["item_id"] not in done:
@@ -201,6 +229,10 @@ def run(args: argparse.Namespace) -> None:
             output / "summary.json", {"selected": selected, "alignment": alignment}
         )
         common.finish_uploader(uploader, output)
+
+
+def run(args: argparse.Namespace) -> None:
+    run_with(args, lambda: common.load_runtime(args, args.model))
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="rlvr",
         help="checkpoint to intervene on (covariance bases match it)",
     )
+    parser.add_argument("--sft-lr", choices=("1e-4", "5e-5"), default="1e-4")
     return parser.parse_args(argv)
 
 
@@ -72,33 +73,44 @@ def _evaluate(
     max_new_tokens: int,
     condition: str,
     replacement: tuple[torch.Tensor, torch.Tensor] | None = None,
+    done_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     from postdyn import bench
     from postdyn.intervention import register_replacement_hook
 
-    if replacement is not None:
-        handle: Any = register_replacement_hook(
-            model, layer, replacement[0], replacement[1], alpha
-        )
-    else:
-        handle = (
-            register_ablation_hook(model, layer, basis, alpha, "dimensionless")
-            if basis is not None
-            else None
-        )
-    try:
-        generations = bench.generate(
-            model,
-            tokenizer,
-            items,
-            chat_template=True,
-            greedy=True,
-            max_new_tokens=max_new_tokens,
-            batch_size=batch_size,
-        )
-    finally:
-        if handle is not None:
-            handle.remove()
+    references: dict[str, Any] = {}
+    for item in items:
+        references.setdefault(item.id, item.reference)
+    generations = []
+    for start in range(0, len(items), batch_size):
+        batch = items[start : start + batch_size]
+        if done_ids is not None and all(item.id in done_ids for item in batch):
+            continue
+        if replacement is not None:
+            handle: Any = register_replacement_hook(
+                model, layer, replacement[0], replacement[1], alpha
+            )
+        else:
+            handle = (
+                register_ablation_hook(model, layer, basis, alpha, "dimensionless")
+                if basis is not None
+                else None
+            )
+        try:
+            generations.extend(
+                bench.generate(
+                    model,
+                    tokenizer,
+                    batch,
+                    chat_template=True,
+                    greedy=True,
+                    max_new_tokens=max_new_tokens,
+                    batch_size=batch_size,
+                )
+            )
+        finally:
+            if handle is not None:
+                handle.remove()
     return [
         {
             "item_id": g.item_id,
@@ -106,7 +118,7 @@ def _evaluate(
                 verify(
                     benchmark,
                     g.text,
-                    next(x.reference for x in items if x.id == g.item_id),
+                    references[g.item_id],
                 )
             ),
             "condition": condition,
@@ -120,13 +132,16 @@ def identity_for(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "family": args.family,
         "q1_root": str(args.q1_root.resolve()),
+        "sft_lr": getattr(args, "sft_lr", "1e-4"),
         "dtype": args.dtype,
         "quantization": args.quantization,
         "device": args.device,
         "batch_size": args.batch_size,
         "limit": args.limit,
         "model": args.model,
-        "checkpoints": common.checkpoint_pairs(args.family, (args.model,)),
+        "checkpoints": common.checkpoint_pairs(
+            args.family, (args.model,), getattr(args, "sft_lr", "1e-4")
+        ),
         "domains": args.domains,
         "k": cfg.d_model // 3,
         "alphas": list(ALPHAS),
@@ -135,7 +150,7 @@ def identity_for(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def run(args: argparse.Namespace) -> None:
+def run_with(args: argparse.Namespace, load_runtime) -> None:
     cfg = common.family_config(args.family, args.scale)
     output = common.output_root(args, f"exp1_{args.model}")
     q1_root = args.q1_root
@@ -152,16 +167,18 @@ def run(args: argparse.Namespace) -> None:
         for domain in args.domains:
             require_bases(q1_root, domain, cfg.layers, args.model)
     with tee_log(run_dir):
-        model, tokenizer = common.load_runtime(args, args.model)
+        model, tokenizer = load_runtime()
         prior_selected = (
             json.loads((output / "selected.json").read_text())
             if (output / "selected.json").is_file()
             else {}
         )
         selected: dict[str, dict[str, Any]] = {}
+        test_lengths: dict[str, int] = {}
         for domain in args.domains:
             benchmark = BENCHMARKS[domain]
             val, test = common.load_items(domain, args.limit, args.scale == "tiny")
+            test_lengths[domain] = len(test)
             eig = require_bases(q1_root, domain, cfg.layers, args.model)
             k = cfg.d_model // 3
             bases = {
@@ -172,7 +189,24 @@ def run(args: argparse.Namespace) -> None:
                 },
             }
             val_summary: list[dict[str, Any]] = []
-            completed = common.completed_item_keys(output / "validation.jsonl")
+            validation_path = output / "validation.jsonl"
+            completed = common.completed_item_keys(validation_path)
+            persisted_correct: dict[tuple[Any, ...], dict[str, bool]] = {}
+            if validation_path.is_file():
+                for line in validation_path.read_text().splitlines():
+                    if not line.strip():
+                        continue
+                    row = json.loads(line)
+                    if row.get("domain") == domain and "correct" in row:
+                        config = (
+                            row["domain"],
+                            row["layer"],
+                            row["alpha"],
+                            row["condition"],
+                        )
+                        persisted_correct.setdefault(config, {})[row["item_id"]] = bool(
+                            row["correct"]
+                        )
             for layer in cfg.layers:
                 for alpha in ALPHAS:
                     for condition in ("high", "low", "random"):
@@ -193,10 +227,18 @@ def run(args: argparse.Namespace) -> None:
                             args.batch_size,
                             common.CAPS[benchmark][0],
                             condition,
+                            done_ids={
+                                key[4]
+                                for key in completed
+                                if key[:4] == (domain, layer, alpha, condition)
+                            },
                         )
-                        accuracy = sum(1 for row in rows if bool(row["correct"])) / max(
-                            1, len(rows)
-                        )
+                        done_correct = persisted_correct.get(key, {})
+                        merged = {
+                            **done_correct,
+                            **{row["item_id"]: bool(row["correct"]) for row in rows},
+                        }
+                        accuracy = sum(merged.values()) / max(1, len(merged))
                         for row in rows:
                             if (
                                 domain,
@@ -226,7 +268,6 @@ def run(args: argparse.Namespace) -> None:
                                 "accuracy": accuracy,
                             }
                         )
-            validation_path = output / "validation.jsonl"
             expected = len(cfg.layers) * len(ALPHAS) * 3
             if len(val_summary) < expected:
                 val_summary = common.validation_scores(validation_path, domain)
@@ -241,6 +282,12 @@ def run(args: argparse.Namespace) -> None:
                     args.batch_size,
                 )
             for condition in ("high", "low", "random"):
+                path = output / f"eval_{domain}_{condition}.jsonl"
+                done = (
+                    {json.loads(x)["item_id"] for x in path.read_text().splitlines()}
+                    if path.is_file()
+                    else set()
+                )
                 rows = _evaluate(
                     model,
                     tokenizer,
@@ -252,12 +299,7 @@ def run(args: argparse.Namespace) -> None:
                     args.batch_size,
                     common.CAPS[benchmark][1],
                     condition,
-                )
-                path = output / f"eval_{domain}_{condition}.jsonl"
-                done = (
-                    {json.loads(x)["item_id"] for x in path.read_text().splitlines()}
-                    if path.is_file()
-                    else set()
+                    done_ids=done,
                 )
                 for row in rows:
                     if row["item_id"] not in done:
@@ -276,14 +318,16 @@ def run(args: argparse.Namespace) -> None:
             {
                 domain: {
                     "selected": selected[domain],
-                    "n": len(
-                        common.load_items(domain, args.limit, args.scale == "tiny")[1]
-                    ),
+                    "n": test_lengths[domain],
                 }
                 for domain in args.domains
             },
         )
         common.finish_uploader(uploader, output)
+
+
+def run(args: argparse.Namespace) -> None:
+    run_with(args, lambda: common.load_runtime(args, args.model))
 
 
 if __name__ == "__main__":
