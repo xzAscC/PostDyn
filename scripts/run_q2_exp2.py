@@ -63,6 +63,7 @@ def group_summary(rows: list[dict[str, Any]]) -> dict[str, dict[str, float | int
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = common.add_common_args(argparse.ArgumentParser())
+    parser.add_argument("--sft-lr", choices=("1e-4", "5e-5"), default="1e-4")
     parser.add_argument("--layer", type=int)
     parser.add_argument("--alpha", type=float)
     parser.add_argument("--exp1-output", type=Path)
@@ -84,13 +85,14 @@ def identity_for(
     return {
         "family": args.family,
         "q1_root": str(args.q1_root.resolve()),
+        "sft_lr": args.sft_lr,
         "dtype": args.dtype,
         "quantization": args.quantization,
         "device": args.device,
         "batch_size": args.batch_size,
         "limit": args.limit,
         "model": args.model,
-        "checkpoints": common.checkpoint_pairs(args.family, (args.model,)),
+        "checkpoints": common.checkpoint_pairs(args.family, (args.model,), args.sft_lr),
         "domains": args.domains,
         "k": cfg.d_model // 3,
         "alphas": list(ALPHAS),
@@ -192,7 +194,7 @@ def item_subsims(
     return vals, subsims, k_i
 
 
-def run(args: argparse.Namespace) -> None:
+def run_with(args: argparse.Namespace, load_runtime) -> None:
     cfg = common.family_config(args.family, args.scale)
     root = common.output_root(args, f"exp2_{args.model}")
     uploader = common.start_uploader(args, common.ROOT)
@@ -229,7 +231,7 @@ def run(args: argparse.Namespace) -> None:
         for domain in args.domains:
             layer = effective_selection[domain]["layer"]
             common.require_bases(q1, domain, (layer,), args.model)
-    model, tokenizer = common.load_runtime(args, args.model)
+    model, tokenizer = load_runtime()
     summaries: dict[str, Any] = {}
     with tee_log(RunDir(root)):
         for domain in args.domains:
@@ -249,50 +251,58 @@ def run(args: argparse.Namespace) -> None:
             _, items = common.load_items(domain, args.limit, args.scale == "tiny")
             from postdyn import bench
 
-            generations = bench.generate(
-                model,
-                tokenizer,
-                items,
-                chat_template=True,
-                greedy=True,
-                max_new_tokens=common.CAPS[BENCHMARKS[domain]][1],
-                batch_size=args.batch_size,
-                capture_layers=[layer],
-            )
             path = root / f"solutions_{domain}.jsonl"
             done = (
                 {json.loads(x)["item_id"] for x in path.read_text().splitlines()}
                 if path.is_file()
                 else set()
             )
-            for item, generation in zip(items, generations):
-                if item.id in done:
+            for start in range(0, len(items), args.batch_size):
+                batch = items[start : start + args.batch_size]
+                if all(item.id in done for item in batch):
                     continue
-                states = sentence_final_states(
+                generations = bench.generate(
+                    model,
                     tokenizer,
-                    [],
-                    generation.text,
-                    generation.captured or {},
-                    generation.prompt_token_len,
+                    batch,
+                    chat_template=True,
+                    greedy=True,
+                    max_new_tokens=common.CAPS[BENCHMARKS[domain]][1],
+                    batch_size=args.batch_size,
+                    capture_layers=[layer],
                 )
-                vals, (subsim_high, subsim_low), _ = item_subsims(
-                    states, K, u_high, u_low
-                )
-                row = {
-                    "item_id": item.id,
-                    "correct": bool(
-                        verify(BENCHMARKS[domain], generation.text, item.reference)
-                    ),
-                    "V_i": float(vals.sum().item()) if vals.numel() else 0.0,
-                    "subsim_high": subsim_high,
-                    "subsim_low": subsim_low,
-                    "n_sentences": int(states.shape[0]),
-                }
-                common.append(path, row)
+                for item, generation in zip(batch, generations):
+                    if item.id in done:
+                        continue
+                    states = sentence_final_states(
+                        tokenizer,
+                        [],
+                        generation.text,
+                        generation.captured or {},
+                        generation.prompt_token_len,
+                    )
+                    vals, (subsim_high, subsim_low), _ = item_subsims(
+                        states, K, u_high, u_low
+                    )
+                    row = {
+                        "item_id": item.id,
+                        "correct": bool(
+                            verify(BENCHMARKS[domain], generation.text, item.reference)
+                        ),
+                        "V_i": float(vals.sum().item()) if vals.numel() else 0.0,
+                        "subsim_high": subsim_high,
+                        "subsim_low": subsim_low,
+                        "n_sentences": int(states.shape[0]),
+                    }
+                    common.append(path, row)
             rows = [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
             summaries[domain] = group_summary(rows)
         atomic_write_json(root / "summary.json", summaries)
         common.finish_uploader(uploader, root)
+
+
+def run(args: argparse.Namespace) -> None:
+    run_with(args, lambda: common.load_runtime(args, args.model))
 
 
 if __name__ == "__main__":
