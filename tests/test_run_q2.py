@@ -519,3 +519,19 @@ def test_exp1_and_exp3_run_on_both_model_checkpoints(tmp_path: Path) -> None:
         assert (tmp_path / "exp3_rlvr" / f"eval_math_{condition}.jsonl").is_file()
     summary = json.loads((tmp_path / "exp3_rlvr" / "summary.json").read_text())
     assert summary["alignment"]["math"]
+
+
+def test_exp3_grid_searches_layer_only_with_fixed_alpha() -> None:
+    exp3 = load_script("run_q2_exp3")
+    identity = exp3.identity_for(
+        exp3.parse_args(["--family", "7b", "--scale", "tiny", "--q1-root", "/tmp/q1"])
+    )
+    assert identity["alpha"] == 1.0
+    assert "alphas" not in identity
+
+    rows = [
+        {"layer": 3, "alpha": 1.0, "accuracy": 0.5},
+        {"layer": 6, "alpha": 1.0, "accuracy": 0.8},
+        {"layer": 9, "alpha": 1.0, "accuracy": 0.8},
+    ]
+    assert exp3.select_layer(rows) == {"layer": 6, "alpha": 1.0}
