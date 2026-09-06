@@ -66,6 +66,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--layer", type=int)
     parser.add_argument("--alpha", type=float)
     parser.add_argument("--exp1-output", type=Path)
+    parser.add_argument(
+        "--model",
+        choices=("rlvr", "sft"),
+        default="rlvr",
+        help="checkpoint generating solutions (covariance bases match it)",
+    )
     return parser.parse_args(argv)
 
 
@@ -83,7 +89,8 @@ def identity_for(
         "device": args.device,
         "batch_size": args.batch_size,
         "limit": args.limit,
-        "checkpoints": common.checkpoint_pairs(args.family, ("rlvr",)),
+        "model": args.model,
+        "checkpoints": common.checkpoint_pairs(args.family, (args.model,)),
         "domains": args.domains,
         "k": cfg.d_model // 3,
         "alphas": list(ALPHAS),
@@ -187,14 +194,14 @@ def item_subsims(
 
 def run(args: argparse.Namespace) -> None:
     cfg = common.family_config(args.family, args.scale)
-    root = common.output_root(args, "exp2")
+    root = common.output_root(args, f"exp2_{args.model}")
     uploader = common.start_uploader(args, common.ROOT)
     q1 = args.q1_root
     root.mkdir(parents=True, exist_ok=True)
     selected_path = (
         args.exp1_output
         if args.exp1_output
-        else Path("logs") / "q2" / args.family / "exp1"
+        else common.output_root(args, f"exp1_{args.model}")
     ) / "selected.json"
     if not selected_path.is_file() and args.scale != "tiny":
         raise SystemExit(f"Q2 exp1 selected.json missing: {selected_path}")
@@ -221,19 +228,19 @@ def run(args: argparse.Namespace) -> None:
     if args.scale != "tiny":
         for domain in args.domains:
             layer = effective_selection[domain]["layer"]
-            common.require_bases(q1, domain, (layer,), "rlvr")
-    model, tokenizer = common.load_runtime(args, "rlvr")
+            common.require_bases(q1, domain, (layer,), args.model)
+    model, tokenizer = common.load_runtime(args, args.model)
     summaries: dict[str, Any] = {}
     with tee_log(RunDir(root)):
         for domain in args.domains:
             choice = effective_selection[domain]
             layer = choice["layer"]
             bases = (
-                common.require_bases(q1, domain, (layer,), "rlvr")
+                common.require_bases(q1, domain, (layer,), args.model)
                 if args.scale != "tiny"
                 else (
-                    common.tiny_bases(q1, [domain], (layer,), ("rlvr",))
-                    or common.require_bases(q1, domain, (layer,), "rlvr")
+                    common.tiny_bases(q1, [domain], (layer,), (args.model,))
+                    or common.require_bases(q1, domain, (layer,), args.model)
                 )
             )
             eig = bases[layer]

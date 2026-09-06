@@ -43,16 +43,30 @@ run_stage q1_robustness \
     uv run python scripts/run_q1_robustness.py --family 7b --repeats "${REPEATS}" \
     --output logs/q1_robustness/7b
 
-run_stage q2_exp1 \
+run_stage q2_exp1_rlvr \
     uv run python scripts/run_q2_exp1.py --family 7b --q1-root logs/q1/7b \
-    --output logs/q2/7b/exp1
+    --model rlvr --output logs/q2/7b/exp1_rlvr
 
-run_stage q2_exp2 \
+run_stage q2_exp1_sft \
+    uv run python scripts/run_q2_exp1.py --family 7b --q1-root logs/q1/7b \
+    --model sft --output logs/q2/7b/exp1_sft
+
+run_stage q2_exp2_rlvr \
     uv run python scripts/run_q2_exp2.py --family 7b --q1-root logs/q1/7b \
-    --exp1-output logs/q2/7b/exp1 --output logs/q2/7b/exp2
+    --model rlvr --exp1-output logs/q2/7b/exp1_rlvr \
+    --output logs/q2/7b/exp2_rlvr
 
-run_stage q2_exp3 \
+run_stage q2_exp2_sft \
+    uv run python scripts/run_q2_exp2.py --family 7b --q1-root logs/q1/7b \
+    --model sft --exp1-output logs/q2/7b/exp1_sft \
+    --output logs/q2/7b/exp2_sft
+
+run_stage q2_exp3_sft \
     uv run python scripts/run_q2_exp3.py --family 7b --q1-root logs/q1/7b \
-    --output logs/q2/7b/exp3
+    --model sft --output logs/q2/7b/exp3_sft
+
+run_stage q2_exp3_rlvr \
+    uv run python scripts/run_q2_exp3.py --family 7b --q1-root logs/q1/7b \
+    --model rlvr --output logs/q2/7b/exp3_rlvr
 
 echo "=== overnight pipeline complete $(date -Is) ===" | tee -a "${LOGDIR}/overnight_7b.log"

@@ -19,13 +19,19 @@ from postdyn.spectra import subsim
 # Slide spec: replace the SFT low-variance component by its Procrustes-aligned
 # RLVR counterpart (h - U_S U_S^T h + U_R R* U_S^T h). "sft_only" keeps the
 # removal half as the control isolating what the RLVR re-expression adds.
-CONDITIONS = ("baseline", "sft_only", "replace")
+CONDITIONS = ("baseline", "own_only", "replace")
 SELECTION_CONDITION = "replace"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = common.add_common_args(argparse.ArgumentParser())
     parser.add_argument("--sft-lr", choices=("1e-4", "5e-5"), default="1e-4")
+    parser.add_argument(
+        "--model",
+        choices=("sft", "rlvr"),
+        default="sft",
+        help="fixed checkpoint receiving the other stage's aligned low basis",
+    )
     return parser.parse_args(argv)
 
 
@@ -40,6 +46,8 @@ def identity_for(args: argparse.Namespace) -> dict[str, Any]:
         "device": args.device,
         "batch_size": args.batch_size,
         "limit": args.limit,
+        "model": args.model,
+        "other": "rlvr" if args.model == "sft" else "sft",
         "checkpoints": common.checkpoint_pairs(
             args.family, ("sft", "rlvr"), args.sft_lr
         ),
@@ -53,35 +61,37 @@ def identity_for(args: argparse.Namespace) -> dict[str, Any]:
 
 def run(args: argparse.Namespace) -> None:
     cfg = common.family_config(args.family, args.scale)
-    output = common.output_root(args, "exp3")
+    output = common.output_root(args, f"exp3_{args.model}")
     uploader = common.start_uploader(args, common.ROOT)
     output.mkdir(parents=True, exist_ok=True)
     common.write_identity_manifest(
         output,
         identity_for(args),
     )
+    other = "rlvr" if args.model == "sft" else "sft"
     if args.scale == "tiny":
-        common.tiny_bases(args.q1_root, args.domains, cfg.layers, ("sft", "rlvr"))
+        common.tiny_bases(args.q1_root, args.domains, cfg.layers, (args.model, other))
     if args.scale != "tiny":
         for domain in args.domains:
-            common.require_bases(args.q1_root, domain, cfg.layers, "sft")
-            common.require_bases(args.q1_root, domain, cfg.layers, "rlvr")
+            common.require_bases(args.q1_root, domain, cfg.layers, args.model)
+            common.require_bases(args.q1_root, domain, cfg.layers, other)
     with tee_log(RunDir(output)):
-        model, tokenizer = common.load_runtime(args, "sft")
+        model, tokenizer = common.load_runtime(args, args.model)
         selected: dict[str, dict[str, Any]] = {}
         alignment: dict[str, dict[int, float]] = {}
         for domain in args.domains:
             benchmark = BENCHMARKS[domain]
             val, test = common.load_items(domain, args.limit, args.scale == "tiny")
-            sft = common.require_bases(args.q1_root, domain, cfg.layers, "sft")
-            rlvr = common.require_bases(args.q1_root, domain, cfg.layers, "rlvr")
+            own = common.require_bases(args.q1_root, domain, cfg.layers, args.model)
+            others = common.require_bases(args.q1_root, domain, cfg.layers, other)
             k = cfg.d_model // 3
-            u_s = {l: sft[l][1][:, -k:] for l in cfg.layers}
-            u_r = {l: rlvr[l][1][:, -k:] for l in cfg.layers}
+            u_own = {l: own[l][1][:, -k:] for l in cfg.layers}
+            u_other = {l: others[l][1][:, -k:] for l in cfg.layers}
             u_aligned = {
-                l: u_r[l] @ procrustes_align(u_r[l], u_s[l]) for l in cfg.layers
+                l: u_other[l] @ procrustes_align(u_other[l], u_own[l])
+                for l in cfg.layers
             }
-            alignment[domain] = {l: subsim(u_s[l], u_r[l]) for l in cfg.layers}
+            alignment[domain] = {l: subsim(u_own[l], u_other[l]) for l in cfg.layers}
             scores = []
             validation_path = output / "validation.jsonl"
             completed = common.completed_item_keys(validation_path)
@@ -104,7 +114,7 @@ def run(args: argparse.Namespace) -> None:
                         args.batch_size,
                         common.CAPS[benchmark][0],
                         SELECTION_CONDITION,
-                        replacement=(u_s[layer], u_aligned[layer]),
+                        replacement=(u_own[layer], u_aligned[layer]),
                     )
                     scores.append(
                         {
@@ -143,11 +153,11 @@ def run(args: argparse.Namespace) -> None:
             choice = selected[domain]
             for condition in CONDITIONS:
                 replacement = (
-                    (u_s[choice["layer"]], u_aligned[choice["layer"]])
+                    (u_own[choice["layer"]], u_aligned[choice["layer"]])
                     if condition == "replace"
                     else None
                 )
-                basis = u_s[choice["layer"]] if condition == "sft_only" else None
+                basis = u_own[choice["layer"]] if condition == "own_only" else None
                 rows = exp1._evaluate(
                     model,
                     tokenizer,
