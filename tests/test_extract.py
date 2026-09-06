@@ -9,6 +9,7 @@ import pytest
 import torch
 from postdyn.extract import (
     OnlineCovariance,
+    _pad_encodings,
     extract_layer_hiddens,
     iterate_prompt_batches,
 )
@@ -78,6 +79,20 @@ class _FallbackTokenizer:
             "chat templates are not available in the fallback tokenizer"
         )
 
+    def pad(self, encoded, *, padding=True, return_tensors=None, **_):
+        assert padding and return_tensors == "pt"
+        ids = [item["input_ids"] for item in encoded]
+        masks = [item["attention_mask"] for item in encoded]
+        width = max(len(row) for row in ids)
+        return {
+            "input_ids": torch.tensor(
+                [[self.pad_token_id] * (width - len(row)) + row for row in ids]
+            ),
+            "attention_mask": torch.tensor(
+                [[0] * (width - len(row)) + row for row in masks]
+            ),
+        }
+
 
 class _Tokenizer(Protocol):
     padding_side: str
@@ -88,6 +103,8 @@ class _Tokenizer(Protocol):
     def __call__(
         self, texts: str | Sequence[str], **kwargs: Any
     ) -> dict[str, torch.Tensor]: ...
+
+    def pad(self, encoded, **kwargs: Any) -> dict[str, torch.Tensor]: ...
 
 
 class _TrackingTokenizer:
@@ -358,3 +375,45 @@ def test_extract_token_budget_preserves_order_and_shrinks_long_batches(
     for layer in (0, 1):
         torch.testing.assert_close(with_budget[layer], without_budget[layer])
         assert with_budget[layer].shape[0] == len(prompts)
+
+
+def test_extract_layer_hiddens_matches_direct_hidden_state_reference(
+    tiny_model_and_tokenizer: tuple[Any, _Tokenizer],
+) -> None:
+    model, tokenizer = tiny_model_and_tokenizer
+    prompts = ["short", "a considerably longer prompt", "mid length"]
+    extracted = extract_layer_hiddens(
+        model, cast(Any, tokenizer), prompts, [0, 1], batch_size=3
+    )
+    previous_side = tokenizer.padding_side
+    tokenizer.padding_side = "left"
+    try:
+        encoded = tokenizer(
+            prompts, return_tensors="pt", padding=True, truncation=True, max_length=64
+        )
+        with torch.no_grad():
+            reference = model(**encoded, output_hidden_states=True).hidden_states
+        positions = torch.arange(encoded["attention_mask"].shape[1]).unsqueeze(0)
+        last = torch.where(encoded["attention_mask"].bool(), positions, -1).amax(dim=1)
+        for layer in (0, 1):
+            expected = reference[layer + 1][torch.arange(len(prompts)), last]
+            assert torch.equal(extracted[layer], expected.float())
+    finally:
+        tokenizer.padding_side = previous_side
+
+
+def test_pad_encodings_matches_batch_tokenization(
+    tiny_model_and_tokenizer: tuple[Any, _Tokenizer],
+) -> None:
+    _, tokenizer = tiny_model_and_tokenizer
+    tokenizer.padding_side = "left"
+    texts = ["short", "a considerably longer prompt", "mid length"]
+    encoded = [tokenizer(text, truncation=True, max_length=64) for text in texts]
+    padded = _pad_encodings(tokenizer, encoded, 64)
+    expected = tokenizer(
+        texts, return_tensors="pt", padding=True, truncation=True, max_length=64
+    )
+    assert torch.equal(cast(torch.Tensor, padded["input_ids"]), expected["input_ids"])
+    assert torch.equal(
+        cast(torch.Tensor, padded["attention_mask"]), expected["attention_mask"]
+    )

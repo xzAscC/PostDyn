@@ -5,11 +5,13 @@ import json
 import pickle
 import zlib
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import torch
 
 import postdyn.bench as bench
+from postdyn.bench import BenchItem
 
 
 class FakeTokenizer:
@@ -265,10 +267,50 @@ def test_generate_moves_all_inputs_through_model_device_helper(monkeypatch) -> N
     assert set(seen[0][0]) == {"input_ids", "attention_mask"}
 
 
+def test_generate_empty_capture_layers_disables_capture_forward() -> None:
+    tokenizer = FakeTokenizer()
+
+    class Model:
+        def __init__(self) -> None:
+            self.forward_calls = 0
+
+        def generate(self, input_ids, attention_mask, **kwargs):
+            return torch.tensor([[*row, 99] for row in input_ids])
+
+        def __call__(self, **kwargs):
+            self.forward_calls += 1
+            raise AssertionError("capture forward must not run")
+
+    model = Model()
+    result = bench.generate(
+        model, tokenizer, [bench.BenchItem("0", "p", {})], capture_layers=[]
+    )
+
+    assert [generation.captured for generation in result] == [None]
+    assert model.forward_calls == 0
+
+
 def test_generate_capture_uses_block_output_layer_index(monkeypatch) -> None:
     tokenizer = FakeTokenizer()
 
     class Model:
+        transformer: Any
+
+        def __init__(self):
+            import torch.nn as nn
+
+            class Block(nn.Module):
+                def __init__(self, value):
+                    super().__init__()
+                    self.value = value
+
+                def forward(self, _hidden):
+                    return torch.tensor([[self.value]])
+
+            self.transformer = SimpleNamespace(
+                h=nn.ModuleList([Block(1.0), Block(1.0)]), ln_f=Block(2.0)
+            )
+
         def parameters(self):
             return iter(())
 
@@ -276,12 +318,12 @@ def test_generate_capture_uses_block_output_layer_index(monkeypatch) -> None:
             return torch.tensor([[*row, 99] for row in input_ids])
 
         def __call__(self, **kwargs):
+            hidden = kwargs["input_ids"]
+            hidden = self.transformer.h[0](hidden)
+            hidden = self.transformer.h[1](hidden)
+            hidden = self.transformer.ln_f(hidden)
             return SimpleNamespace(
-                hidden_states=(
-                    torch.tensor([[0.0]]),
-                    torch.tensor([[1.0]]),
-                    torch.tensor([[2.0]]),
-                )
+                hidden_states=(torch.tensor([[0.0]]), hidden, hidden)
             )
 
     captures = bench.generate(
@@ -289,3 +331,60 @@ def test_generate_capture_uses_block_output_layer_index(monkeypatch) -> None:
     )
     assert captures[0].captured is not None
     assert captures[0].captured[1].item() == 2.0
+
+
+def test_generate_tiny_gpt2_capture_matches_reference() -> None:
+    transformers = pytest.importorskip("transformers")
+    try:
+        model = transformers.AutoModelForCausalLM.from_pretrained(
+            "sshleifer/tiny-gpt2", local_files_only=True
+        )
+        tokenizer = transformers.AutoTokenizer.from_pretrained(
+            "sshleifer/tiny-gpt2", local_files_only=True
+        )
+    except (OSError, RuntimeError) as exc:
+        pytest.skip(f"tiny-gpt2 is not cached: {exc}")
+    model.eval()
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    items = [BenchItem("0", "hello", {}), BenchItem("1", "good morning", {})]
+    result = bench.generate(
+        model,
+        tokenizer,
+        items,
+        chat_template=False,
+        max_new_tokens=2,
+        capture_layers=[0, 1],
+        batch_size=2,
+    )
+    previous_side = tokenizer.padding_side
+    tokenizer.padding_side = "left"
+    prompt_inputs = tokenizer(
+        [item.prompt for item in items], return_tensors="pt", padding=True
+    )
+    generated = model.generate(
+        **prompt_inputs,
+        do_sample=False,
+        num_return_sequences=1,
+        max_new_tokens=2,
+        pad_token_id=tokenizer.pad_token_id,
+    )
+    mask = torch.ones_like(generated)
+    mask[:, : prompt_inputs["attention_mask"].shape[1]] = prompt_inputs[
+        "attention_mask"
+    ]
+    tokenizer.padding_side = previous_side
+    with torch.no_grad():
+        reference = model(
+            input_ids=generated,
+            attention_mask=mask,
+            use_cache=False,
+            output_hidden_states=True,
+        ).hidden_states
+    for row_index, row in enumerate(result):
+        assert row.captured is not None
+        for layer in (0, 1):
+            assert torch.equal(
+                row.captured[layer],
+                reference[layer + 1][row_index].float().cpu(),
+            )

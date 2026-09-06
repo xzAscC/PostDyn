@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 import torch
+from .capture import hidden_capture
+from contextlib import nullcontext
 
 
 logger = logging.getLogger(__name__)
@@ -250,63 +252,68 @@ def generate(
         tokenizer.pad_token = tokenizer.eos_token
     output: list[Generation] = []
     try:
-        for start in range(0, len(items), batch_size):
-            batch = items[start : start + batch_size]
-            prompts = [
-                apply_chat_template(tokenizer, x.prompt) if chat_template else x.prompt
-                for x in batch
-            ]
-            encoded = tokenizer(
-                prompts, return_tensors="pt", padding=True, truncation=True
-            )
-            encoded = _ensure_device(encoded, _model_device(model))
-            kwargs: dict[str, Any] = {
-                "do_sample": not greedy,
-                "num_return_sequences": 1,
-                "max_new_tokens": max_new_tokens,
-            }
-            pad_id = getattr(tokenizer, "pad_token_id", None)
-            if pad_id is not None:
-                kwargs["pad_token_id"] = pad_id
-            generated = model.generate(**encoded, **kwargs)
-            rows = generated.tolist() if torch.is_tensor(generated) else generated
-            input_width = (
-                encoded["input_ids"].shape[-1]
-                if torch.is_tensor(encoded["input_ids"])
-                else len(encoded["input_ids"][0])
-            )
-            texts = tokenizer.batch_decode(
-                [row[input_width:] for row in rows], skip_special_tokens=True
-            )
-            captures: list[dict[int, torch.Tensor] | None] = [None] * len(batch)
-            if capture_layers and torch.is_tensor(generated):
-                full_mask = torch.ones_like(
-                    generated, dtype=encoded["attention_mask"].dtype
+        capture_context = (
+            hidden_capture(model, capture_layers)
+            if capture_layers
+            else nullcontext(None)
+        )
+        with capture_context as store:
+            for start in range(0, len(items), batch_size):
+                batch = items[start : start + batch_size]
+                prompts = [
+                    apply_chat_template(tokenizer, x.prompt)
+                    if chat_template
+                    else x.prompt
+                    for x in batch
+                ]
+                encoded = tokenizer(
+                    prompts, return_tensors="pt", padding=True, truncation=True
                 )
-                full_mask[:, : encoded["attention_mask"].shape[1]] = encoded[
-                    "attention_mask"
-                ]
-                with torch.no_grad():
-                    forward = model(
-                        input_ids=generated,
-                        attention_mask=full_mask,
-                        output_hidden_states=True,
-                        use_cache=False,
+                encoded = _ensure_device(encoded, _model_device(model))
+                kwargs: dict[str, Any] = {
+                    "do_sample": not greedy,
+                    "num_return_sequences": 1,
+                    "max_new_tokens": max_new_tokens,
+                }
+                pad_id = getattr(tokenizer, "pad_token_id", None)
+                if pad_id is not None:
+                    kwargs["pad_token_id"] = pad_id
+                generated = model.generate(**encoded, **kwargs)
+                rows = generated.tolist() if torch.is_tensor(generated) else generated
+                input_width = (
+                    encoded["input_ids"].shape[-1]
+                    if torch.is_tensor(encoded["input_ids"])
+                    else len(encoded["input_ids"][0])
+                )
+                texts = tokenizer.batch_decode(
+                    [row[input_width:] for row in rows], skip_special_tokens=True
+                )
+                captures: list[dict[int, torch.Tensor] | None] = [None] * len(batch)
+                if capture_layers and torch.is_tensor(generated):
+                    full_mask = torch.ones_like(
+                        generated, dtype=encoded["attention_mask"].dtype
                     )
-                captures = [
-                    {
-                        layer: forward.hidden_states[layer + 1][row]
-                        .detach()
-                        .float()
-                        .cpu()
-                        for layer in capture_layers
-                    }
-                    for row in range(len(batch))
-                ]
-            output.extend(
-                Generation(item.id, text, capture, input_width)
-                for item, text, capture in zip(batch, texts, captures)
-            )
+                    full_mask[:, : encoded["attention_mask"].shape[1]] = encoded[
+                        "attention_mask"
+                    ]
+                    with torch.no_grad():
+                        assert store is not None
+                        forward = model(
+                            input_ids=generated,
+                            attention_mask=full_mask,
+                            use_cache=False,
+                        )
+                    captures = [
+                        {
+                            layer: store.tensors[layer][row].detach().float().cpu()
+                            for layer in capture_layers
+                        }
+                        for row in range(len(batch))
+                    ]
+                output.extend(
+                    Generation(item.id, text, capture, input_width)
+                    for item, text, capture in zip(batch, texts, captures)
+                )
     finally:
         if old_padding is not None:
             tokenizer.padding_side = old_padding
