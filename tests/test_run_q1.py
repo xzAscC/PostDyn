@@ -514,3 +514,66 @@ def test_robustness_pool_smaller_than_requested_falls_back_to_90_percent(
     assert repeat_n == {90}
     assert len(ids[0]) == 90
     assert ids[0] != ids[1]
+
+
+def test_robustness_default_runs_both_final_checkpoints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = [
+        "--family",
+        "7b",
+        "--scale",
+        "tiny",
+        "--domain",
+        "math",
+        "--repeats",
+        "2",
+        "--output",
+        str(tmp_path),
+        "--limit",
+        "6",
+    ]
+
+    assert robustness.main(args) == 0
+    for name in ("sft", "rlvr"):
+        root = tmp_path / "7b" / name / "math"
+        assert (root / "summary.json").is_file()
+        assert (root / "repeat_0.json").is_file()
+        assert (root / "repeat_1.json").is_file()
+    ablation = json.loads((tmp_path / "7b" / "ablation.json").read_text())
+    assert set(ablation["checkpoints"]) == {"sft", "rlvr"}
+    # Paired ablation: identical prompt subsets per repeat index.
+    for repeat in range(2):
+        sft_ids = json.loads(
+            (tmp_path / "7b" / "sft" / "math" / f"repeat_{repeat}.json").read_text()
+        )["record_ids"]
+        rlvr_ids = json.loads(
+            (tmp_path / "7b" / "rlvr" / "math" / f"repeat_{repeat}.json").read_text()
+        )["record_ids"]
+        assert sft_ids == rlvr_ids
+
+
+def test_robustness_explicit_checkpoint_runs_single_without_ablation(
+    tmp_path: Path,
+) -> None:
+    args = [
+        "--family",
+        "7b",
+        "--scale",
+        "tiny",
+        "--checkpoint",
+        "rlvr",
+        "--domain",
+        "math",
+        "--repeats",
+        "2",
+        "--output",
+        str(tmp_path),
+        "--limit",
+        "6",
+    ]
+
+    assert robustness.main(args) == 0
+    assert (tmp_path / "7b" / "rlvr" / "math" / "summary.json").is_file()
+    assert not (tmp_path / "7b" / "sft" / "math").exists()
+    assert not (tmp_path / "7b" / "ablation.json").exists()
