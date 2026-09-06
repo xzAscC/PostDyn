@@ -188,6 +188,7 @@ def item_subsims(
 def run(args: argparse.Namespace) -> None:
     cfg = common.family_config(args.family, args.scale)
     root = common.output_root(args, "exp2")
+    uploader = common.start_uploader(args, common.ROOT)
     q1 = args.q1_root
     root.mkdir(parents=True, exist_ok=True)
     selected_path = (
@@ -284,6 +285,7 @@ def run(args: argparse.Namespace) -> None:
             rows = [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
             summaries[domain] = group_summary(rows)
         atomic_write_json(root / "summary.json", summaries)
+        common.finish_uploader(uploader, root)
 
 
 if __name__ == "__main__":

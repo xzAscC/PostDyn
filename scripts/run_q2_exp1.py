@@ -129,6 +129,7 @@ def run(args: argparse.Namespace) -> None:
         output,
         identity_for(args),
     )
+    uploader = common.start_uploader(args, ROOT)
     if args.scale == "tiny":
         common.tiny_bases(q1_root, args.domains, cfg.layers, ("rlvr",))
     run_dir = RunDir(output)
@@ -267,6 +268,7 @@ def run(args: argparse.Namespace) -> None:
                 for domain in args.domains
             },
         )
+        common.finish_uploader(uploader, output)
 
 
 if __name__ == "__main__":

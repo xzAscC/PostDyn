@@ -17,6 +17,7 @@ import torch
 
 from postdyn.config import MODEL_FAMILIES, ROBUSTNESS_DOMAIN
 from postdyn.data import DomainPool, load_pool
+from postdyn.uploader import uploader_from_args
 from postdyn.extract import OnlineCovariance, extract_layer_hiddens
 from postdyn.persistence import (
     atomic_write_json,
@@ -40,6 +41,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--family", choices=tuple(MODEL_FAMILIES), required=True)
     parser.add_argument("--checkpoint", default="rlvr")
     parser.add_argument("--domain", default=ROBUSTNESS_DOMAIN)
+    parser.add_argument(
+        "--upload-to",
+        default=None,
+        help="dataset repo id for streaming artifact uploads",
+    )
     parser.add_argument("--repeats", type=int, required=True)
     parser.add_argument("--scale", choices=("tiny", "smoke", "full"), default="full")
     parser.add_argument("--output", default=None)
@@ -99,6 +105,9 @@ def run(args: argparse.Namespace) -> int:
     output = Path(args.output) if args.output else ROOT / "logs" / "q1_robustness"
     root = output / args.family / checkpoint.name / args.domain
     root.mkdir(parents=True, exist_ok=True)
+    uploader = uploader_from_args(args.upload_to, ROOT)
+    if uploader:
+        uploader.start()
     with tee_log(root):
         first: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
         selected_ids: list[set[str]] = []
@@ -144,6 +153,9 @@ def run(args: argparse.Namespace) -> int:
                 values, vectors = eigensystem(covariance.covariance)
                 base = root / "eigensystems" / str(repeat) / str(layer)
                 save_eigensystem(base, values, vectors)
+                if uploader:
+                    uploader.submit(base.with_suffix('.json'), relative_to=ROOT)
+                    uploader.submit(base.with_suffix('.safetensors'), relative_to=ROOT)
                 values_by_layer[str(layer)] = [float(value) for value in values]
                 ranks[str(layer)] = effective_rank(values)
                 if repeat == 0:
@@ -238,6 +250,14 @@ def run(args: argparse.Namespace) -> int:
         )
     if args.scale != "tiny":
         q1.release_model(model)
+    if uploader:
+        uploader.submit_tree(output, relative_to=ROOT)
+        upload_summary = uploader.finish()
+        print(
+            f"upload: {upload_summary['uploaded']} uploaded, "
+            f"{upload_summary['skipped']} skipped, "
+            f"{upload_summary['failed']} failed"
+        )
     return 0
 
 
