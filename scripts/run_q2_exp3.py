@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 import scripts.q2_common as common
 import scripts.run_q2_exp1 as exp1
-from postdyn.config import ALPHAS, BENCHMARKS
+from postdyn.config import BENCHMARKS
 from postdyn.intervention import procrustes_align
 from postdyn.persistence import RunDir, tee_log, atomic_write_json
 from postdyn.spectra import subsim
@@ -20,6 +20,13 @@ from postdyn.spectra import subsim
 # RLVR counterpart (h - U_S U_S^T h + U_R R* U_S^T h). "sft_only" keeps the
 # removal half as the control isolating what the RLVR re-expression adds.
 CONDITIONS = ("baseline", "own_only", "replace")
+ALPHA = 1.0  # slide formula is applied exactly; strength is not searched
+
+
+def select_layer(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Pick the best layer at the fixed alpha (ties prefer smaller layer)."""
+    best = max(rows, key=lambda row: (row["accuracy"], -int(row["layer"])))
+    return {"layer": int(best["layer"]), "alpha": ALPHA}
 SELECTION_CONDITION = "replace"
 
 
@@ -53,7 +60,7 @@ def identity_for(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "domains": args.domains,
         "k": cfg.d_model // 3,
-        "alphas": list(ALPHAS),
+        "alpha": 1.0,
         "alpha_mode": "dimensionless",
         "scale": args.scale,
     }
@@ -96,60 +103,58 @@ def run(args: argparse.Namespace) -> None:
             validation_path = output / "validation.jsonl"
             completed = common.completed_item_keys(validation_path)
             for layer in cfg.layers:
-                for alpha in ALPHAS:
-                    if all(
-                        (domain, layer, alpha, SELECTION_CONDITION, item.id)
-                        in completed
-                        for item in val
-                    ):
-                        continue
-                    rows = exp1._evaluate(
-                        model,
-                        tokenizer,
-                        val,
-                        benchmark,
+                if all(
+                    (domain, layer, ALPHA, SELECTION_CONDITION, item.id) in completed
+                    for item in val
+                ):
+                    continue
+                rows = exp1._evaluate(
+                    model,
+                    tokenizer,
+                    val,
+                    benchmark,
+                    layer,
+                    ALPHA,
+                    None,
+                    args.batch_size,
+                    common.CAPS[benchmark][0],
+                    SELECTION_CONDITION,
+                    replacement=(u_own[layer], u_aligned[layer]),
+                )
+                scores.append(
+                    {
+                        "layer": layer,
+                        "alpha": ALPHA,
+                        "accuracy": sum(1 for x in rows if bool(x["correct"]))
+                        / max(1, len(rows)),
+                    }
+                )
+                for row in rows:
+                    if (
+                        domain,
                         layer,
-                        alpha,
-                        None,
-                        args.batch_size,
-                        common.CAPS[benchmark][0],
+                        ALPHA,
                         SELECTION_CONDITION,
-                        replacement=(u_own[layer], u_aligned[layer]),
-                    )
-                    scores.append(
-                        {
-                            "layer": layer,
-                            "alpha": alpha,
-                            "accuracy": sum(1 for x in rows if bool(x["correct"]))
-                            / max(1, len(rows)),
-                        }
-                    )
-                    for row in rows:
-                        if (
-                            domain,
-                            layer,
-                            alpha,
-                            SELECTION_CONDITION,
-                            row["item_id"],
-                        ) not in completed:
-                            common.append(
-                                output / "validation.jsonl",
-                                {
-                                    "domain": domain,
-                                    "layer": layer,
-                                    "alpha": alpha,
-                                    "condition": SELECTION_CONDITION,
-                                    "item_id": row["item_id"],
-                                    "correct": row["correct"],
-                                    "accuracy": scores[-1]["accuracy"],
-                                },
-                            )
-            expected = len(cfg.layers) * len(ALPHAS)
+                        row["item_id"],
+                    ) not in completed:
+                        common.append(
+                            output / "validation.jsonl",
+                            {
+                                "domain": domain,
+                                "layer": layer,
+                                "alpha": ALPHA,
+                                "condition": SELECTION_CONDITION,
+                                "item_id": row["item_id"],
+                                "correct": row["correct"],
+                                "accuracy": scores[-1]["accuracy"],
+                            },
+                        )
+            expected = len(cfg.layers)
             if len(scores) < expected:
                 scores = common.validation_scores(
                     validation_path, domain, {SELECTION_CONDITION}
                 )
-            selected[domain] = exp1.select_best(scores)
+            selected[domain] = select_layer(scores)
             choice = selected[domain]
             for condition in CONDITIONS:
                 replacement = (
