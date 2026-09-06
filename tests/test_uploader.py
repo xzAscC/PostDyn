@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -110,3 +111,46 @@ def test_uploader_submits_trees_recursively(tmp_path: Path) -> None:
         "logs/q1/eigensystems/base/3/math.json",
         "logs/q1/manifest.json",
     ]
+
+
+def test_uploader_deduplicates_queued_path(tmp_path: Path) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    api = FakeApi()
+
+    def blocking_upload(**kwargs):
+        api.calls.append(
+            {"path": kwargs["path_or_fileobj"], "in_repo": kwargs["path_in_repo"]}
+        )
+        entered.set()
+        release.wait(timeout=5)
+
+    setattr(api, "upload_file", blocking_upload)
+    artifact = _write(tmp_path, "logs/run.log")
+    handle = up.ArtifactUploader("me/r", state_path=tmp_path / ".s.json", api=api)
+    handle.start()
+    handle.submit(artifact, relative_to=tmp_path)
+    assert entered.wait(timeout=5)
+    handle.submit(artifact, relative_to=tmp_path)
+    release.set()
+    summary = handle.finish()
+
+    assert len(api.calls) == 1
+    assert summary["uploaded"] == 1
+    assert summary["skipped"] == 1
+
+
+def test_uploader_terminal_failure_clears_pending_for_resubmit(tmp_path: Path) -> None:
+    api = FakeApi(failures=100)
+    artifact = _write(tmp_path, "logs/run.log")
+    handle = up.ArtifactUploader(
+        "me/r", state_path=tmp_path / ".s.json", api=api, retries=0, retry_delay=0
+    )
+    handle.start()
+    handle.submit(artifact, relative_to=tmp_path)
+    first = handle.finish()
+
+    assert first["failed"] == 1
+    assert handle._pending == set()
+    handle.submit(artifact, relative_to=tmp_path)
+    assert handle._summary.skipped == 0

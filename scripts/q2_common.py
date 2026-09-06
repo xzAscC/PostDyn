@@ -23,6 +23,8 @@ CAPS = {
     "livecodebench": (1024, 1024),
 }
 
+_ITEMS_CACHE: dict[tuple[str, int | None, bool], tuple[list[Any], list[Any]]] = {}
+
 
 def add_common_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--family", choices=("7b", "32b"), required=True)
@@ -258,14 +260,22 @@ def load_runtime(args: argparse.Namespace, stage: str):
 
 
 def load_items(domain: str, limit: int | None, tiny: bool):
+    key = (domain, limit, tiny)
+    cached = _ITEMS_CACHE.get(key)
+    if cached is not None:
+        return cached
+
     from postdyn.bench import BenchItem, load_benchmark
 
     if tiny:
         items = [BenchItem(str(i), f"prompt {i}", {"answer": "1"}) for i in range(40)]
         val, test = items[:30], items[30:]
-        return (val[:limit] if limit else val), (test[:limit] if limit else test)
-    val, test = load_benchmark(BENCHMARKS[domain])
-    return (val[:limit] if limit else val), (test[:limit] if limit else test)
+        result = (val[:limit] if limit else val), (test[:limit] if limit else test)
+    else:
+        val, test = load_benchmark(BENCHMARKS[domain])
+        result = (val[:limit] if limit else val), (test[:limit] if limit else test)
+    _ITEMS_CACHE[key] = result
+    return result
 
 
 def write_manifest(root: Path, args: argparse.Namespace, experiment: str) -> None:
