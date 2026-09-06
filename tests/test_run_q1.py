@@ -393,3 +393,53 @@ def test_q1_prefetch_none_never_starts(tmp_path: Path, monkeypatch) -> None:
 
     assert q1.main(_run_args(tmp_path / "q1") + ["--prefetch", "none"]) == 0
     assert "start" not in events
+
+
+def test_robustness_pool_smaller_than_requested_falls_back_to_90_percent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from postdyn.data import PromptRecord
+
+    records = tuple(
+        PromptRecord(f"gr-{i}", f"general prompt {i}", "science") for i in range(100)
+    )
+    pool = DomainPool(
+        "general_reasoning", records, 30720, 100, "rev", 42, "fp"
+    )
+    monkeypatch.setattr(robustness, "_pool", lambda args, n: pool)
+    from postdyn.config import CheckpointRef
+
+    rlvr_final = CheckpointRef("rlvr", "allenai/Olmo-3-7B-Think", "main", "rlvr")
+    monkeypatch.setattr(robustness, "_checkpoint", lambda args: (rlvr_final, (object(), object())))
+    monkeypatch.setattr(
+        robustness,
+        "extract_layer_hiddens",
+        lambda model, tokenizer, prompts, layers, *a, **k: {
+            layer: torch.eye(len(prompts), 8) for layer in layers
+        },
+    )
+
+    args = [
+        "--family",
+        "7b",
+        "--repeats",
+        "3",
+        "--domain",
+        "general_reasoning",
+        "--scale",
+        "full",
+        "--output",
+        str(tmp_path / "rob"),
+    ]
+    assert robustness.main(args) == 0
+    repeat_n = set()
+    ids = []
+    for repeat in range(3):
+        payload = json.loads(
+            (tmp_path / "rob" / "7b" / "rlvr" / "general_reasoning" / f"repeat_{repeat}.json").read_text()
+        )
+        repeat_n.add(payload["n"])
+        ids.append(set(payload["record_ids"]))
+    assert repeat_n == {90}
+    assert len(ids[0]) == 90
+    assert ids[0] != ids[1]
