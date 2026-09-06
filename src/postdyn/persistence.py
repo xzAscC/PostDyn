@@ -10,15 +10,20 @@ import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+import threading
 from typing import TextIO, cast
 
 import torch
 from safetensors.torch import load_file, save_file  # pyright: ignore[reportUnknownVariableType]
 
 
+_JSONL_HANDLES: dict[Path, TextIO] = {}
+_JSONL_HANDLES_LOCK = threading.Lock()
+
+
 def atomic_write_json(path: str | os.PathLike[str], obj: object) -> None:
     """Serialize *obj* and atomically replace ``path`` with the result."""
-    destination = Path(path)
+    destination = Path(path).absolute()
     payload = json.dumps(obj, indent=2, ensure_ascii=False) + "\n"
     destination.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary_name = tempfile.mkstemp(
@@ -30,19 +35,36 @@ def atomic_write_json(path: str | os.PathLike[str], obj: object) -> None:
             _ = handle.write(payload)
             _ = handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, destination)
+        with _JSONL_HANDLES_LOCK:
+            handle = _JSONL_HANDLES.pop(destination, None)
+            if handle is not None:
+                handle.close()
+            os.replace(temporary, destination)
     finally:
         temporary.unlink(missing_ok=True)
 
 
 def append_jsonl(path: str | os.PathLike[str], record: object) -> None:
     """Append one JSON record and durably flush it to disk."""
-    destination = Path(path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with destination.open("a", encoding="utf-8") as handle:
+    destination = Path(path).absolute()
+    with _JSONL_HANDLES_LOCK:
+        handle = _JSONL_HANDLES.get(destination)
+        if handle is None:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            handle = destination.open("a", encoding="utf-8")
+            _JSONL_HANDLES[destination] = handle
         _ = handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         _ = handle.flush()
         os.fsync(handle.fileno())
+
+
+def close_all_jsonl_handles() -> None:
+    """Close and forget all cached append-only JSONL file handles."""
+    with _JSONL_HANDLES_LOCK:
+        handles = list(_JSONL_HANDLES.values())
+        _JSONL_HANDLES.clear()
+        for handle in handles:
+            handle.close()
 
 
 class RunDir:

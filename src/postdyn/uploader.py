@@ -61,6 +61,7 @@ class ArtifactUploader:
         self._lock = threading.Lock()
         self._state = self._load_state()
         self._summary = _Summary()
+        self._pending: set[str] = set()
         self._thread: threading.Thread | None = None
 
     def _load_state(self) -> dict[str, Any]:
@@ -104,11 +105,12 @@ class ArtifactUploader:
             file_path.resolve().relative_to(Path(relative_to).resolve()).as_posix()
         )
         with self._lock:
-            if repo_path in self._state["uploaded"]:
+            if repo_path in self._state["uploaded"] or repo_path in self._pending:
                 self._summary.skipped += 1
                 return
             self._state["failed"].pop(repo_path, None)
-        self._queue.put(f"{file_path.resolve()}\t{repo_path}")
+            self._pending.add(repo_path)
+            self._queue.put(f"{file_path.resolve()}\t{repo_path}")
 
     def submit_tree(self, path: str | Path, relative_to: str | Path) -> None:
         """Queue every file under a directory."""
@@ -143,6 +145,7 @@ class ArtifactUploader:
                     self._state["uploaded"][repo_path] = time.strftime(
                         "%Y-%m-%dT%H:%M:%S"
                     )
+                    self._pending.discard(repo_path)
                     self._state["failed"].pop(repo_path, None)
                     self._summary.uploaded += 1
                     self._save_state()
@@ -158,6 +161,7 @@ class ArtifactUploader:
                 if attempt < self._retries:
                     time.sleep(self._retry_delay)
         with self._lock:
+            self._pending.discard(repo_path)
             self._state["failed"][repo_path] = time.strftime("%Y-%m-%dT%H:%M:%S")
             self._summary.failed += 1
             self._summary.failures.append(repo_path)

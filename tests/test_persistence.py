@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import torch
 
+import postdyn.persistence as persistence
 from postdyn.persistence import (
     RunDir,
     append_jsonl,
@@ -39,6 +40,51 @@ def test_append_jsonl_appends_records(tmp_path: Path) -> None:
         append_jsonl(path, {"i": i})
     rows = [json.loads(line) for line in path.read_text().splitlines()]
     assert rows == [{"i": 0}, {"i": 1}, {"i": 2}]
+
+
+def test_append_jsonl_reuses_handle_and_fsyncs(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "nested" / "metrics.jsonl"
+    fsync_calls = 0
+    real_fsync = persistence.os.fsync
+
+    def counting_fsync(fd: int) -> None:
+        nonlocal fsync_calls
+        fsync_calls += 1
+        real_fsync(fd)
+
+    monkeypatch.setattr(persistence.os, "fsync", counting_fsync)
+    persistence.close_all_jsonl_handles()
+
+    append_jsonl(path, {"i": 1})
+    handle = persistence._JSONL_HANDLES[path.absolute()]
+    append_jsonl(path, {"i": 2})
+
+    assert persistence._JSONL_HANDLES[path.absolute()] is handle
+    assert [json.loads(line) for line in path.read_text().splitlines()] == [
+        {"i": 1},
+        {"i": 2},
+    ]
+    assert fsync_calls == 2
+
+    persistence.close_all_jsonl_handles()
+    assert persistence._JSONL_HANDLES == {}
+    assert handle.closed
+    append_jsonl(path, {"i": 3})
+    assert len(persistence._JSONL_HANDLES) == 1
+
+
+def test_atomic_write_json_evicts_cached_jsonl_handle(tmp_path: Path) -> None:
+    path = tmp_path / "metrics.jsonl"
+
+    append_jsonl(path, {"a": 1})
+    atomic_write_json(path, {"b": 2})
+    append_jsonl(path, {"c": 3})
+
+    text = path.read_text()
+    atomic_value, _ = json.JSONDecoder().raw_decode(text)
+    assert atomic_value == {"b": 2}
+    lines = text.splitlines()
+    assert json.loads(lines[-1]) == {"c": 3}
 
 
 def test_rundir_paths_completed_units_and_manifest(tmp_path: Path) -> None:
