@@ -108,7 +108,7 @@ def _tiny_pool(domain: str, n: int) -> DomainPool:
         )
         for i in range(max(n, 32))
     )
-    return DomainPool(domain, records, n, min(n, len(records)), "tiny", 42, "tiny")
+    return DomainPool(domain, records, n, len(records), "tiny", 42, "tiny")
 
 
 def _tiny_checkpoint_model(checkpoint: CheckpointRef) -> tuple[Any, Any]:

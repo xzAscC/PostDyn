@@ -10,16 +10,11 @@ GPU memory). The 32B family runs on an H100 with bf16 weights.
 # Enumerate distinct Dolci dataset_source values (sanity check, offline)
 uv run python scripts/enumerate_domain_sources.py
 
-# Materialize the four fixed domain pools (n = 2 x max(3d) = 30,720;
-# 7B consumes the deterministic 12,288 prefix). The extra headroom is needed
-# for genuine independent robustness resampling. Requires the cached
-# allenai/Dolci-Think-SFT-7B snapshot (~34 GB).
-uv run python - <<'PY'
-import sys
-sys.path.insert(0, "src")
-from postdyn.data import materialize_pools
-materialize_pools("configs/domain_sources.json", "data/domain_prompts", n=30720)
-PY
+# Materialize the four fixed domain pools (data-collection step; default
+# n = 2 x max(3d) = 30,720; 7B consumes the deterministic 12,288 prefix. The
+# extra headroom enables genuine independent robustness resampling. Requires
+# the cached allenai/Dolci-Think-SFT-7B snapshot (~34 GB).)
+uv run python scripts/materialize_pools.py
 ```
 
 Benchmark caches (MATH-500, LiveCodeBench `release_v6`, IFEval, MMLU-Pro)

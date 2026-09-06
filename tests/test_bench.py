@@ -23,6 +23,11 @@ class FakeTokenizer:
 
     def __call__(self, prompts, **kwargs):
         rows = prompts if isinstance(prompts, list) else [prompts]
+        if kwargs.get("return_tensors") == "pt":
+            import torch as _torch
+
+            ids = _torch.tensor([[len(p)] for p in rows])
+            return {"input_ids": ids, "attention_mask": _torch.ones_like(ids)}
         return {
             "input_ids": [[len(p)] for p in rows],
             "attention_mask": [[1] for _ in rows],

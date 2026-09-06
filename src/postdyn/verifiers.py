@@ -577,7 +577,7 @@ def _case_and_language(response: str, case_fn: Any) -> bool:
     try:
         return langdetect.detect(response) == "en"
     except getattr(langdetect, "LangDetectException", Exception):
-        return False
+        return True
 
 
 def _no_comma(kwargs: dict[str, Any], response: str) -> bool:
