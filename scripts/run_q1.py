@@ -258,6 +258,23 @@ def _eigensystem_complete(
     )
 
 
+def _processing_order(
+    names: list[str],
+    completed_units: set[tuple[str, int, str]],
+    fully_done: set[str],
+) -> list[str]:
+    """Defer fully completed checkpoints to the tail of the processing loop.
+
+    Lets fresh work (e.g. RLVR/DPO during a migration transfer) use the GPU
+    while already-persisted checkpoints finish arriving. Unit results are
+    independent of processing order; manifests and analysis keep the
+    original schedule order.
+    """
+    return [n for n in names if n not in fully_done] + [
+        n for n in names if n in fully_done
+    ]
+
+
 def _wait_for_inflight(
     run: RunDir,
     checkpoint: str,
@@ -519,7 +536,21 @@ def run(args: argparse.Namespace) -> int:
         uploader.start()
     with tee_log(run_dir):
         pending_joins: dict[str, Any] = {}
-        for index, checkpoint in enumerate(checkpoints):
+        fully_done = {
+            c.name
+            for c in checkpoints
+            if all(
+                (c.name, layer, domain) in completed
+                for layer in layers
+                for domain in domains
+            )
+        }
+        processing = [
+            c
+            for name in _processing_order([c.name for c in checkpoints], completed, fully_done)
+            for c in [next(x for x in checkpoints if x.name == name)]
+        ]
+        for index, checkpoint in enumerate(processing):
             join = pending_joins.pop(checkpoint.name, None)
             if join is not None and not join():
                 print(
@@ -527,8 +558,8 @@ def run(args: argparse.Namespace) -> int:
                     "falling back to blocking download"
                 )
             model, tokenizer = _checkpoint_model(args, checkpoint)
-            if _should_prefetch(args, index, checkpoints):
-                upcoming = checkpoints[index + 1]
+            if _should_prefetch(args, index, processing):
+                upcoming = processing[index + 1]
                 print(f"[prefetch] downloading {upcoming.name}")
                 pending_joins[upcoming.name] = start_prefetch(upcoming)
             try:

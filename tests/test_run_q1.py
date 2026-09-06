@@ -594,3 +594,20 @@ def test_wait_for_inflight_units_sleeps_then_succeeds(
     sleeps.clear()
     awaited = q1._wait_for_inflight(run, "ck", "math", [0], {unit}, timeout_s=5.0)
     assert awaited == [] and not sleeps
+
+
+def test_processing_view_defers_fully_completed_checkpoints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    order: list[str] = []
+    original = q1.extract_layer_hiddens
+
+    def extract(model, tokenizer, prompts, layers, *a, **k):
+        order.append(model.name if hasattr(model, "name") else str(id(model)))
+        return original(model, tokenizer, prompts, layers, *a, **k)
+
+    monkeypatch.setattr(q1, "extract_layer_hiddens", extract)
+    view = q1._processing_order(
+        ["ck_fresh", "ck_done", "ck_partial"], {"ck_done"}, {"ck_done"}
+    )
+    assert view[:2] == ["ck_fresh", "ck_partial"] and view[-1] == "ck_done"
