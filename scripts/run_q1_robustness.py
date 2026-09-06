@@ -86,10 +86,15 @@ def run(args: argparse.Namespace) -> int:
     if n <= 0:
         raise ValueError("selected domain pool contains no records")
     if args.repeats > 1 and pool.actual_n <= n:
-        raise SystemExit(
-            "robustness pools must exceed 3d for genuine resampling; "
-            "rematerialize with the runbook's 2x pool size"
+        # Domains whose unique pool cannot cover the requested sample size
+        # (e.g. general_reasoning with 6,210 unique prompts < n=3d) fall back
+        # to 90% of the pool so the R subsets can still differ genuinely.
+        fallback = pool.actual_n - max(1, pool.actual_n // 10)
+        print(
+            f"[robustness] pool of {pool.actual_n} cannot support distinct "
+            f"subsets at n={n}; resampling at {fallback} (90% of pool)"
         )
+        n = fallback
     checkpoint, (model, tokenizer) = _checkpoint(args)
     output = Path(args.output) if args.output else ROOT / "logs" / "q1_robustness"
     root = output / args.family / checkpoint.name / args.domain
