@@ -37,7 +37,11 @@ there.
 gpu-queue add postdyn-q1-7b-smoke \
     uv run python scripts/run_q1.py --family 7b --scale smoke --output logs/q1/7b-smoke
 
-# Full overnight pipeline: Q1 (22 checkpoints x 10 layers x 4 domains)
+# Full overnight pipeline: Q1 (22 checkpoints x 10 layers x 4 domains).
+# Intermediate checkpoints stream (download -> extract -> prune) with a
+# one-deep prefetch: the next checkpoint downloads while the current one
+# extracts (transient disk bound: two checkpoints; --prefetch none to
+# serialize).
 # -> robustness (R=5) -> Q2 exp1 -> exp2 -> exp3. Resumable per unit.
 REPEATS=5 gpu-queue add postdyn-7b-overnight bash scripts/run_7b_overnight.sh
 ```
