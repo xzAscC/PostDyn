@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 import torch
+from .capture import hidden_capture
 
 
 class _Tokenizer(Protocol):
@@ -150,6 +151,39 @@ def _prepare_prompt(tokenizer: _Tokenizer, prompt: str, chat_template: bool) -> 
     return templated if isinstance(templated, str) else prompt
 
 
+def _pad_encodings(
+    tokenizer: Any, encoded_list: Sequence[dict[str, Any]], max_length: int
+) -> dict[str, Any]:
+    pad = getattr(tokenizer, "pad", None)
+    if callable(pad):
+        return cast(
+            dict[str, Any], pad(encoded_list, padding=True, return_tensors="pt")
+        )
+    del max_length
+    ids = [torch.as_tensor(item["input_ids"]).reshape(-1) for item in encoded_list]
+    masks = [
+        torch.as_tensor(item["attention_mask"]).reshape(-1) for item in encoded_list
+    ]
+    width = max(map(len, ids))
+    pad_id = getattr(tokenizer, "pad_token_id", 0)
+    return {
+        "input_ids": torch.stack(
+            [
+                torch.cat(
+                    (torch.full((width - len(row),), pad_id, dtype=row.dtype), row)
+                )
+                for row in ids
+            ]
+        ),
+        "attention_mask": torch.stack(
+            [
+                torch.cat((torch.zeros(width - len(row), dtype=row.dtype), row))
+                for row in masks
+            ]
+        ),
+    }
+
+
 def extract_layer_hiddens(
     model: object,
     tokenizer: _Tokenizer,
@@ -221,6 +255,7 @@ def extract_layer_hiddens(
     prepared_prompts = [
         _prepare_prompt(tokenizer, prompt, chat_template) for prompt in prompt_list
     ]
+    encoded_prompts: list[dict[str, object]] = []
     if token_budget is None:
         batch_groups: list[list[int]] = [
             list(range(start, min(start + batch_size, len(prompt_list))))
@@ -230,6 +265,7 @@ def extract_layer_hiddens(
         lengths = []
         for text in prepared_prompts:
             encoded = tokenizer(text, truncation=True, max_length=max_length)
+            encoded_prompts.append(encoded)
             ids = cast("Sequence[int]", encoded["input_ids"])
             lengths.append(len(ids))
         order = sorted(range(len(prompt_list)), key=lambda i: -lengths[i])
@@ -255,14 +291,19 @@ def extract_layer_hiddens(
 
     try:
         for group in batch_groups:
-            tokenized_prompts = [prepared_prompts[index] for index in group]
-            inputs = tokenizer(
-                tokenized_prompts,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=max_length,
-            )
+            if token_budget is None:
+                tokenized_prompts = [prepared_prompts[index] for index in group]
+                inputs = tokenizer(
+                    tokenized_prompts,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=max_length,
+                )
+            else:
+                inputs = _pad_encodings(
+                    tokenizer, [encoded_prompts[index] for index in group], max_length
+                )
             model_inputs: dict[str, object] = {
                 key: value.to(device) if isinstance(value, torch.Tensor) else value
                 for key, value in inputs.items()
@@ -270,27 +311,14 @@ def extract_layer_hiddens(
 
             forward = cast(Callable[..., _ModelOutput], model)
             with torch.inference_mode(), torch.no_grad():
-                try:
-                    # Skip full-sequence logits: only hidden states are used
-                    # and the vocabulary projection dominates VRAM otherwise.
-                    outputs = forward(
-                        **model_inputs,
-                        output_hidden_states=True,
-                        logits_to_keep=1,
-                    )
-                except TypeError:
-                    outputs = forward(**model_inputs, output_hidden_states=True)
-            hidden_states = outputs.hidden_states
-            state_count = len(hidden_states)
-            invalid = [
-                layer for layer in layer_list if layer < 0 or layer + 1 >= state_count
-            ]
-            if invalid:
-                message = (
-                    f"Requested layer(s) {invalid} outside model layer range "
-                    f"[0, {state_count - 1})"
-                )
-                raise ValueError(message)
+                with hidden_capture(model, layer_list) as store:
+                    try:
+                        outputs = forward(
+                            **model_inputs,
+                            logits_to_keep=1,
+                        )
+                    except TypeError:
+                        outputs = forward(**model_inputs)
 
             input_ids = model_inputs.get("input_ids")
             if not isinstance(input_ids, torch.Tensor):
@@ -317,7 +345,7 @@ def extract_layer_hiddens(
                 ).amax(dim=1)
 
             for layer in layer_list:
-                hidden = hidden_states[layer + 1]
+                hidden = store.tensors[layer]
                 batch_indices = torch.arange(
                     hidden.shape[0], dtype=torch.long, device=hidden.device
                 )
