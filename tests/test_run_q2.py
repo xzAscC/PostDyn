@@ -401,9 +401,9 @@ def test_exp2_summary_groups_both_subsims_and_variance() -> None:
 
 def test_exp3_has_exact_conditions_and_separate_basis_stages() -> None:
     exp3 = load_script("run_q2_exp3")
-    assert exp3.CONDITIONS == ("baseline", "sft_low", "rlvr_low")
-    assert exp3.basis_stage("sft_low") == "sft"
-    assert exp3.basis_stage("rlvr_low") == "rlvr"
+    assert exp3.CONDITIONS == ("baseline", "sft_only", "replace")
+    assert exp3.SELECTION_CONDITION == "replace"
+
 
 
 def test_cli_rejects_invalid_family_and_alpha() -> None:
@@ -422,3 +422,58 @@ def test_incremental_resume_helpers(tmp_path: Path) -> None:
         + "\n"
     )
     assert exp1.completed_keys(path) == {("math", 0, 1.0, "high")}
+
+
+def test_exp3_uses_aligned_replacement_conditions(tmp_path: Path) -> None:
+    output = tmp_path / "exp3"
+    command = [
+        sys.executable,
+        str(ROOT / "scripts" / "run_q2_exp3.py"),
+        "--family",
+        "7b",
+        "--scale",
+        "tiny",
+        "--q1-root",
+        str(tmp_path / "q1"),
+        "--domains",
+        "math",
+        "--limit",
+        "1",
+        "--output",
+        str(output),
+    ]
+    env = {**os.environ, "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
+    done = subprocess.run(command, capture_output=True, text=True, env=env)
+    assert done.returncode == 0, done.stderr
+
+    for condition in ("baseline", "sft_only", "replace"):
+        assert (output / f"eval_math_{condition}.jsonl").is_file()
+    validation = [
+        json.loads(line)
+        for line in (output / "validation.jsonl").read_text().splitlines()
+    ]
+    assert validation
+    assert {row["condition"] for row in validation} == {"replace"}
+    summary = json.loads((output / "summary.json").read_text())
+    assert "math" in summary["selected"]
+    assert summary["alignment"]["math"]
+
+
+def test_exp3_replacement_formula_matches_slide_spec() -> None:
+    exp3 = load_script("run_q2_exp3")
+    exp1 = load_script("run_q2_exp1")
+    from postdyn.intervention import procrustes_align, replace_basis
+
+    torch.manual_seed(2)
+    d, k = 9, 3
+    U_s, _ = torch.linalg.qr(torch.randn(d, k))
+    U_r, _ = torch.linalg.qr(torch.randn(d, k))
+    rotation = procrustes_align(U_r, U_s)
+    h = torch.randn(d)
+
+    assert exp3.CONDITIONS == ("baseline", "sft_only", "replace")
+    assert exp3.SELECTION_CONDITION == "replace"
+    spec = h - U_s @ (U_s.T @ h) + (U_r @ rotation) @ (U_s.T @ h)
+    torch.testing.assert_close(
+        replace_basis(h, U_s, U_r @ rotation, alpha=1.0), spec, atol=1e-6, rtol=1e-6
+    )

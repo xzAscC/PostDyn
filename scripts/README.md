@@ -68,7 +68,9 @@ uv run python scripts/run_q1.py --family 32b --scale full \
 uv run python scripts/run_q1_robustness.py --family 32b --repeats 5 \
     --dtype bfloat16 --device cuda --output logs/q1_robustness/32b
 
-# Q2 experiments (require the 32B Q1 final bases above)
+# Q2 experiments (require the 32B Q1 final bases above); exp3 replaces the
+# SFT low-variance component with the Procrustes-aligned RLVR counterpart
+# (h - U_S U_S'h + U_R R* U_S'h), with sft_only removal as control
 uv run python scripts/run_q2_exp1.py --family 32b --q1-root logs/q1/32b \
     --dtype bfloat16 --output logs/q2/32b/exp1
 uv run python scripts/run_q2_exp2.py --family 32b --q1-root logs/q1/32b \
