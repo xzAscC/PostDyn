@@ -158,8 +158,8 @@ def test_q1_resume_identity_rejects_same_names_from_different_sft_schedule(
     assert q1.main(args) == 0
     changed = args + ["--sft-lr", "5e-5"]
     # Tiny scale selects only the four finals (revision "main" for every
- # sft_lr), so the checkpoint pairs match and sft_lr alone carries the
- # branch identity.
+    # sft_lr), so the checkpoint pairs match and sft_lr alone carries the
+    # branch identity.
     with pytest.raises(SystemExit, match="sft_lr"):
         q1.main(changed)
 
@@ -219,6 +219,70 @@ def test_q1_recomputes_unit_when_safetensors_is_missing(tmp_path: Path) -> None:
 
     assert q1.main(_run_args(output)) == 0
     assert missing.is_file()
+
+
+def test_extracts_only_missing_layers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "q1"
+    args = _run_args(output) + ["--device", "cpu"]
+    assert q1.main(args) == 0
+
+    missing = output / "eigensystems" / "base" / "1" / "math.safetensors"
+    missing.unlink()
+    calls: list[list[int]] = []
+    original = q1.extract_layer_hiddens
+
+    def extract(*args: object, **kwargs: object) -> dict[int, torch.Tensor]:
+        calls.append(cast(list[int], args[3]))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(q1, "extract_layer_hiddens", extract)
+    assert q1.main(args) == 0
+    assert calls == [[1]]
+
+
+def test_skips_forward_when_domain_complete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "q1"
+    args = _run_args(output) + ["--device", "cpu"]
+    assert q1.main(args) == 0
+    monkeypatch.setattr(
+        q1,
+        "extract_layer_hiddens",
+        lambda *args, **kwargs: pytest.fail("complete domain was extracted"),
+    )
+    assert q1.main(args) == 0
+
+
+def test_analysis_eigensystem_lru(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "q1"
+    args = _run_args(output) + ["--device", "cpu"]
+    assert q1.main(args) == 0
+    calls: list[Path] = []
+    original = q1.load_eigensystem
+
+    def load(path: Path) -> tuple[torch.Tensor, torch.Tensor]:
+        calls.append(path)
+        return original(path)
+
+    monkeypatch.setattr(q1, "load_eigensystem", load)
+    checkpoints = [q1.MODEL_FAMILIES["7b"].checkpoints()[0]]
+    q1._write_analysis(q1.RunDir(output), checkpoints, [0, 1], ["math", "code"])
+    assert len(calls) == len({path for path in calls}) == 4
+
+
+def test_analysis_output_unchanged(tmp_path: Path) -> None:
+    output = tmp_path / "q1"
+    args = _run_args(output) + ["--device", "cpu"]
+    assert q1.main(args) == 0
+    summary = output / "analysis" / "summary.json"
+    expected = summary.read_bytes()
+    assert q1.main(args) == 0
+    assert summary.read_bytes() == expected
 
 
 def test_q1_rejects_resume_with_different_domains(tmp_path: Path) -> None:
@@ -315,9 +379,7 @@ def test_q1_prefetch_overlaps_next_download_with_extraction(
     checkpoints = q1.MODEL_FAMILIES["7b"].checkpoints()
     selected = checkpoints[:3]
 
-    monkeypatch.setattr(
-        q1, "_select_checkpoints", lambda args, family: selected
-    )
+    monkeypatch.setattr(q1, "_select_checkpoints", lambda args, family: selected)
 
     def fake_model(args, checkpoint):
         events.append(f"load:{checkpoint.name}")
@@ -374,7 +436,9 @@ def test_q1_prefetch_none_never_starts(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         q1,
         "_checkpoint_model",
-        lambda args, checkpoint: events.append(f"load:{checkpoint.name}") or (object(), object()),
+        lambda args, checkpoint: (
+            events.append(f"load:{checkpoint.name}") or (object(), object())
+        ),
     )
     monkeypatch.setattr(
         q1,
@@ -403,14 +467,14 @@ def test_robustness_pool_smaller_than_requested_falls_back_to_90_percent(
     records = tuple(
         PromptRecord(f"gr-{i}", f"general prompt {i}", "science") for i in range(100)
     )
-    pool = DomainPool(
-        "general_reasoning", records, 30720, 100, "rev", 42, "fp"
-    )
+    pool = DomainPool("general_reasoning", records, 30720, 100, "rev", 42, "fp")
     monkeypatch.setattr(robustness, "_pool", lambda args, n: pool)
     from postdyn.config import CheckpointRef
 
     rlvr_final = CheckpointRef("rlvr", "allenai/Olmo-3-7B-Think", "main", "rlvr")
-    monkeypatch.setattr(robustness, "_checkpoint", lambda args: (rlvr_final, (object(), object())))
+    monkeypatch.setattr(
+        robustness, "_checkpoint", lambda args: (rlvr_final, (object(), object()))
+    )
     monkeypatch.setattr(
         robustness,
         "extract_layer_hiddens",
@@ -436,7 +500,14 @@ def test_robustness_pool_smaller_than_requested_falls_back_to_90_percent(
     ids = []
     for repeat in range(3):
         payload = json.loads(
-            (tmp_path / "rob" / "7b" / "rlvr" / "general_reasoning" / f"repeat_{repeat}.json").read_text()
+            (
+                tmp_path
+                / "rob"
+                / "7b"
+                / "rlvr"
+                / "general_reasoning"
+                / f"repeat_{repeat}.json"
+            ).read_text()
         )
         repeat_n.add(payload["n"])
         ids.append(set(payload["record_ids"]))

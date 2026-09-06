@@ -76,6 +76,15 @@ class _TinyConfig:
     n_layers = 2
 
 
+class _TinyBlock(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.linear = torch.nn.Linear(8, 8)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.tanh(self.linear(x))
+
+
 class _TinyModel(torch.nn.Module):
     """Small deterministic CPU model used by the offline tiny scale."""
 
@@ -84,11 +93,11 @@ class _TinyModel(torch.nn.Module):
         generator = torch.Generator().manual_seed(seed)
         self.config = _TinyConfig()
         self.embedding = torch.nn.Embedding(64, 8)
-        self.layers = torch.nn.ModuleList(torch.nn.Linear(8, 8) for _ in range(2))
+        self.layers = torch.nn.ModuleList(_TinyBlock() for _ in range(2))
         with torch.no_grad():
             self.embedding.weight.copy_(torch.randn(64, 8, generator=generator))
             for layer in self.layers:
-                linear = cast(torch.nn.Linear, layer)
+                linear = cast(_TinyBlock, layer).linear
                 linear.weight.copy_(torch.randn(8, 8, generator=generator) / 3)
                 linear.bias.copy_(torch.randn(8, generator=generator) / 10)
 
@@ -102,7 +111,7 @@ class _TinyModel(torch.nn.Module):
         state = self.embedding(input_ids)
         states = [state]
         for layer in self.layers:
-            state = torch.tanh(layer(state))
+            state = layer(state)
             states.append(state)
         return type("TinyOutput", (), {"hidden_states": tuple(states)})()
 
@@ -252,16 +261,32 @@ def _write_analysis(
     run: RunDir, checkpoints: list[CheckpointRef], layers: list[int], domains: list[str]
 ) -> None:
     bands = ("high", "mid", "low")
+    eigensystem_cache: dict[
+        tuple[str, int, str], tuple[torch.Tensor, torch.Tensor]
+    ] = {}
+    cache_order: list[tuple[str, int, str]] = []
+
+    def cached_eigensystem(
+        checkpoint: str, layer: int, domain: str
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        key = (checkpoint, layer, domain)
+        cached = eigensystem_cache.get(key)
+        if cached is not None:
+            cache_order.remove(key)
+            cache_order.append(key)
+            return cached
+        loaded = load_eigensystem(_base_path(run, checkpoint, layer, domain))
+        eigensystem_cache[key] = loaded
+        cache_order.append(key)
+        if len(cache_order) > 8:
+            del eigensystem_cache[cache_order.pop(0)]
+        return loaded
 
     def band_comparison(
         first: CheckpointRef, second: CheckpointRef, layer: int, domain: str
     ) -> dict[str, Any]:
-        first_values, first_vectors = load_eigensystem(
-            _base_path(run, first.name, layer, domain)
-        )
-        second_values, second_vectors = load_eigensystem(
-            _base_path(run, second.name, layer, domain)
-        )
+        first_values, first_vectors = cached_eigensystem(first.name, layer, domain)
+        second_values, second_vectors = cached_eigensystem(second.name, layer, domain)
         slices = band_slices(first_vectors.shape[0])
         subsim_bands = {
             band: subsim(first_vectors[:, sl], second_vectors[:, sl])
@@ -282,13 +307,11 @@ def _write_analysis(
     for layer in layers:
         for domain in domains:
             # Keep only the previous and current eigensystems resident while shifting.
-            prev_values, prev_vectors = load_eigensystem(
-                _base_path(run, checkpoints[0].name, layer, domain)
+            prev_values, prev_vectors = cached_eigensystem(
+                checkpoints[0].name, layer, domain
             )
             for pair_index, second in enumerate(checkpoints[1:]):
-                cur_values, cur_vectors = load_eigensystem(
-                    _base_path(run, second.name, layer, domain)
-                )
+                cur_values, cur_vectors = cached_eigensystem(second.name, layer, domain)
                 slices = band_slices(prev_vectors.shape[0])
                 subsim_bands = {
                     band: subsim(prev_vectors[:, sl], cur_vectors[:, sl])
@@ -341,8 +364,8 @@ def _write_analysis(
         )
         for layer in layers:
             for domain in domains:
-                current_values, current_vectors = load_eigensystem(
-                    _base_path(run, checkpoint.name, layer, domain)
+                current_values, current_vectors = cached_eigensystem(
+                    checkpoint.name, layer, domain
                 )
                 metrics = spectral_metrics(current_values)
                 del current_values, current_vectors
@@ -498,7 +521,7 @@ def run(args: argparse.Namespace) -> int:
                                 r.prompt
                                 for r in pools[domain].records[: n_by_domain[domain]]
                             ],
-                            layers,
+                            missing,
                             args.batch_size,
                             args.max_length,
                             token_budget=args.token_budget,
@@ -507,7 +530,7 @@ def run(args: argparse.Namespace) -> int:
                         )
                         print(
                             f"checkpoint={checkpoint.name} domain={domain} "
-                            f"extracted {len(layers)} layers "
+                            f"extracted {len(missing)} layers "
                             f"in {time.monotonic() - started:.2f}s"
                         )
                     for layer in layers:
@@ -518,9 +541,7 @@ def run(args: argparse.Namespace) -> int:
                         covariance = OnlineCovariance()
                         covariance.update(hidden[layer])
                         values, vectors = eigensystem(covariance.covariance)
-                        unit_base = _base_path(
-                            run_dir, checkpoint.name, layer, domain
-                        )
+                        unit_base = _base_path(run_dir, checkpoint.name, layer, domain)
                         save_eigensystem(unit_base, values.cpu(), vectors.cpu())
                         if uploader:
                             uploader.submit(
