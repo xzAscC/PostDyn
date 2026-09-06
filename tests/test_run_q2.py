@@ -401,7 +401,7 @@ def test_exp2_summary_groups_both_subsims_and_variance() -> None:
 
 def test_exp3_has_exact_conditions_and_separate_basis_stages() -> None:
     exp3 = load_script("run_q2_exp3")
-    assert exp3.CONDITIONS == ("baseline", "sft_only", "replace")
+    assert exp3.CONDITIONS == ("baseline", "own_only", "replace")
     assert exp3.SELECTION_CONDITION == "replace"
 
 
@@ -446,7 +446,7 @@ def test_exp3_uses_aligned_replacement_conditions(tmp_path: Path) -> None:
     done = subprocess.run(command, capture_output=True, text=True, env=env)
     assert done.returncode == 0, done.stderr
 
-    for condition in ("baseline", "sft_only", "replace"):
+    for condition in ("baseline", "own_only", "replace"):
         assert (output / f"eval_math_{condition}.jsonl").is_file()
     validation = [
         json.loads(line)
@@ -471,9 +471,51 @@ def test_exp3_replacement_formula_matches_slide_spec() -> None:
     rotation = procrustes_align(U_r, U_s)
     h = torch.randn(d)
 
-    assert exp3.CONDITIONS == ("baseline", "sft_only", "replace")
+    assert exp3.CONDITIONS == ("baseline", "own_only", "replace")
     assert exp3.SELECTION_CONDITION == "replace"
-    spec = h - U_s @ (U_s.T @ h) + (U_r @ rotation) @ (U_s.T @ h)
+    spec = h - U_s @ (U_s.T @ h) + (U_r @ rotation) @ (U_s.T @ h)  # noqa: F841
     torch.testing.assert_close(
         replace_basis(h, U_s, U_r @ rotation, alpha=1.0), spec, atol=1e-6, rtol=1e-6
     )
+
+
+def test_exp1_and_exp3_run_on_both_model_checkpoints(tmp_path: Path) -> None:
+    env = {**os.environ, "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
+
+    def run(script: str, extra: list[str], out: Path) -> None:
+        done = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / script),
+                "--family",
+                "7b",
+                "--scale",
+                "tiny",
+                "--q1-root",
+                str(tmp_path / "q1"),
+                "--domains",
+                "math",
+                "--limit",
+                "1",
+                "--output",
+                str(out),
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert done.returncode == 0, done.stderr
+
+    run("run_q2_exp1.py", ["--model", "sft"], tmp_path / "exp1_sft")
+    identity = json.loads((tmp_path / "exp1_sft" / "manifest.json").read_text())
+    assert identity["model"] == "sft"
+    assert identity["checkpoints"] == [["allenai/Olmo-3-7B-Think-SFT", "main"]]
+
+    run("run_q2_exp3.py", ["--model", "rlvr"], tmp_path / "exp3_rlvr")
+    mirror = json.loads((tmp_path / "exp3_rlvr" / "manifest.json").read_text())
+    assert mirror["model"] == "rlvr"
+    for condition in ("baseline", "own_only", "replace"):
+        assert (tmp_path / "exp3_rlvr" / f"eval_math_{condition}.jsonl").is_file()
+    summary = json.loads((tmp_path / "exp3_rlvr" / "summary.json").read_text())
+    assert summary["alignment"]["math"]

@@ -28,7 +28,14 @@ completed_keys = common.completed_keys
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    return common.add_common_args(argparse.ArgumentParser()).parse_args(argv)
+    parser = common.add_common_args(argparse.ArgumentParser())
+    parser.add_argument(
+        "--model",
+        choices=("rlvr", "sft"),
+        default="rlvr",
+        help="checkpoint to intervene on (covariance bases match it)",
+    )
+    return parser.parse_args(argv)
 
 
 def require_bases(
@@ -118,7 +125,8 @@ def identity_for(args: argparse.Namespace) -> dict[str, Any]:
         "device": args.device,
         "batch_size": args.batch_size,
         "limit": args.limit,
-        "checkpoints": common.checkpoint_pairs(args.family, ("rlvr",)),
+        "model": args.model,
+        "checkpoints": common.checkpoint_pairs(args.family, (args.model,)),
         "domains": args.domains,
         "k": cfg.d_model // 3,
         "alphas": list(ALPHAS),
@@ -129,7 +137,7 @@ def identity_for(args: argparse.Namespace) -> dict[str, Any]:
 
 def run(args: argparse.Namespace) -> None:
     cfg = common.family_config(args.family, args.scale)
-    output = common.output_root(args, "exp1")
+    output = common.output_root(args, f"exp1_{args.model}")
     q1_root = args.q1_root
     output.mkdir(parents=True, exist_ok=True)
     common.write_identity_manifest(
@@ -138,13 +146,13 @@ def run(args: argparse.Namespace) -> None:
     )
     uploader = common.start_uploader(args, ROOT)
     if args.scale == "tiny":
-        common.tiny_bases(q1_root, args.domains, cfg.layers, ("rlvr",))
+        common.tiny_bases(q1_root, args.domains, cfg.layers, (args.model,))
     run_dir = RunDir(output)
     if args.scale != "tiny":
         for domain in args.domains:
-            require_bases(q1_root, domain, cfg.layers)
+            require_bases(q1_root, domain, cfg.layers, args.model)
     with tee_log(run_dir):
-        model, tokenizer = common.load_runtime(args, "rlvr")
+        model, tokenizer = common.load_runtime(args, args.model)
         prior_selected = (
             json.loads((output / "selected.json").read_text())
             if (output / "selected.json").is_file()
@@ -154,7 +162,7 @@ def run(args: argparse.Namespace) -> None:
         for domain in args.domains:
             benchmark = BENCHMARKS[domain]
             val, test = common.load_items(domain, args.limit, args.scale == "tiny")
-            eig = require_bases(q1_root, domain, cfg.layers)
+            eig = require_bases(q1_root, domain, cfg.layers, args.model)
             k = cfg.d_model // 3
             bases = {
                 "high": {l: v[1][:, :k] for l, v in eig.items()},
