@@ -92,3 +92,42 @@ def test_mean_hidden_norm_uses_final_tokens_with_left_padding() -> None:
             ]
             manual.append(hidden[0, -1].norm())
     assert measured == pytest.approx(torch.stack(manual).mean().item())
+
+
+def test_procrustes_align_recovers_rotated_basis() -> None:
+    from postdyn.intervention import procrustes_align
+
+    torch.manual_seed(0)
+    d, k = 12, 4
+    U_s, _ = torch.linalg.qr(torch.randn(d, k))
+    Q, _ = torch.linalg.qr(torch.randn(k, k))
+    U_r = U_s @ Q
+
+    rotation = procrustes_align(U_r, U_s)
+    torch.testing.assert_close(U_r @ rotation, U_s, atol=1e-5, rtol=1e-5)
+    identity = torch.eye(k)
+    torch.testing.assert_close(rotation.T @ rotation, identity, atol=1e-5, rtol=1e-5)
+
+
+def test_replace_basis_matches_spec_formula() -> None:
+    from postdyn.intervention import replace_basis
+
+    torch.manual_seed(1)
+    d, k = 10, 3
+    U_from, _ = torch.linalg.qr(torch.randn(d, k))
+    U_to, _ = torch.linalg.qr(torch.randn(d, k))
+    h = torch.randn(d)
+
+    got = replace_basis(h, U_from, U_to, alpha=1.0)
+    want = h - U_from @ (U_from.T @ h) + U_to @ (U_from.T @ h)
+    torch.testing.assert_close(got, want, atol=1e-6, rtol=1e-6)
+
+    # components outside span(U_from) are untouched; alpha scales the swap
+    orthogonal = torch.randn(d)
+    orthogonal -= U_from @ (U_from.T @ orthogonal)
+    combined = h + orthogonal
+    swapped = replace_basis(combined, U_from, U_to, alpha=0.5)
+    delta = swapped - combined
+    torch.testing.assert_close(
+        delta, 0.5 * (U_to - U_from) @ (U_from.T @ combined), atol=1e-6, rtol=1e-6
+    )

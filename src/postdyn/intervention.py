@@ -61,6 +61,73 @@ def _layer(model: Any, index: int) -> Any:
     raise AttributeError("model has no transformer.h or model.layers blocks")
 
 
+def procrustes_align(U_source: Tensor, U_target: Tensor) -> Tensor:
+    """Orthogonal map R* = A B^T from the SVD of U_source^T U_target.
+
+    Minimizes ||U_target - U_source R||_F over orthogonal R (slide formula:
+    U_R^T U_S = A Sigma B^T gives R* = A B^T).
+    """
+    if U_source.shape != U_target.shape:
+        raise ValueError("alignment bases must share shape (d, k)")
+    cross = (U_source.T.to(torch.float64)) @ U_target.to(torch.float64)
+    A, _, Bt = torch.linalg.svd(cross)
+    return (A @ Bt).to(dtype=U_source.dtype)
+
+
+def replace_basis(
+    h: Tensor,
+    U_from: Tensor,
+    U_to: Tensor,
+    alpha: float = 1.0,
+) -> Tensor:
+    """Swap the ``U_from``-spanned component for its ``U_to`` re-expression.
+
+    h' = h + alpha * (U_to - U_from) @ (U_from^T h); at alpha = 1 this is
+    h - U_from U_from^T h + U_to U_from^T h (the slide's boxed replacement).
+    """
+    if U_from.shape != U_to.shape:
+        raise ValueError("replacement bases must share shape (d, k)")
+    work_dtype = torch.promote_types(h.dtype, U_from.dtype)
+    if work_dtype in (torch.float16, torch.bfloat16):
+        work_dtype = torch.float32
+    work = h.to(work_dtype)
+    source = U_from.to(device=h.device, dtype=work_dtype)
+    target = U_to.to(device=h.device, dtype=work_dtype)
+    coefficients = source.T @ work
+    return work + alpha * ((target - source) @ coefficients)
+
+
+def register_replacement_hook(
+    model: Any,
+    layer: int,
+    U_from: Tensor,
+    U_to: Tensor,
+    alpha: float,
+) -> torch.utils.hooks.RemovableHandle:
+    """Register a removable post-block residual replacement."""
+
+    def hook(_module: Any, _inputs: tuple[Any, ...], output: Any) -> Any:
+        if isinstance(output, tuple):
+            if not output or not torch.is_tensor(output[0]):
+                raise TypeError("block output tuple must start with hidden states")
+            return (
+                replace_basis(
+                    output[0],
+                    U_from.to(output[0].device),
+                    U_to.to(output[0].device),
+                    alpha,
+                ),
+                *output[1:],
+            )
+        if torch.is_tensor(output):
+            return replace_basis(
+                output, U_from.to(output.device), U_to.to(output.device), alpha
+            )
+        raise TypeError("block output must be a tensor or tuple")
+
+    return _layer(model, layer).register_forward_hook(hook)
+
+
 def register_ablation_hook(
     model: Any,
     layer: int,

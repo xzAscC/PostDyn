@@ -12,17 +12,15 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 import scripts.q2_common as common
 import scripts.run_q2_exp1 as exp1
 from postdyn.config import ALPHAS, BENCHMARKS
+from postdyn.intervention import procrustes_align
 from postdyn.persistence import RunDir, tee_log, atomic_write_json
+from postdyn.spectra import subsim
 
-CONDITIONS = ("baseline", "sft_low", "rlvr_low")
-
-
-def basis_stage(condition: str) -> str:
-    if condition == "sft_low":
-        return "sft"
-    if condition == "rlvr_low":
-        return "rlvr"
-    raise ValueError(f"baseline has no basis stage: {condition}")
+# Slide spec: replace the SFT low-variance component by its Procrustes-aligned
+# RLVR counterpart (h - U_S U_S^T h + U_R R* U_S^T h). "sft_only" keeps the
+# removal half as the control isolating what the RLVR re-expression adds.
+CONDITIONS = ("baseline", "sft_only", "replace")
+SELECTION_CONDITION = "replace"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -71,24 +69,27 @@ def run(args: argparse.Namespace) -> None:
     with tee_log(RunDir(output)):
         model, tokenizer = common.load_runtime(args, "sft")
         selected: dict[str, dict[str, Any]] = {}
+        alignment: dict[str, dict[int, float]] = {}
         for domain in args.domains:
             benchmark = BENCHMARKS[domain]
             val, test = common.load_items(domain, args.limit, args.scale == "tiny")
             sft = common.require_bases(args.q1_root, domain, cfg.layers, "sft")
             rlvr = common.require_bases(args.q1_root, domain, cfg.layers, "rlvr")
-            low = {
-                "sft_low": {l: sft[l][1][:, -(cfg.d_model // 3) :] for l in cfg.layers},
-                "rlvr_low": {
-                    l: rlvr[l][1][:, -(cfg.d_model // 3) :] for l in cfg.layers
-                },
+            k = cfg.d_model // 3
+            u_s = {l: sft[l][1][:, -k:] for l in cfg.layers}
+            u_r = {l: rlvr[l][1][:, -k:] for l in cfg.layers}
+            u_aligned = {
+                l: u_r[l] @ procrustes_align(u_r[l], u_s[l]) for l in cfg.layers
             }
+            alignment[domain] = {l: subsim(u_s[l], u_r[l]) for l in cfg.layers}
             scores = []
             validation_path = output / "validation.jsonl"
             completed = common.completed_item_keys(validation_path)
             for layer in cfg.layers:
                 for alpha in ALPHAS:
                     if all(
-                        (domain, layer, alpha, "sft_low", item.id) in completed
+                        (domain, layer, alpha, SELECTION_CONDITION, item.id)
+                        in completed
                         for item in val
                     ):
                         continue
@@ -99,10 +100,11 @@ def run(args: argparse.Namespace) -> None:
                         benchmark,
                         layer,
                         alpha,
-                        low["sft_low"][layer],
+                        None,
                         args.batch_size,
                         common.CAPS[benchmark][0],
-                        "sft_low",
+                        SELECTION_CONDITION,
+                        replacement=(u_s[layer], u_aligned[layer]),
                     )
                     scores.append(
                         {
@@ -117,7 +119,7 @@ def run(args: argparse.Namespace) -> None:
                             domain,
                             layer,
                             alpha,
-                            "sft_low",
+                            SELECTION_CONDITION,
                             row["item_id"],
                         ) not in completed:
                             common.append(
@@ -126,7 +128,7 @@ def run(args: argparse.Namespace) -> None:
                                     "domain": domain,
                                     "layer": layer,
                                     "alpha": alpha,
-                                    "condition": "sft_low",
+                                    "condition": SELECTION_CONDITION,
                                     "item_id": row["item_id"],
                                     "correct": row["correct"],
                                     "accuracy": scores[-1]["accuracy"],
@@ -134,13 +136,18 @@ def run(args: argparse.Namespace) -> None:
                             )
             expected = len(cfg.layers) * len(ALPHAS)
             if len(scores) < expected:
-                scores = common.validation_scores(validation_path, domain, {"sft_low"})
+                scores = common.validation_scores(
+                    validation_path, domain, {SELECTION_CONDITION}
+                )
             selected[domain] = exp1.select_best(scores)
             choice = selected[domain]
             for condition in CONDITIONS:
-                basis = (
-                    None if condition == "baseline" else low[condition][choice["layer"]]
+                replacement = (
+                    (u_s[choice["layer"]], u_aligned[choice["layer"]])
+                    if condition == "replace"
+                    else None
                 )
+                basis = u_s[choice["layer"]] if condition == "sft_only" else None
                 rows = exp1._evaluate(
                     model,
                     tokenizer,
@@ -152,6 +159,7 @@ def run(args: argparse.Namespace) -> None:
                     args.batch_size,
                     common.CAPS[benchmark][1],
                     condition,
+                    replacement=replacement,
                 )
                 path = output / f"eval_{domain}_{condition}.jsonl"
                 done = (
@@ -174,7 +182,9 @@ def run(args: argparse.Namespace) -> None:
                             },
                         )
         atomic_write_json(output / "selected.json", selected)
-        atomic_write_json(output / "summary.json", selected)
+        atomic_write_json(
+            output / "summary.json", {"selected": selected, "alignment": alignment}
+        )
         common.finish_uploader(uploader, output)
 
 

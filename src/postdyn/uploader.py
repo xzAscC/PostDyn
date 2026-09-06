@@ -87,7 +87,7 @@ class ArtifactUploader:
 
         try:
             self._resolve_api().create_repo(
-                self._repo_id, repo_type="dataset", private=True, exist_ok=True
+                self._repo_id, repo_type="dataset", private=False, exist_ok=True
             )
         except Exception as error:
             _logger.warning("repo create failed for %s: %s", self._repo_id, error)

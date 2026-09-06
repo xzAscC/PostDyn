@@ -64,14 +64,21 @@ def _evaluate(
     batch_size: int,
     max_new_tokens: int,
     condition: str,
+    replacement: tuple[torch.Tensor, torch.Tensor] | None = None,
 ) -> list[dict[str, Any]]:
     from postdyn import bench
+    from postdyn.intervention import register_replacement_hook
 
-    handle = (
-        register_ablation_hook(model, layer, basis, alpha, "dimensionless")
-        if basis is not None
-        else None
-    )
+    if replacement is not None:
+        handle: Any = register_replacement_hook(
+            model, layer, replacement[0], replacement[1], alpha
+        )
+    else:
+        handle = (
+            register_ablation_hook(model, layer, basis, alpha, "dimensionless")
+            if basis is not None
+            else None
+        )
     try:
         generations = bench.generate(
             model,
