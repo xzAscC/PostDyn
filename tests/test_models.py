@@ -99,3 +99,35 @@ def test_prune_revision_cache_undecodable_ref_is_noop(tmp_path: Path) -> None:
     models.prune_revision_cache(_checkpoint(), hub_cache=tmp_path)
 
     assert ref.exists()
+
+
+def test_start_prefetch_downloads_in_background(monkeypatch) -> None:
+    from postdyn import models
+    from postdyn.config import CheckpointRef
+
+    calls = []
+
+    def fake_snapshot_download(repo, revision=None, allow_patterns=None):
+        calls.append((repo, revision, tuple(allow_patterns or ())))
+        return f"/cache/{repo}@{revision}"
+
+    monkeypatch.setattr(models, "snapshot_download", fake_snapshot_download)
+    checkpoint = CheckpointRef("sft_step6000", "allenai/Olmo-3-7B-Think-SFT", "step6000", "sft")
+
+    join = models.start_prefetch(checkpoint)
+    assert join() is True
+    assert calls == [("allenai/Olmo-3-7B-Think-SFT", "step6000", ("*.safetensors", "*.json"))]
+
+
+def test_start_prefetch_join_reports_failure(monkeypatch) -> None:
+    from postdyn import models
+    from postdyn.config import CheckpointRef
+
+    def fake_snapshot_download(repo, revision=None, allow_patterns=None):
+        raise OSError("network down")
+
+    monkeypatch.setattr(models, "snapshot_download", fake_snapshot_download)
+    checkpoint = CheckpointRef("sft_step6000", "allenai/Olmo-3-7B-Think-SFT", "step6000", "sft")
+
+    join = models.start_prefetch(checkpoint)
+    assert join() is False

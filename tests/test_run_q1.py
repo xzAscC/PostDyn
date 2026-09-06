@@ -306,3 +306,90 @@ def test_cli_validation_rejects_bad_family_and_small_repeat_count() -> None:
         q1.parse_args(["--family", "bad", "--scale", "tiny"])
     with pytest.raises(SystemExit):
         robustness.parse_args(["--family", "7b", "--repeats", "1"])
+
+
+def test_q1_prefetch_overlaps_next_download_with_extraction(
+    tmp_path: Path, monkeypatch
+) -> None:
+    events: list[str] = []
+    checkpoints = q1.MODEL_FAMILIES["7b"].checkpoints()
+    selected = checkpoints[:3]
+
+    monkeypatch.setattr(
+        q1, "_select_checkpoints", lambda args, family: selected
+    )
+
+    def fake_model(args, checkpoint):
+        events.append(f"load:{checkpoint.name}")
+        return object(), object()
+
+    def fake_extract(model, tokenizer, prompts, layers, *args, **kwargs):
+        events.append(f"extract:{prompts[0].split()[0]}")
+        return {layer: torch.zeros(1, 8) for layer in layers}
+
+    def fake_prefetch(checkpoint):
+        events.append(f"start:{checkpoint.name}")
+
+        def join():
+            events.append(f"join:{checkpoint.name}")
+            return True
+
+        return join
+
+    monkeypatch.setattr(q1, "_checkpoint_model", fake_model)
+    monkeypatch.setattr(q1, "extract_layer_hiddens", fake_extract)
+    monkeypatch.setattr(q1, "start_prefetch", fake_prefetch)
+    monkeypatch.setattr(q1, "release_model", lambda model: None)
+    monkeypatch.setattr(q1, "prune_revision_cache", lambda checkpoint: None)
+    monkeypatch.setattr(
+        q1,
+        "_should_prefetch",
+        lambda args, index, checkpoints: index + 1 < len(checkpoints),
+    )
+
+    args = _run_args(tmp_path / "q1")
+    args += ["--prefetch", "next"]
+    assert q1.main(args) == 0
+    assert events == [
+        "load:base",
+        "start:sft_step1000",
+        "extract:math",
+        "extract:code",
+        "join:sft_step1000",
+        "load:sft_step1000",
+        "start:sft_step6000",
+        "extract:math",
+        "extract:code",
+        "join:sft_step6000",
+        "load:sft_step6000",
+        "extract:math",
+        "extract:code",
+    ]
+
+
+def test_q1_prefetch_none_never_starts(tmp_path: Path, monkeypatch) -> None:
+    events: list[str] = []
+    checkpoints = q1.MODEL_FAMILIES["7b"].checkpoints()
+    monkeypatch.setattr(q1, "_select_checkpoints", lambda args, family: checkpoints[:2])
+    monkeypatch.setattr(
+        q1,
+        "_checkpoint_model",
+        lambda args, checkpoint: events.append(f"load:{checkpoint.name}") or (object(), object()),
+    )
+    monkeypatch.setattr(
+        q1,
+        "start_prefetch",
+        lambda checkpoint: events.append("start") or (lambda: True),
+    )
+    monkeypatch.setattr(
+        q1,
+        "extract_layer_hiddens",
+        lambda model, tokenizer, prompts, layers, *a, **k: {
+            layer: torch.zeros(1, 8) for layer in layers
+        },
+    )
+    monkeypatch.setattr(q1, "release_model", lambda model: None)
+    monkeypatch.setattr(q1, "prune_revision_cache", lambda checkpoint: None)
+
+    assert q1.main(_run_args(tmp_path / "q1") + ["--prefetch", "none"]) == 0
+    assert "start" not in events

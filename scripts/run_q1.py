@@ -20,7 +20,12 @@ import torch
 from postdyn.config import DOMAINS, MODEL_FAMILIES, CheckpointRef, FamilyConfig
 from postdyn.data import DomainPool, PromptRecord, load_pool
 from postdyn.extract import OnlineCovariance, extract_layer_hiddens
-from postdyn.models import load_model, prune_revision_cache, release_model
+from postdyn.models import (
+    load_model,
+    prune_revision_cache,
+    release_model,
+    start_prefetch,
+)
 from postdyn.persistence import (
     RunDir,
     append_jsonl,
@@ -134,6 +139,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--token-budget", type=int, default=4096)
     parser.add_argument("--attention-budget", type=int, default=8_388_608)
     parser.add_argument("--allow-short-pool", action="store_true")
+    parser.add_argument(
+        "--prefetch",
+        choices=("none", "next"),
+        default="next",
+        help="overlap the next checkpoint's download with extraction "
+        "(transient disk bound: two checkpoints; 'none' serializes)",
+    )
     parser.add_argument("--max-length", type=int, default=2048)
     parser.add_argument("--limit", type=int, default=None)
     return parser.parse_args(argv)
@@ -176,6 +188,16 @@ def _domains(args: argparse.Namespace) -> list[str]:
     if unknown:
         raise ValueError(f"unknown domain(s): {sorted(unknown)}")
     return domains
+
+
+def _should_prefetch(
+    args: argparse.Namespace, index: int, checkpoints: list[CheckpointRef]
+) -> bool:
+    return (
+        args.prefetch == "next"
+        and args.scale != "tiny"
+        and index + 1 < len(checkpoints)
+    )
 
 
 def _load_pools(
@@ -430,8 +452,19 @@ def run(args: argparse.Namespace) -> int:
     )
     atomic_write_json(run_dir.path("manifest.json"), manifest)
     with tee_log(run_dir):
-        for checkpoint in checkpoints:
+        pending_joins: dict[str, Any] = {}
+        for index, checkpoint in enumerate(checkpoints):
+            join = pending_joins.pop(checkpoint.name, None)
+            if join is not None and not join():
+                print(
+                    f"[prefetch] {checkpoint.name} incomplete; "
+                    "falling back to blocking download"
+                )
             model, tokenizer = _checkpoint_model(args, checkpoint)
+            if _should_prefetch(args, index, checkpoints):
+                upcoming = checkpoints[index + 1]
+                print(f"[prefetch] downloading {upcoming.name}")
+                pending_joins[upcoming.name] = start_prefetch(upcoming)
             try:
                 for domain in domains:
                     missing = [

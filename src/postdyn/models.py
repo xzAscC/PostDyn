@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+from huggingface_hub import snapshot_download
 from transformers import AutoConfig, AutoModelForCausalLM, BitsAndBytesConfig
 
 _config = import_module("postdyn.config")
@@ -131,6 +132,50 @@ def load_model(
             kwargs["max_memory"] = _check_nf4_budget()
 
     return AutoModelForCausalLM.from_pretrained(checkpoint.repo, **kwargs)
+
+
+_PREFETCH_PATTERNS = ("*.safetensors", "*.json")
+
+
+def start_prefetch(checkpoint: "CheckpointRef"):
+    """Download one checkpoint's weights in a background thread.
+
+    Returns a join callable reporting ``True`` when the snapshot completed and
+    ``False`` on any error, letting the caller fall back to a blocking load.
+    Callers keep at most one prefetch in flight so transient disk usage stays
+    bounded at two checkpoints.
+    """
+    import threading
+
+    outcome: dict[str, Any] = {}
+
+    def _download() -> None:
+        try:
+            snapshot_download(
+                checkpoint.repo,
+                revision=checkpoint.revision,
+                allow_patterns=list(_PREFETCH_PATTERNS),
+            )
+            outcome["ok"] = True
+        except Exception as error:
+            outcome["ok"] = False
+            outcome["error"] = error
+
+    thread = threading.Thread(target=_download, daemon=True)
+
+    def join() -> bool:
+        thread.join()
+        if not outcome.get("ok") and "error" in outcome:
+            _logger.warning(
+                "prefetch failed for %s@%s: %s",
+                checkpoint.repo,
+                checkpoint.revision,
+                outcome["error"],
+            )
+        return bool(outcome.get("ok"))
+
+    thread.start()
+    return join
 
 
 def release_model(model: Any) -> None:
