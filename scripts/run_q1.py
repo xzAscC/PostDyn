@@ -26,6 +26,7 @@ from postdyn.models import (
     release_model,
     start_prefetch,
 )
+from postdyn.uploader import uploader_from_args
 from postdyn.persistence import (
     RunDir,
     append_jsonl,
@@ -139,6 +140,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--token-budget", type=int, default=4096)
     parser.add_argument("--attention-budget", type=int, default=8_388_608)
     parser.add_argument("--allow-short-pool", action="store_true")
+    parser.add_argument(
+        "--upload-to",
+        default=None,
+        help="dataset repo id for streaming artifact uploads "
+        "(default: POSTDYN_UPLOAD_TO env; empty disables)",
+    )
     parser.add_argument(
         "--prefetch",
         choices=("none", "next"),
@@ -451,6 +458,9 @@ def run(args: argparse.Namespace) -> int:
         }
     )
     atomic_write_json(run_dir.path("manifest.json"), manifest)
+    uploader = uploader_from_args(args.upload_to, ROOT)
+    if uploader:
+        uploader.start()
     with tee_log(run_dir):
         pending_joins: dict[str, Any] = {}
         for index, checkpoint in enumerate(checkpoints):
@@ -508,11 +518,18 @@ def run(args: argparse.Namespace) -> int:
                         covariance = OnlineCovariance()
                         covariance.update(hidden[layer])
                         values, vectors = eigensystem(covariance.covariance)
-                        save_eigensystem(
-                            _base_path(run_dir, checkpoint.name, layer, domain),
-                            values.cpu(),
-                            vectors.cpu(),
+                        unit_base = _base_path(
+                            run_dir, checkpoint.name, layer, domain
                         )
+                        save_eigensystem(unit_base, values.cpu(), vectors.cpu())
+                        if uploader:
+                            uploader.submit(
+                                unit_base.with_suffix(".json"), relative_to=ROOT
+                            )
+                            uploader.submit(
+                                unit_base.with_suffix(".safetensors"),
+                                relative_to=ROOT,
+                            )
                         row = {
                             "unit": list(unit),
                             "checkpoint": checkpoint.name,
@@ -536,6 +553,14 @@ def run(args: argparse.Namespace) -> int:
                         prune_revision_cache(checkpoint)
         _write_analysis(run_dir, checkpoints, layers, domains)
         print(f"summary: {run_dir.path('analysis', 'summary.json')}")
+        if uploader:
+            uploader.submit_tree(output, relative_to=ROOT)
+            upload_summary = uploader.finish()
+            print(
+                f"upload: {upload_summary['uploaded']} uploaded, "
+                f"{upload_summary['skipped']} skipped, "
+                f"{upload_summary['failed']} failed"
+            )
     return 0
 
 

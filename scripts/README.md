@@ -96,3 +96,27 @@ uv run python -m compileall -q src/postdyn scripts
 uv run python scripts/run_q1.py --family 7b --scale tiny --output /tmp/q1_tiny
 uv run python scripts/run_q2_exp1.py --family 7b --scale tiny --q1-root /tmp/x --output /tmp/q2e1
 ```
+
+## Artifact uploads (HF Hub)
+
+Local `data/` + `logs/` trees can live in a Hub dataset repo; uploads stream
+in the background and never block the runners.
+
+```bash
+# Batch upload / resume existing artifacts (state file skips completed files)
+POSTDYN_UPLOAD_TO=<user>/postdyn-artifacts uv run python scripts/upload_artifacts.py
+
+# Streaming during runs: pass --upload-to (or export POSTDYN_UPLOAD_TO) to
+# run_q1 / run_q1_robustness / run_q2_exp{1,2,3}; immutable eigensystems are
+# uploaded as they land, append-only files (metrics/logs) at run end.
+ALLOW_SHORT_POOL=1 POSTDYN_UPLOAD_TO=<user>/postdyn-artifacts \
+    gpu-queue add postdyn-7b-overnight bash scripts/run_7b_overnight.sh
+
+# Reclaim disk after a family's analysis is complete: deletes local
+# intermediate-checkpoint eigensystems confirmed uploaded (finals, manifests,
+# analysis, and pools are always kept)
+uv run python scripts/upload_artifacts.py --prune-uploaded
+```
+
+Uploads retry three times per file, record failures in `.upload_state.json`,
+and resume where they left off. The repo is created private on first use.

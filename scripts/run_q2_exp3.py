@@ -56,6 +56,7 @@ def identity_for(args: argparse.Namespace) -> dict[str, Any]:
 def run(args: argparse.Namespace) -> None:
     cfg = common.family_config(args.family, args.scale)
     output = common.output_root(args, "exp3")
+    uploader = common.start_uploader(args, common.ROOT)
     output.mkdir(parents=True, exist_ok=True)
     common.write_identity_manifest(
         output,
@@ -174,6 +175,7 @@ def run(args: argparse.Namespace) -> None:
                         )
         atomic_write_json(output / "selected.json", selected)
         atomic_write_json(output / "summary.json", selected)
+        common.finish_uploader(uploader, output)
 
 
 if __name__ == "__main__":

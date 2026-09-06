@@ -10,8 +10,11 @@ from typing import Any
 
 import torch
 
+ROOT = Path(__file__).resolve().parents[1]
+
 from postdyn.config import BENCHMARKS, MODEL_FAMILIES
 from postdyn.persistence import load_eigensystem, append_jsonl, atomic_write_json
+from postdyn.uploader import uploader_from_args
 
 CAPS = {
     "math500": (1024, 2048),
@@ -35,6 +38,11 @@ def add_common_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         "--domains", nargs="+", choices=tuple(BENCHMARKS), default=list(BENCHMARKS)
     )
     parser.add_argument("--batch-size", type=positive_int, default=8)
+    parser.add_argument(
+        "--upload-to",
+        default=None,
+        help="dataset repo id for artifact uploads (env: POSTDYN_UPLOAD_TO)",
+    )
     parser.add_argument("--limit", type=positive_int)
     return parser
 
@@ -314,3 +322,24 @@ def file_hash(path: Path) -> str | None:
 
 def append(path: Path, row: dict[str, Any]) -> None:
     append_jsonl(path, row)
+
+
+def start_uploader(args: argparse.Namespace, root: Path):
+    """Optional background uploader enabled by --upload-to / POSTDYN_UPLOAD_TO."""
+    handle = uploader_from_args(getattr(args, "upload_to", None), ROOT)
+    if handle:
+        handle.start()
+    return handle
+
+
+def finish_uploader(handle, output: Path) -> None:
+    """Submit the run tree (append-only artifacts) and drain the worker."""
+    if handle is None:
+        return
+    handle.submit_tree(output, relative_to=ROOT)
+    summary = handle.finish()
+    print(
+        f"upload: {summary['uploaded']} uploaded, "
+        f"{summary['skipped']} skipped, "
+        f"{summary['failed']} failed"
+    )
