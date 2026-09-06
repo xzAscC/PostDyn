@@ -48,7 +48,7 @@ def test_real_tiny_gpt2_ablation_hook_is_cleanly_removable() -> None:
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         "sshleifer/tiny-gpt2", local_files_only=True
     )
-    inputs = tokenizer("hello", return_tensors="pt")
+    inputs = tokenizer("hello world again today", return_tensors="pt")
     baseline = model(**inputs).logits
     d = model.config.n_embd
     layer = 0
@@ -60,8 +60,9 @@ def test_real_tiny_gpt2_ablation_hook_is_cleanly_removable() -> None:
     handle.remove()
     torch.testing.assert_close(model(**inputs).logits, baseline)
     measured = mean_hidden_norm(model, tokenizer, ["hello"], layer)
+    single = tokenizer("hello", return_tensors="pt")
     with torch.no_grad():
-        manual = model(**inputs, output_hidden_states=True).hidden_states[layer + 1][
+        manual = model(**single, output_hidden_states=True).hidden_states[layer + 1][
             0, -1
         ]
     assert isinstance(measured, float)
@@ -131,3 +132,83 @@ def test_replace_basis_matches_spec_formula() -> None:
     torch.testing.assert_close(
         delta, 0.5 * (U_to - U_from) @ (U_from.T @ combined), atol=1e-6, rtol=1e-6
     )
+
+
+from postdyn.intervention import _layer  # noqa: E402
+
+
+def _tiny_gpt2():
+    transformers = pytest.importorskip("transformers")
+    try:
+        model = transformers.AutoModelForCausalLM.from_pretrained(
+            "sshleifer/tiny-gpt2", local_files_only=True
+        )
+    except (OSError, RuntimeError) as exc:
+        pytest.skip(f"tiny-gpt2 is not cached: {exc}")
+    model.eval()
+    return model
+
+
+def _block_outputs(model, layer, tokens):
+    captured = {}
+
+    def capture(_module, _inputs, output):
+        tensor = output[0] if isinstance(output, tuple) else output
+        captured["out"] = tensor.detach().clone()
+
+    handle = _layer(model, layer).register_forward_hook(capture)
+    with torch.no_grad():
+        model(torch.tensor([tokens]))
+    handle.remove()
+    return captured["out"]
+
+
+def test_ablation_hook_touches_only_last_prompt_token() -> None:
+    from postdyn.intervention import register_ablation_hook
+
+    model = _tiny_gpt2()
+    tokens = [10, 11, 12, 13, 14]
+    baseline = _block_outputs(model, 0, tokens)
+    handle = register_ablation_hook(
+        model, 0, torch.eye(model.config.n_embd), alpha=1.0, mode="dimensionless"
+    )
+    steered = _block_outputs(model, 0, tokens)
+    handle.remove()
+
+    torch.testing.assert_close(steered[:, :-1, :], baseline[:, :-1, :], atol=0, rtol=0)
+    assert not torch.allclose(steered[:, -1, :], baseline[:, -1, :])
+
+
+def test_ablation_hook_leaves_single_token_decode_steps_untouched() -> None:
+    from postdyn.intervention import register_ablation_hook
+
+    model = _tiny_gpt2()
+    tokens = [42]
+    baseline = _block_outputs(model, 0, tokens)
+    handle = register_ablation_hook(
+        model, 0, torch.eye(model.config.n_embd), alpha=1.0, mode="dimensionless"
+    )
+    steered = _block_outputs(model, 0, tokens)
+    handle.remove()
+
+    torch.testing.assert_close(steered, baseline, atol=0, rtol=0)
+
+
+def test_replacement_hook_touches_only_last_prompt_token() -> None:
+    from postdyn.intervention import procrustes_align, register_replacement_hook
+
+    torch.manual_seed(3)
+    model = _tiny_gpt2()
+    d = model.config.n_embd
+    k = d // 2
+    u_from, _ = torch.linalg.qr(torch.randn(d, k))
+    u_to, _ = torch.linalg.qr(torch.randn(d, k))
+    u_to = u_to @ procrustes_align(u_to, u_from)
+    tokens = [7, 8, 9, 10]
+    baseline = _block_outputs(model, 0, tokens)
+    handle = register_replacement_hook(model, 0, u_from, u_to, alpha=1.0)
+    steered = _block_outputs(model, 0, tokens)
+    handle.remove()
+
+    torch.testing.assert_close(steered[:, :-1, :], baseline[:, :-1, :], atol=0, rtol=0)
+    assert not torch.allclose(steered[:, -1, :], baseline[:, -1, :])

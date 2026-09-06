@@ -61,6 +61,32 @@ def _layer(model: Any, index: int) -> Any:
     raise AttributeError("model has no transformer.h or model.layers blocks")
 
 
+def _block_output_tensor(output: Any) -> Tensor:
+    if isinstance(output, tuple):
+        if not output or not torch.is_tensor(output[0]):
+            raise TypeError("block output tuple must start with hidden states")
+        return output[0]
+    if torch.is_tensor(output):
+        return output
+    raise TypeError("block output must be a tensor or tuple")
+
+
+def _rewrite_last_prompt_token(tensor: Tensor, rewrite: Any) -> Tensor:
+    # Cached generation: sequence length > 1 marks the prefill pass, whose
+    # final position is the last prompt token; single-token passes are decode
+    # steps and must pass through untouched.
+    if tensor.dim() != 3 or tensor.shape[1] <= 1:
+        return tensor
+    steered_last = rewrite(tensor[:, -1:, :])
+    return torch.cat([tensor[:, :-1, :], steered_last.to(tensor.dtype)], dim=1)
+
+
+def _wrap_block_output(output: Any, tensor: Tensor) -> Any:
+    if isinstance(output, tuple):
+        return (tensor, *output[1:])
+    return tensor
+
+
 def procrustes_align(U_source: Tensor, U_target: Tensor) -> Tensor:
     """Orthogonal map R* = A B^T from the SVD of U_source^T U_target.
 
@@ -93,8 +119,8 @@ def replace_basis(
     work = h.to(work_dtype)
     source = U_from.to(device=h.device, dtype=work_dtype)
     target = U_to.to(device=h.device, dtype=work_dtype)
-    coefficients = source.T @ work
-    return work + alpha * ((target - source) @ coefficients)
+    coefficients = work @ source
+    return work + alpha * (coefficients @ (target - source).T)
 
 
 def register_replacement_hook(
@@ -104,26 +130,19 @@ def register_replacement_hook(
     U_to: Tensor,
     alpha: float,
 ) -> torch.utils.hooks.RemovableHandle:
-    """Register a removable post-block residual replacement."""
+    """Register a removable last-prompt-token residual replacement."""
 
     def hook(_module: Any, _inputs: tuple[Any, ...], output: Any) -> Any:
-        if isinstance(output, tuple):
-            if not output or not torch.is_tensor(output[0]):
-                raise TypeError("block output tuple must start with hidden states")
-            return (
-                replace_basis(
-                    output[0],
-                    U_from.to(output[0].device),
-                    U_to.to(output[0].device),
-                    alpha,
-                ),
-                *output[1:],
-            )
-        if torch.is_tensor(output):
-            return replace_basis(
-                output, U_from.to(output.device), U_to.to(output.device), alpha
-            )
-        raise TypeError("block output must be a tensor or tuple")
+        tensor = _block_output_tensor(output)
+        steered = _rewrite_last_prompt_token(
+            tensor,
+            lambda hidden: replace_basis(
+                hidden, U_from.to(hidden.device), U_to.to(hidden.device), alpha
+            ),
+        )
+        if steered is tensor:
+            return output
+        return _wrap_block_output(output, steered)
 
     return _layer(model, layer).register_forward_hook(hook)
 
@@ -136,19 +155,23 @@ def register_ablation_hook(
     mode: str,
     r_bar: float | None = None,
 ) -> torch.utils.hooks.RemovableHandle:
-    """Register a removable post-block residual rewrite."""
+    """Register a removable last-prompt-token residual ablation.
+
+    The rewrite is injected exactly once, at the final prompt-token position
+    of the prefill forward (sequence length > 1 under cached generation);
+    earlier prompt positions and every single-token decode step pass through
+    untouched.
+    """
 
     def hook(_module: Any, _inputs: tuple[Any, ...], output: Any) -> Any:
-        if isinstance(output, tuple):
-            if not output or not torch.is_tensor(output[0]):
-                raise TypeError("block output tuple must start with hidden states")
-            return (
-                project_out(output[0], U.to(output[0].device), alpha, mode, r_bar),
-                *output[1:],
-            )
-        if torch.is_tensor(output):
-            return project_out(output, U.to(output.device), alpha, mode, r_bar)
-        raise TypeError("block output must be a tensor or tuple")
+        tensor = _block_output_tensor(output)
+        steered = _rewrite_last_prompt_token(
+            tensor,
+            lambda hidden: project_out(hidden, U.to(hidden.device), alpha, mode, r_bar),
+        )
+        if steered is tensor:
+            return output
+        return _wrap_block_output(output, steered)
 
     return _layer(model, layer).register_forward_hook(hook)
 
