@@ -15,7 +15,7 @@ def test_load_items_returns_cached_list_objects(monkeypatch) -> None:
     test = [bench.BenchItem("t", "test", {})]
     calls = 0
 
-    def load_benchmark(_spec):
+    def load_benchmark(_spec, source=None):
         nonlocal calls
         calls += 1
         return val, test
@@ -32,16 +32,12 @@ def test_load_items_returns_cached_list_objects(monkeypatch) -> None:
     assert calls == 1
 
 
-def test_load_items_threads_livecodebench_jsonl_env(
-    monkeypatch, tmp_path
-) -> None:
+def test_load_items_threads_livecodebench_jsonl_env(monkeypatch, tmp_path) -> None:
     import importlib.util as _util
     import json as _json
     import sys as _sys
 
-    spec = _util.spec_from_file_location(
-        "q2_common_envtest", "scripts/q2_common.py"
-    )
+    spec = _util.spec_from_file_location("q2_common_envtest", "scripts/q2_common.py")
     mod = _util.module_from_spec(spec)
     _sys.modules["q2_common_envtest"] = mod
     spec.loader.exec_module(mod)
