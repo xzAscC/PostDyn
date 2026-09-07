@@ -73,6 +73,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="rlvr",
         help="checkpoint generating solutions (covariance bases match it)",
     )
+    parser.add_argument(
+        "--engine",
+        choices=("hf", "vllm-gen", "vllm-capture"),
+        default="hf",
+        help=(
+            "generation backend; vllm-gen/vllm-capture split exp2 into two "
+            "subprocess-safe phases (vLLM generation, then HF capture) so "
+            "each engine fully releases GPU memory on exit"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -92,6 +102,11 @@ def identity_for(
         "batch_size": args.batch_size,
         "limit": args.limit,
         "model": args.model,
+        "engine": (
+            "vllm"
+            if getattr(args, "engine", "hf") != "hf"
+            else "hf"
+        ),
         "checkpoints": common.checkpoint_pairs(args.family, (args.model,), args.sft_lr),
         "domains": args.domains,
         "k": cfg.d_model // 3,
@@ -194,6 +209,141 @@ def item_subsims(
     return vals, subsims, k_i
 
 
+def _run_vllm_hybrid(args, root, q1, effective_selection, cfg, load_runtime):
+    mode = getattr(args, "engine", "hf")
+    gen_only = mode == "vllm-gen"
+    capture_only = mode == "vllm-capture"
+    """vLLM generation + HF prefill-only capture (protocol-equivalent exp2)."""
+    import gc
+
+    from postdyn import vllm_steering  # env vars before vllm
+    from postdyn.bench import apply_chat_template
+    from postdyn.extract import capture_sequences_hiddens
+
+    repo, revision = common.checkpoint_pairs(args.family, (args.model,), args.sft_lr)[0]
+    if not capture_only:
+        _phase_generate(args, root, repo, revision)
+        if gen_only:
+            return None
+    return _phase_capture(
+        args, root, q1, effective_selection, cfg, load_runtime
+    )
+
+
+def _phase_generate(args, root, repo, revision) -> None:
+    from postdyn import vllm_steering
+    from postdyn.bench import apply_chat_template
+    from transformers import AutoTokenizer
+    from vllm import LLM as _VllmLLM
+
+    tokenizer = AutoTokenizer.from_pretrained(repo, revision=revision)
+    llm = _VllmLLM(
+        model=repo,
+        revision=revision,
+        dtype=args.dtype,
+        gpu_memory_utilization=0.92,
+        max_model_len=4096,
+        enforce_eager=True,
+        enable_chunked_prefill=False,
+        enable_prefix_caching=False,
+    )
+    gen_paths: dict[str, Path] = {}
+    for domain in args.domains:
+        _, items = common.load_items(domain, args.limit, False)
+        gpath = root / f"gen_{domain}.jsonl"
+        done = (
+            {json.loads(x)["item_id"] for x in gpath.read_text().splitlines()}
+            if gpath.is_file()
+            else set()
+        )
+        missing = [item for item in items if item.id not in done]
+        if missing:
+            prompts = [apply_chat_template(tokenizer, item.prompt) for item in missing]
+            triples = vllm_steering.generate_with_ids(
+                llm, prompts, common.CAPS[BENCHMARKS[domain]][1]
+            )
+            for item, (text, p_ids, o_ids) in zip(missing, triples):
+                common.append(
+                    gpath,
+                    {
+                        "item_id": item.id,
+                        "text": text,
+                        "prompt_ids": p_ids,
+                        "out_ids": o_ids,
+                    },
+                )
+        gen_paths[domain] = gpath
+        print(f"[vllm-hybrid] generation done for {domain}")
+    try:
+        llm.llm_engine.shutdown()
+    except Exception:
+        pass
+
+
+def _phase_capture(args, root, q1, effective_selection, cfg, load_runtime):
+    from postdyn.extract import capture_sequences_hiddens
+
+    gen_paths = {domain: root / f"gen_{domain}.jsonl" for domain in args.domains}
+    missing_gen = [d for d in args.domains if not gen_paths[d].is_file()]
+    if missing_gen:
+        raise SystemExit(f"missing generation files for: {missing_gen}")
+    model, tokenizer = load_runtime()
+    summaries: dict[str, Any] = {}
+    for domain in args.domains:
+        choice = effective_selection[domain]
+        layer = choice["layer"]
+        bases = common.require_bases(q1, domain, (layer,), args.model)
+        eig = bases[layer]
+        K = cfg.d_model // 3
+        u_high, u_low = eig[1][:, :K], eig[1][:, -K:]
+        _, items = common.load_items(domain, args.limit, False)
+        gen_rows = {
+            json.loads(x)["item_id"]: json.loads(x)
+            for x in gen_paths[domain].read_text().splitlines()
+            if x.strip()
+        }
+        path = root / f"solutions_{domain}.jsonl"
+        done = (
+            {json.loads(x)["item_id"] for x in path.read_text().splitlines()}
+            if path.is_file()
+            else set()
+        )
+        pending = [item for item in items if item.id not in done]
+        for start in range(0, len(pending), 16):
+            chunk = pending[start : start + 16]
+            full_ids = [
+                gen_rows[item.id]["prompt_ids"] + gen_rows[item.id]["out_ids"]
+                for item in chunk
+            ]
+            caps = capture_sequences_hiddens(model, full_ids, layer)
+            for item, cap in zip(chunk, caps):
+                row_gen = gen_rows[item.id]
+                states = sentence_final_states(
+                    tokenizer,
+                    [],
+                    row_gen["text"],
+                    {layer: cap},
+                    len(row_gen["prompt_ids"]),
+                )
+                vals, (subsim_high, subsim_low), _ = item_subsims(
+                    states, K, u_high, u_low
+                )
+                row = {
+                    "item_id": item.id,
+                    "correct": bool(
+                        verify(BENCHMARKS[domain], row_gen["text"], item.reference)
+                    ),
+                    "V_i": float(vals.sum().item()) if vals.numel() else 0.0,
+                    "subsim_high": subsim_high,
+                    "subsim_low": subsim_low,
+                    "n_sentences": int(states.shape[0]),
+                }
+                common.append(path, row)
+        rows = [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
+        summaries[domain] = group_summary(rows)
+    return summaries
+
+
 def run_with(args: argparse.Namespace, load_runtime) -> None:
     cfg = common.family_config(args.family, args.scale)
     root = common.output_root(args, f"exp2_{args.model}")
@@ -231,9 +381,18 @@ def run_with(args: argparse.Namespace, load_runtime) -> None:
         for domain in args.domains:
             layer = effective_selection[domain]["layer"]
             common.require_bases(q1, domain, (layer,), args.model)
-    model, tokenizer = load_runtime()
-    summaries: dict[str, Any] = {}
     with tee_log(RunDir(root)):
+        engine = getattr(args, "engine", "hf")
+        if engine in ("vllm-gen", "vllm-capture") and args.scale != "tiny":
+            summaries = _run_vllm_hybrid(
+                args, root, q1, effective_selection, cfg, load_runtime
+            )
+            if summaries is not None:
+                atomic_write_json(root / "summary.json", summaries)
+            common.finish_uploader(uploader, root)
+            return
+        model, tokenizer = load_runtime()
+        summaries: dict[str, Any] = {}
         for domain in args.domains:
             choice = effective_selection[domain]
             layer = choice["layer"]

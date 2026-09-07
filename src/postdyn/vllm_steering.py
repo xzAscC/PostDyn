@@ -128,8 +128,33 @@ def generate(
     return texts
 
 
+def generate_with_ids(
+    llm: Any,
+    prompts: list[str],
+    max_tokens: int,
+    batch_prompts: int = 256,
+) -> list[tuple[str, list[int], list[int]]]:
+    """Greedy generation returning (text, prompt_ids, output_ids) triples."""
+    from vllm import SamplingParams
+
+    params = SamplingParams(temperature=0.0, max_tokens=max_tokens)
+    triples: list[tuple[str, list[int], list[int]]] = []
+    for start in range(0, len(prompts), batch_prompts):
+        outputs = llm.generate(prompts[start : start + batch_prompts], params)
+        for out in outputs:
+            triples.append(
+                (
+                    out.outputs[0].text,
+                    [int(t) for t in out.prompt_token_ids],
+                    [int(t) for t in out.outputs[0].token_ids],
+                )
+            )
+    return triples
+
+
 __all__ = [
     "attach_ablation",
     "attach_replacement",
     "generate",
+    "generate_with_ids",
 ]
