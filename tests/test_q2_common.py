@@ -47,9 +47,12 @@ def test_load_items_threads_livecodebench_jsonl_env(
     spec.loader.exec_module(mod)
     rows = [
         {
-            "question_id": str(i),
-            "question_content": f"code {i}",
-            "input_output": _json.dumps({"inputs": [], "outputs": []}),
+            "question_id": f"question-{i}",
+            "question_content": f"Solve question {i}",
+            "starter_code": "",
+            "public_test_cases": _json.dumps(
+                [{"input": "1", "output": "1", "testtype": "stdin"}]
+            ),
         }
         for i in range(40)
     ]
@@ -58,4 +61,4 @@ def test_load_items_threads_livecodebench_jsonl_env(
     monkeypatch.setenv("POSTDYN_LIVECODEBENCH_JSONL", str(src))
     val, test = mod.load_items("code", None, tiny=False)
     assert len(val) == 30 and len(test) == 10
-    assert val[0].prompt.startswith("code ")
+    assert "Solve question" in val[0].prompt
