@@ -388,3 +388,16 @@ def test_generate_tiny_gpt2_capture_matches_reference() -> None:
                 row.captured[layer],
                 reference[layer + 1][row_index].float().cpu(),
             )
+
+
+def test_apply_chat_template_returns_str_for_real_chat_tokenizer() -> None:
+    transformers = pytest.importorskip("transformers")
+    try:
+        tok = transformers.AutoTokenizer.from_pretrained(
+            "allenai/Olmo-3-7B-Think", local_files_only=True
+        )
+    except (OSError, RuntimeError) as exc:
+        pytest.skip(f"olmo tokenizer not cached: {exc}")
+    rendered = apply_chat_template(tok, "2+2=?")
+    assert isinstance(rendered, str)
+    assert "2+2=?" in rendered

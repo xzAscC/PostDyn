@@ -49,10 +49,12 @@ def apply_chat_template(tokenizer: Any, prompt: str) -> str:
     messages = [{"role": "user", "content": prompt}]
     try:
         return tokenizer.apply_chat_template(
-            conversation=messages, add_generation_prompt=True
+            conversation=messages, add_generation_prompt=True, tokenize=False
         )
     except TypeError:
-        return tokenizer.apply_chat_template(messages, add_generation_prompt=True)
+        return tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True, tokenize=False
+        )
 
 
 def _rows(dataset: Any) -> list[Any]:
