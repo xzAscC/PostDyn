@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -272,7 +273,10 @@ def load_items(domain: str, limit: int | None, tiny: bool):
         val, test = items[:30], items[30:]
         result = (val[:limit] if limit else val), (test[:limit] if limit else test)
     else:
-        val, test = load_benchmark(BENCHMARKS[domain])
+        source = (
+            os.environ.get("POSTDYN_LIVECODEBENCH_JSONL") if domain == "code" else None
+        )
+        val, test = load_benchmark(BENCHMARKS[domain], source=source)
         result = (val[:limit] if limit else val), (test[:limit] if limit else test)
     _ITEMS_CACHE[key] = result
     return result

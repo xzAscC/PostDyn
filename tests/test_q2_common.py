@@ -30,3 +30,32 @@ def test_load_items_returns_cached_list_objects(monkeypatch) -> None:
     assert first_val is second_val
     assert first_test is second_test
     assert calls == 1
+
+
+def test_load_items_threads_livecodebench_jsonl_env(
+    monkeypatch, tmp_path
+) -> None:
+    import importlib.util as _util
+    import json as _json
+    import sys as _sys
+
+    spec = _util.spec_from_file_location(
+        "q2_common_envtest", "scripts/q2_common.py"
+    )
+    mod = _util.module_from_spec(spec)
+    _sys.modules["q2_common_envtest"] = mod
+    spec.loader.exec_module(mod)
+    rows = [
+        {
+            "question_id": str(i),
+            "question_content": f"code {i}",
+            "input_output": _json.dumps({"inputs": [], "outputs": []}),
+        }
+        for i in range(40)
+    ]
+    src = tmp_path / "release_v6_test.jsonl"
+    src.write_text("\n".join(_json.dumps(r) for r in rows) + "\n")
+    monkeypatch.setenv("POSTDYN_LIVECODEBENCH_JSONL", str(src))
+    val, test = mod.load_items("code", None, tiny=False)
+    assert len(val) == 30 and len(test) == 10
+    assert val[0].prompt.startswith("code ")
