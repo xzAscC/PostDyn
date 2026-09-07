@@ -46,13 +46,14 @@ def test_apply_chat_template_uses_user_message_and_generation_prompt() -> None:
         {
             "conversation": [{"role": "user", "content": "hi"}],
             "add_generation_prompt": True,
+            "tokenize": False,
         }
     ]
 
 
 def test_apply_chat_template_can_call_tokenizer_positional_variant() -> None:
     tokenizer = SimpleNamespace(chat_template="yes")
-    tokenizer.apply_chat_template = lambda messages, add_generation_prompt: "ok"
+    tokenizer.apply_chat_template = lambda messages, add_generation_prompt, tokenize: "ok"
     assert bench.apply_chat_template(tokenizer, "hi") == "ok"
 
 
@@ -398,6 +399,6 @@ def test_apply_chat_template_returns_str_for_real_chat_tokenizer() -> None:
         )
     except (OSError, RuntimeError) as exc:
         pytest.skip(f"olmo tokenizer not cached: {exc}")
-    rendered = apply_chat_template(tok, "2+2=?")
+    rendered = bench.apply_chat_template(tok, "2+2=?")
     assert isinstance(rendered, str)
     assert "2+2=?" in rendered
