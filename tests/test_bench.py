@@ -402,3 +402,21 @@ def test_apply_chat_template_returns_str_for_real_chat_tokenizer() -> None:
     rendered = bench.apply_chat_template(tok, "2+2=?")
     assert isinstance(rendered, str)
     assert "2+2=?" in rendered
+
+
+def test_mmlu_pro_test_split_is_deterministic_1000_subset() -> None:
+    items = [
+        {"question_id": f"q{i}", "question": f"p{i}", "options": ["A", "B"], "answer": "A", "answer_text": "a"}
+        for i in range(1200)
+    ]
+    original = bench._load_mmlu_pro
+    bench._load_mmlu_pro = lambda source=None: [
+        bench.BenchItem(x["question_id"], x["question"], x) for x in items
+    ]
+    try:
+        v1, t1 = bench.load_benchmark("mmlu_pro")
+        v2, t2 = bench.load_benchmark("mmlu_pro")
+    finally:
+        bench._load_mmlu_pro = original
+    assert len(t1) == 1000 and len(v1) == 30
+    assert [x.id for x in t1] == [x.id for x in t2]

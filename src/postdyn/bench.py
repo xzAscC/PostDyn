@@ -230,7 +230,13 @@ def load_benchmark(
         loaders[name](),
         key=lambda item: hashlib.sha256(f"{seed}|{item.id}".encode()).hexdigest(),
     )
-    return items[:n_val], sorted(items[n_val:], key=lambda item: item.id)
+    val, test = items[:n_val], sorted(items[n_val:], key=lambda item: item.id)
+    if name == "mmlu_pro" and len(test) > 1000:
+        import random as _random
+
+        subset = _random.Random(seed).sample(range(len(test)), 1000)
+        test = sorted((test[i] for i in subset), key=lambda item: item.id)
+    return val, test
 
 
 def generate(
