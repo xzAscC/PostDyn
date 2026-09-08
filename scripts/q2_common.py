@@ -18,10 +18,10 @@ from postdyn.persistence import load_eigensystem, append_jsonl, atomic_write_jso
 from postdyn.uploader import uploader_from_args
 
 CAPS = {
-    "math500": (1024, 2048),
-    "mmlu_pro": (256, 512),
-    "ifeval": (512, 768),
-    "livecodebench": (1024, 1024),
+    "math500": (4096, 4096),
+    "mmlu_pro": (4096, 4096),
+    "ifeval": (4096, 4096),
+    "livecodebench": (4096, 4096),
 }
 
 _ITEMS_CACHE: dict[tuple[str, int | None, bool], tuple[list[Any], list[Any]]] = {}

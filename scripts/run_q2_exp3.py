@@ -105,7 +105,7 @@ def run_with(args: argparse.Namespace, load_runtime) -> None:
                 revision=revision,
                 dtype=args.dtype,
                 gpu_memory_utilization=0.92,
-                max_model_len=4096,
+                max_model_len=8192,
                 enforce_eager=True,
                 enable_chunked_prefill=False,
                 enable_prefix_caching=False,
