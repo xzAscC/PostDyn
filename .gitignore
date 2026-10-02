@@ -7,12 +7,10 @@ wheels/
 
 # Virtual environments
 .venv/
-.venv-*/
 
 # Model caches
 *.safetensors
 model_cache/
-hf_cache/
 .cache/
 
 # Generated experiment outputs
@@ -23,15 +21,15 @@ checkpoints/
 notebooks/
 .pytest_cache/
 .ruff_cache/
-.ipynb_checkpoints/
-.playwright-mcp/
-.upload_state.json
 
 # Local benchmark caches and materialized prompt pools
 data/domain_prompts/
 data/*.json
 data/*.jsonl
 data/*.txt
+data/mmlu_pro.json
+data/ifeval.json
+data/livecodebench.json
 
 # IDE
 .idea/
@@ -48,6 +46,6 @@ Thumbs.db
 # Opencode
 .omo/
 
-# Independent Overleaf repositories
+# Slides repository
 69e5bc6d27002aeac07372b4/
-6aae0e0e815a2af28e9616b9/
+

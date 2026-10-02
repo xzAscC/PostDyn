@@ -15,7 +15,6 @@ else
 fi
 
 LOGFILE="logs/h100_7b.log"
-Q2_BATCH_SIZE=${Q2_BATCH_SIZE:-8}
 REPEATS="${REPEATS:-5}"
 SHORT_POOL_FLAG=()
 if [ "${ALLOW_SHORT_POOL:-1}" = "1" ]; then
