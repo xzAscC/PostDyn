@@ -36,12 +36,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="checkpoint to intervene on (covariance bases match it)",
     )
     parser.add_argument("--sft-lr", choices=("1e-4", "5e-5"), default="1e-4")
-    parser.add_argument(
-        "--engine",
-        choices=("hf", "vllm"),
-        default="hf",
-        help="generation backend (vllm: faster continuous batching)",
-    )
     return parser.parse_args(argv)
 
 
@@ -133,50 +127,6 @@ def _evaluate(
     ]
 
 
-def _evaluate_vllm(
-    llm: Any,
-    tokenizer: Any,
-    items: Any,
-    benchmark: str,
-    layer: int,
-    alpha: float,
-    basis: torch.Tensor | None,
-    max_new_tokens: int,
-    condition: str,
-    replacement: tuple[torch.Tensor, torch.Tensor] | None = None,
-    done_ids: set[str] | None = None,
-) -> list[dict[str, Any]]:
-    from postdyn import vllm_steering
-    from postdyn.bench import apply_chat_template
-
-    pending = [item for item in items if done_ids is None or item.id not in done_ids]
-    if replacement is not None:
-        detach = vllm_steering.attach_replacement(
-            llm, layer, replacement[0], replacement[1], alpha
-        )
-    elif basis is not None:
-        detach = vllm_steering.attach_ablation(llm, layer, basis, alpha)
-    else:
-        detach = None
-    try:
-        prompts = [apply_chat_template(tokenizer, item.prompt) for item in pending]
-        texts = vllm_steering.generate(llm, prompts, max_new_tokens)
-    finally:
-        if detach is not None:
-            detach()
-    references: dict[str, Any] = {}
-    for item in items:
-        references.setdefault(item.id, item.reference)
-    return [
-        {
-            "item_id": item.id,
-            "correct": bool(verify(benchmark, text, references[item.id])),
-            "condition": condition,
-        }
-        for item, text in zip(pending, texts)
-    ]
-
-
 def identity_for(args: argparse.Namespace) -> dict[str, Any]:
     cfg = common.family_config(args.family, args.scale)
     return {
@@ -189,7 +139,6 @@ def identity_for(args: argparse.Namespace) -> dict[str, Any]:
         "batch_size": args.batch_size,
         "limit": args.limit,
         "model": args.model,
-        "engine": getattr(args, "engine", "hf"),
         "checkpoints": common.checkpoint_pairs(
             args.family, (args.model,), getattr(args, "sft_lr", "1e-4")
         ),
@@ -218,69 +167,7 @@ def run_with(args: argparse.Namespace, load_runtime) -> None:
         for domain in args.domains:
             require_bases(q1_root, domain, cfg.layers, args.model)
     with tee_log(run_dir):
-        engine_llm = None
-        if getattr(args, "engine", "hf") == "vllm" and args.scale != "tiny":
-            from postdyn import vllm_steering  # noqa: F401  (env vars before vllm)
-
-            from vllm import LLM as _VllmLLM
-            from transformers import AutoTokenizer
-
-            repo, revision = common.checkpoint_pairs(args.family, (args.model,))[0]
-            engine_llm = _VllmLLM(
-                model=repo,
-                revision=revision,
-                dtype=args.dtype,
-                gpu_memory_utilization=0.92,
-                max_model_len=8192,
-                enforce_eager=True,
-                enable_chunked_prefill=False,
-                enable_prefix_caching=False,
-            )
-            tokenizer = AutoTokenizer.from_pretrained(repo, revision=revision)
-            model = None
-        else:
-            model, tokenizer = load_runtime()
-
-        def run_eval(
-            items,
-            benchmark,
-            layer,
-            alpha,
-            basis,
-            cap,
-            condition,
-            replacement=None,
-            done_ids=None,
-        ):
-            if engine_llm is not None:
-                return _evaluate_vllm(
-                    engine_llm,
-                    tokenizer,
-                    items,
-                    benchmark,
-                    layer,
-                    alpha,
-                    basis,
-                    cap,
-                    condition,
-                    replacement=replacement,
-                    done_ids=done_ids,
-                )
-            return _evaluate(
-                model,
-                tokenizer,
-                items,
-                benchmark,
-                layer,
-                alpha,
-                basis,
-                args.batch_size,
-                cap,
-                condition,
-                replacement=replacement,
-                done_ids=done_ids,
-            )
-
+        model, tokenizer = load_runtime()
         prior_selected = (
             json.loads((output / "selected.json").read_text())
             if (output / "selected.json").is_file()
@@ -329,12 +216,15 @@ def run_with(args: argparse.Namespace, load_runtime) -> None:
                             for item in val
                         ):
                             continue
-                        rows = run_eval(
+                        rows = _evaluate(
+                            model,
+                            tokenizer,
                             val,
                             benchmark,
                             layer,
                             alpha,
                             bases[condition][layer],
+                            args.batch_size,
                             common.CAPS[benchmark][0],
                             condition,
                             done_ids={
@@ -383,7 +273,7 @@ def run_with(args: argparse.Namespace, load_runtime) -> None:
                 val_summary = common.validation_scores(validation_path, domain)
             choice = prior_selected.get(domain, select_best(val_summary))
             selected[domain] = choice
-            if "r_bar" not in choice and engine_llm is None:
+            if "r_bar" not in choice:
                 choice["r_bar"] = mean_hidden_norm(
                     model,
                     tokenizer,
@@ -391,8 +281,6 @@ def run_with(args: argparse.Namespace, load_runtime) -> None:
                     choice["layer"],
                     args.batch_size,
                 )
-            elif "r_bar" not in choice:
-                choice["r_bar"] = None
             for condition in ("high", "low", "random"):
                 path = output / f"eval_{domain}_{condition}.jsonl"
                 done = (
@@ -400,12 +288,15 @@ def run_with(args: argparse.Namespace, load_runtime) -> None:
                     if path.is_file()
                     else set()
                 )
-                rows = run_eval(
+                rows = _evaluate(
+                    model,
+                    tokenizer,
                     test,
                     benchmark,
                     choice["layer"],
                     choice["alpha"],
                     bases[condition][choice["layer"]],
+                    args.batch_size,
                     common.CAPS[benchmark][1],
                     condition,
                     done_ids=done,

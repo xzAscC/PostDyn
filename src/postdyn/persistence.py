@@ -168,11 +168,6 @@ class _Tee:
     def isatty(self) -> bool:
         return self._original.isatty()
 
-    def fileno(self) -> int:
-        # Required by libraries (e.g. vLLM engine startup) that redirect the
-        # real stdout descriptor; delegate to the captured original stream.
-        return self._original.fileno()
-
     @property
     def encoding(self) -> str:
         return getattr(self._original, "encoding", "utf-8")
