@@ -1,0 +1,24 @@
+.gitignore
+  s_63d94dec3922d7::t_dde061ac266fe2 10,15,26-28,51,53
+tests/test_extract.py
+  s_63d94dec3922d7::t_72457b69f56c98 377,382
+  s_63d94dec3922d7::t_daf89d6ee8f642 47,68-72,75,375-376,380-381
+.ignore
+  s_63d94dec3922d7::t_dde061ac266fe2 4,12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "db6def0b8b5308d3e05d0e7093b78096c2e47d44",
+  "prompts": {},
+  "sessions": {
+    "s_63d94dec3922d7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0fa3e-2021-7283-bdcc-dbd608f68e56",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
