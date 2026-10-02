@@ -44,7 +44,7 @@ class _FallbackTokenizer:
         truncation: bool = False,
         max_length: int | None = None,
         **_: object,
-    ) -> dict[str, torch.Tensor]:
+    ) -> dict[str, Any]:
         del truncation
         text_list = [texts] if isinstance(texts, str) else list(texts)
         encoded = [self._encode(text, max_length) for text in text_list]
@@ -65,9 +65,14 @@ class _FallbackTokenizer:
             encoded = padded
         else:
             masks = [[1] * len(ids) for ids in encoded]
+        if return_tensors is None:
+            return {
+                "input_ids": encoded[0] if isinstance(texts, str) else encoded,
+                "attention_mask": masks[0] if isinstance(texts, str) else masks,
+            }
         if return_tensors != "pt":
             raise ValueError(
-                "The fallback tokenizer only supports return_tensors='pt'."
+                "The fallback tokenizer supports return_tensors=None or 'pt'."
             )
         return {
             "input_ids": torch.tensor(encoded, dtype=torch.long),
@@ -367,10 +372,14 @@ def test_extract_token_budget_preserves_order_and_shrinks_long_batches(
     long_prompt = "word " * 64
     prompts = ["short one", long_prompt, "tiny", "another short", long_prompt]
     with_budget = extract_layer_hiddens(
-        model, cast(Any, tokenizer), prompts, layers=[0, 1], token_budget=24
+        model, cast(Any, tokenizer), prompts, layers=[0, 1],
+        token_budget=24,
+        max_length=64,
     )
     without_budget = extract_layer_hiddens(
-        model, cast(Any, tokenizer), prompts, layers=[0, 1], token_budget=None
+        model, cast(Any, tokenizer), prompts, layers=[0, 1],
+        token_budget=None,
+        max_length=64,
     )
     for layer in (0, 1):
         torch.testing.assert_close(with_budget[layer], without_budget[layer])

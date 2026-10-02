@@ -41,6 +41,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="sft",
         help="fixed checkpoint receiving the other stage's aligned low basis",
     )
+    parser.add_argument(
+        "--engine",
+        choices=("hf", "vllm"),
+        default="hf",
+        help="generation backend (vllm: faster continuous batching)",
+    )
     return parser.parse_args(argv)
 
 
@@ -56,6 +62,7 @@ def identity_for(args: argparse.Namespace) -> dict[str, Any]:
         "batch_size": args.batch_size,
         "limit": args.limit,
         "model": args.model,
+        "engine": getattr(args, "engine", "hf"),
         "other": "rlvr" if args.model == "sft" else "sft",
         "checkpoints": common.checkpoint_pairs(
             args.family, ("sft", "rlvr"), args.sft_lr
@@ -85,7 +92,43 @@ def run_with(args: argparse.Namespace, load_runtime) -> None:
             common.require_bases(args.q1_root, domain, cfg.layers, args.model)
             common.require_bases(args.q1_root, domain, cfg.layers, other)
     with tee_log(RunDir(output)):
-        model, tokenizer = load_runtime()
+        engine_llm = None
+        if getattr(args, "engine", "hf") == "vllm" and args.scale != "tiny":
+            from postdyn import vllm_steering  # noqa: F401  (env vars before vllm)
+
+            from vllm import LLM as _VllmLLM
+            from transformers import AutoTokenizer
+
+            repo, revision = common.checkpoint_pairs(args.family, (args.model,))[0]
+            engine_llm = _VllmLLM(
+                model=repo,
+                revision=revision,
+                dtype=args.dtype,
+                gpu_memory_utilization=0.92,
+                max_model_len=8192,
+                enforce_eager=True,
+                enable_chunked_prefill=False,
+                enable_prefix_caching=False,
+            )
+            tokenizer = AutoTokenizer.from_pretrained(repo, revision=revision)
+            model = None
+        else:
+            model, tokenizer = load_runtime()
+
+        def run_eval(
+            items, benchmark, layer, alpha, basis, cap, condition,
+            replacement=None, done_ids=None,
+        ):
+            if engine_llm is not None:
+                return exp1._evaluate_vllm(
+                    engine_llm, tokenizer, items, benchmark, layer, alpha,
+                    basis, cap, condition, replacement=replacement, done_ids=done_ids,
+                )
+            return exp1._evaluate(
+                model, tokenizer, items, benchmark, layer, alpha, basis,
+                args.batch_size, cap, condition, replacement=replacement,
+                done_ids=done_ids,
+            )
         selected: dict[str, dict[str, Any]] = {}
         alignment: dict[str, dict[int, float]] = {}
         for domain in args.domains:
@@ -126,15 +169,12 @@ def run_with(args: argparse.Namespace, load_runtime) -> None:
                     for item in val
                 ):
                     continue
-                rows = exp1._evaluate(
-                    model,
-                    tokenizer,
+                rows = run_eval(
                     val,
                     benchmark,
                     layer,
                     ALPHA,
                     None,
-                    args.batch_size,
                     common.CAPS[benchmark][0],
                     SELECTION_CONDITION,
                     replacement=(u_own[layer], u_aligned[layer]),
@@ -199,15 +239,12 @@ def run_with(args: argparse.Namespace, load_runtime) -> None:
                     if path.is_file()
                     else set()
                 )
-                rows = exp1._evaluate(
-                    model,
-                    tokenizer,
+                rows = run_eval(
                     test,
                     benchmark,
                     choice["layer"],
                     choice["alpha"],
                     basis,
-                    args.batch_size,
                     common.CAPS[benchmark][1],
                     condition,
                     replacement=replacement,

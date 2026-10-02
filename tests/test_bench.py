@@ -46,13 +46,14 @@ def test_apply_chat_template_uses_user_message_and_generation_prompt() -> None:
         {
             "conversation": [{"role": "user", "content": "hi"}],
             "add_generation_prompt": True,
+            "tokenize": False,
         }
     ]
 
 
 def test_apply_chat_template_can_call_tokenizer_positional_variant() -> None:
     tokenizer = SimpleNamespace(chat_template="yes")
-    tokenizer.apply_chat_template = lambda messages, add_generation_prompt: "ok"
+    tokenizer.apply_chat_template = lambda messages, add_generation_prompt, tokenize: "ok"
     assert bench.apply_chat_template(tokenizer, "hi") == "ok"
 
 
@@ -388,3 +389,34 @@ def test_generate_tiny_gpt2_capture_matches_reference() -> None:
                 row.captured[layer],
                 reference[layer + 1][row_index].float().cpu(),
             )
+
+
+def test_apply_chat_template_returns_str_for_real_chat_tokenizer() -> None:
+    transformers = pytest.importorskip("transformers")
+    try:
+        tok = transformers.AutoTokenizer.from_pretrained(
+            "allenai/Olmo-3-7B-Think", local_files_only=True
+        )
+    except (OSError, RuntimeError) as exc:
+        pytest.skip(f"olmo tokenizer not cached: {exc}")
+    rendered = bench.apply_chat_template(tok, "2+2=?")
+    assert isinstance(rendered, str)
+    assert "2+2=?" in rendered
+
+
+def test_mmlu_pro_test_split_is_deterministic_1000_subset() -> None:
+    items = [
+        {"question_id": f"q{i}", "question": f"p{i}", "options": ["A", "B"], "answer": "A", "answer_text": "a"}
+        for i in range(1200)
+    ]
+    original = bench._load_mmlu_pro
+    bench._load_mmlu_pro = lambda source=None: [
+        bench.BenchItem(x["question_id"], x["question"], x) for x in items
+    ]
+    try:
+        v1, t1 = bench.load_benchmark("mmlu_pro")
+        v2, t2 = bench.load_benchmark("mmlu_pro")
+    finally:
+        bench._load_mmlu_pro = original
+    assert len(t1) == 1000 and len(v1) == 30
+    assert [x.id for x in t1] == [x.id for x in t2]
