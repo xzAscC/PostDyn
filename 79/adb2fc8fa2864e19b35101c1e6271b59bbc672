@@ -1,0 +1,57 @@
+.gitignore
+  s_63d94dec3922d7::t_45a7f7cee83e5a 10,15,26-28,51,53
+.ignore
+  s_63d94dec3922d7::t_21755407130551 4,12
+scripts/README.md
+  s_63d94dec3922d7::t_4480cb5af5c7e7 67-68
+scripts/q2_common.py
+  s_63d94dec3922d7::t_99a7f80b1d3aaf 6,21-24,276-279
+scripts/run_7b_h100.sh
+  s_63d94dec3922d7::t_c292028fc5b369 18
+scripts/run_q1.py
+  s_63d94dec3922d7::t_2438346f60b54c 8,261-309,539-553,561-562,576-595
+scripts/run_q1_robustness.py
+  s_63d94dec3922d7::t_0ef2b5ca997f07 10,43-48,92-97,114,118-161,163-226,228-230,232-241,243-291,293,295-296,298
+scripts/run_q2_exp1.py
+  s_63d94dec3922d7::t_9d1c07c01e5911 39-44,136-179,192,221-283,332,386,394-395,403
+scripts/run_q2_exp2.py
+  s_63d94dec3922d7::t_253663a72c629b 76-85,105-109,212-346,385-395
+scripts/run_q2_exp3.py
+  s_63d94dec3922d7::t_4eb4a826647563 44-49,65,95-131,172,242
+scripts/run_q2_model.py
+  s_63d94dec3922d7::t_017ffc1812c816 22-27,65-67,69-76,97,105-122
+src/postdyn/bench.py
+  s_63d94dec3922d7::t_d296fb08ed0358 52,55-57,233-239
+src/postdyn/extract.py
+  s_63d94dec3922d7::t_ff03be8711485f 375-440
+src/postdyn/persistence.py
+  s_63d94dec3922d7::t_d6d76e686e3311 171-175
+src/postdyn/vllm_steering.py
+  s_63d94dec3922d7::t_f5478d4e00e970 1-160
+tests/test_bench.py
+  s_63d94dec3922d7::t_81bc7adeb61aed 49,56,392-422
+tests/test_extract.py
+  s_63d94dec3922d7::t_ffc70cd36e2d92 47,68-72,75,375-377,380-382
+tests/test_q2_common.py
+  s_63d94dec3922d7::t_d1f8a38ffcaffa 18,33-60
+tests/test_run_q1.py
+  s_63d94dec3922d7::t_7d1e4caf18da0a 517-613
+tests/test_vllm_steering.py
+  s_63d94dec3922d7::t_1043c5d38e9a2d 1-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "79adb2fc8fa2864e19b35101c1e6271b59bbc672",
+  "prompts": {},
+  "sessions": {
+    "s_63d94dec3922d7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0fa3e-2021-7283-bdcc-dbd608f68e56",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
