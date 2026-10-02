@@ -49,10 +49,12 @@ def apply_chat_template(tokenizer: Any, prompt: str) -> str:
     messages = [{"role": "user", "content": prompt}]
     try:
         return tokenizer.apply_chat_template(
-            conversation=messages, add_generation_prompt=True
+            conversation=messages, add_generation_prompt=True, tokenize=False
         )
     except TypeError:
-        return tokenizer.apply_chat_template(messages, add_generation_prompt=True)
+        return tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True, tokenize=False
+        )
 
 
 def _rows(dataset: Any) -> list[Any]:
@@ -228,7 +230,13 @@ def load_benchmark(
         loaders[name](),
         key=lambda item: hashlib.sha256(f"{seed}|{item.id}".encode()).hexdigest(),
     )
-    return items[:n_val], sorted(items[n_val:], key=lambda item: item.id)
+    val, test = items[:n_val], sorted(items[n_val:], key=lambda item: item.id)
+    if name == "mmlu_pro" and len(test) > 1000:
+        import random as _random
+
+        subset = _random.Random(seed).sample(range(len(test)), 1000)
+        test = sorted((test[i] for i in subset), key=lambda item: item.id)
+    return val, test
 
 
 def generate(

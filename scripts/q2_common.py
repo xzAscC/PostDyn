@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,10 +18,10 @@ from postdyn.persistence import load_eigensystem, append_jsonl, atomic_write_jso
 from postdyn.uploader import uploader_from_args
 
 CAPS = {
-    "math500": (1024, 2048),
-    "mmlu_pro": (256, 512),
-    "ifeval": (512, 768),
-    "livecodebench": (1024, 1024),
+    "math500": (2048, 4096),
+    "mmlu_pro": (2048, 4096),
+    "ifeval": (2048, 4096),
+    "livecodebench": (2048, 4096),
 }
 
 _ITEMS_CACHE: dict[tuple[str, int | None, bool], tuple[list[Any], list[Any]]] = {}
@@ -272,7 +273,10 @@ def load_items(domain: str, limit: int | None, tiny: bool):
         val, test = items[:30], items[30:]
         result = (val[:limit] if limit else val), (test[:limit] if limit else test)
     else:
-        val, test = load_benchmark(BENCHMARKS[domain])
+        source = (
+            os.environ.get("POSTDYN_LIVECODEBENCH_JSONL") if domain == "code" else None
+        )
+        val, test = load_benchmark(BENCHMARKS[domain], source=source)
         result = (val[:limit] if limit else val), (test[:limit] if limit else test)
     _ITEMS_CACHE[key] = result
     return result

@@ -19,6 +19,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model", choices=("sft", "rlvr"), default="rlvr")
     parser.add_argument("--output-root", type=Path, default=None)
     parser.add_argument("--sft-lr", choices=("1e-4", "5e-5"), default="1e-4")
+    parser.add_argument(
+        "--engine",
+        choices=("hf", "vllm"),
+        default="hf",
+        help="generation backend forwarded to exp1/exp3 (exp2 stays hf)",
+    )
     return parser.parse_args(argv)
 
 
@@ -56,8 +62,18 @@ def build_experiment_args(
     root = args.output_root or Path("logs") / "q2" / args.family
     shared = _shared_argv(args)
     model = args.model
+    engine_argv = (
+        ["--engine", args.engine] if getattr(args, "engine", "hf") == "vllm" else []
+    )
     a1 = exp1.parse_args(
-        [*shared, "--model", model, "--output", str(root / f"exp1_{model}")]
+        [
+            *shared,
+            "--model",
+            model,
+            "--output",
+            str(root / f"exp1_{model}"),
+            *engine_argv,
+        ]
     )
     exp1_output = root / f"exp1_{model}"
     a2 = exp2.parse_args(
@@ -78,6 +94,7 @@ def build_experiment_args(
             model,
             "--output",
             str(root / f"exp3_{model}"),
+            *engine_argv,
         ]
     )
     return a1, a2, a3
@@ -85,6 +102,24 @@ def build_experiment_args(
 
 def run(args: argparse.Namespace) -> None:
     a1, a2, a3 = build_experiment_args(args)
+    if getattr(args, "engine", "hf") == "vllm":
+        # exp1/exp3 build their own vLLM engines; only exp2 needs the HF
+        # runtime, and VRAM must be returned between engine switches.
+        def _release_vram() -> None:
+            import gc
+
+            import torch
+
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        exp1.run_with(a1, lambda: (_ for _ in ()).throw(RuntimeError("unused")))
+        _release_vram()
+        exp2.run_with(a2, lambda: common.load_runtime(a2, args.model))
+        _release_vram()
+        exp3.run_with(a3, lambda: (_ for _ in ()).throw(RuntimeError("unused")))
+        return
     runtime = common.load_runtime(a1, args.model)
     loader = lambda: runtime
     exp1.run_with(a1, loader)
