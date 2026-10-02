@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -257,6 +258,55 @@ def _eigensystem_complete(
     )
 
 
+def _processing_order(
+    names: list[str],
+    completed_units: set[tuple[str, int, str]],
+    fully_done: set[str],
+) -> list[str]:
+    """Defer fully completed checkpoints to the tail of the processing loop.
+
+    Lets fresh work (e.g. RLVR/DPO during a migration transfer) use the GPU
+    while already-persisted checkpoints finish arriving. Unit results are
+    independent of processing order; manifests and analysis keep the
+    original schedule order.
+    """
+    return [n for n in names if n not in fully_done] + [
+        n for n in names if n in fully_done
+    ]
+
+
+def _wait_for_inflight(
+    run: RunDir,
+    checkpoint: str,
+    domain: str,
+    layers: list[int],
+    completed: set[tuple[str, int, str]],
+    timeout_s: float,
+) -> list[int]:
+    """Wait for transfer-in-flight units (metrics done, files on the wire).
+
+    rsync delivers files via atomic rename, so presence means completeness.
+    Returns the layers still missing when the timeout expires; callers then
+    fall back to normal extraction for them.
+    """
+    deadline = time.monotonic() + timeout_s
+    while True:
+        awaited = [
+            layer
+            for layer in layers
+            if (checkpoint, layer, domain) in completed
+            and not _eigensystem_complete(run, checkpoint, layer, domain)
+        ]
+        if not awaited or time.monotonic() >= deadline:
+            return awaited
+        print(
+            f"[wait-transfer] {checkpoint}/{domain}: {len(awaited)} units "
+            "in flight; sleeping 30s",
+            flush=True,
+        )
+        time.sleep(30)
+
+
 def _write_analysis(
     run: RunDir, checkpoints: list[CheckpointRef], layers: list[int], domains: list[str]
 ) -> None:
@@ -486,7 +536,21 @@ def run(args: argparse.Namespace) -> int:
         uploader.start()
     with tee_log(run_dir):
         pending_joins: dict[str, Any] = {}
-        for index, checkpoint in enumerate(checkpoints):
+        fully_done = {
+            c.name
+            for c in checkpoints
+            if all(
+                (c.name, layer, domain) in completed
+                for layer in layers
+                for domain in domains
+            )
+        }
+        processing = [
+            c
+            for name in _processing_order([c.name for c in checkpoints], completed, fully_done)
+            for c in [next(x for x in checkpoints if x.name == name)]
+        ]
+        for index, checkpoint in enumerate(processing):
             join = pending_joins.pop(checkpoint.name, None)
             if join is not None and not join():
                 print(
@@ -494,8 +558,8 @@ def run(args: argparse.Namespace) -> int:
                     "falling back to blocking download"
                 )
             model, tokenizer = _checkpoint_model(args, checkpoint)
-            if _should_prefetch(args, index, checkpoints):
-                upcoming = checkpoints[index + 1]
+            if _should_prefetch(args, index, processing):
+                upcoming = processing[index + 1]
                 print(f"[prefetch] downloading {upcoming.name}")
                 pending_joins[upcoming.name] = start_prefetch(upcoming)
             try:
@@ -509,6 +573,26 @@ def run(args: argparse.Namespace) -> int:
                         )
                     ]
                     hidden = {}
+                    if (
+                        missing
+                        and os.environ.get("POSTDYN_WAIT_FOR_TRANSFER") == "1"
+                    ):
+                        _wait_for_inflight(
+                            run_dir,
+                            checkpoint.name,
+                            domain,
+                            layers,
+                            completed,
+                            float(os.environ.get("POSTDYN_WAIT_TIMEOUT", "21600")),
+                        )
+                        missing = [
+                            layer
+                            for layer in layers
+                            if (checkpoint.name, layer, domain) not in completed
+                            or not _eigensystem_complete(
+                                run_dir, checkpoint.name, layer, domain
+                            )
+                        ]
                     if missing:
                         # One forward pass per (checkpoint, domain) covers all
                         # layers; token-budget batching bounds the transient

@@ -64,7 +64,8 @@ uv sync --group dev
 uv run python scripts/run_q1.py --family 32b --scale full \
     --dtype bfloat16 --device cuda --output logs/q1/32b
 
-# Q1 robustness on the final RLVR checkpoint (Math, R=5)
+# Q1 robustness ablation: SFT and RLVR final checkpoints (Math, R=5;
+# same prompt subsets per repeat index; --checkpoint overrides to a single run)
 uv run python scripts/run_q1_robustness.py --family 32b --repeats 5 \
     --dtype bfloat16 --device cuda --output logs/q1_robustness/32b
 
