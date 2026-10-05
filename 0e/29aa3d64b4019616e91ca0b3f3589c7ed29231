@@ -1,0 +1,23 @@
+scripts/run_rq1_spectral_safety.py
+  s_b93329a3606ca5::t_5851599e75c30c 1-283
+tests/test_rq1_spectral_safety.py
+  s_b93329a3606ca5::t_da6213c189329e 1-120
+scripts/run_rq1_spectral_safety_osc.sh
+  s_b93329a3606ca5::t_f43719d8ba6985 1-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0e29aa3d64b4019616e91ca0b3f3589c7ed29231",
+  "prompts": {},
+  "sessions": {
+    "s_b93329a3606ca5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8ef1aa88-aec4-4f09-b02d-0f096a837956",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
