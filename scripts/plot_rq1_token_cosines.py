@@ -46,6 +46,7 @@ def binned_stats(
 def main() -> None:
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
+    from matplotlib.ticker import NullLocator
     from safetensors.torch import load_file
 
     p = argparse.ArgumentParser(description=__doc__)
@@ -61,9 +62,10 @@ def main() -> None:
         "axes.linewidth": 0.6, "xtick.major.width": 0.6, "ytick.major.width": 0.6,
     })
     edges = sorted({0, *np.unique(np.round(np.logspace(0, np.log10(2048), 45)).astype(int)).tolist()})
-    fig, axes = plt.subplots(len(LAYERS), len(DOMAINS), figsize=(7.0, 4.8), sharex=True, sharey="row")
+    fig, axes = plt.subplots(len(LAYERS), len(DOMAINS), figsize=(7.0, 4.8), sharex="col", sharey="row")
     for col, (dom, title) in enumerate(DOMAINS.items()):
         data = load_file(str(Path(args.run) / f"token_cosines_{dom}.safetensors"))
+        x_max = 1.0
         for row, layer in enumerate(LAYERS):
             ax = axes[row, col]
             ax.axhline(0, color="0.55", lw=0.6, ls=(0, (3, 2)))
@@ -75,8 +77,12 @@ def main() -> None:
                 m, s = m.numpy(), s.numpy()
                 ax.fill_between(x, m - s, m + s, color=color, alpha=0.15, lw=0)
                 ax.plot(x, m, color=color, lw=1.3)
+                x_max = max(x_max, float(x[-1]))
             ax.set_xscale("log")
-            ax.set_xticks([1, 10, 100, 1000], ["1", "10", "100", "1000"])
+            ax.xaxis.set_minor_locator(NullLocator())
+            ticks = [t for t in (1, 10, 100, 1000) if t <= x_max * 1.05]
+            ax.set_xticks(ticks, [str(t) for t in ticks])
+            ax.set_xlim(0.9, x_max * 1.1)
             if row == 0:
                 ax.set_title(title)
             if col == 0:
