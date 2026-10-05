@@ -45,7 +45,7 @@ MODEL_REPO = "allenai/Olmo-3-1025-7B"
 def _load_wikitext(n: int, seed: int = 42) -> list[str]:
     from datasets import load_dataset
 
-    ds = load_dataset("wikitext", "wikitext-103-v1", split="train")
+    ds = load_dataset("Salesforce/wikitext", "wikitext-103-v1", split="train")
     texts = [row["text"] for row in ds if row["text"].strip() and len(row["text"]) > 50]
     rng = torch.Generator().manual_seed(seed)
     indices = torch.randperm(len(texts), generator=rng)[:n].tolist()
