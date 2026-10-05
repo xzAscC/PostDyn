@@ -1,0 +1,19 @@
+scripts/plot_rq1_token_cosines.py
+  s_b93329a3606ca5::t_4a5f7ea3aac656 49,65,68,80,82-85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "04dffe776cd40dc4486afa6d8d325e9f53b91492",
+  "prompts": {},
+  "sessions": {
+    "s_b93329a3606ca5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8ef1aa88-aec4-4f09-b02d-0f096a837956",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
