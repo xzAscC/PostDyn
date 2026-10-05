@@ -8,7 +8,6 @@
 6. Save figures as PDF first. Do not save as PNG.
 7. Keep code clean and concise.
 8. Experiments must log incrementally: persist partial results as JSON after each completed method or condition, and tee every print to both stdout and a log file under `logs/`. Run artifacts (incremental JSON/JSONL/safetensors and their `run.log`) live inside per-run subdirectories such as `logs/q1/` and `logs/q2/`; keep the `logs/` root itself for shared log files only.
-9. Before using a GPU, queue the job with `gpu-queue` (path command). Machine-level FIFO: one job at a time, gated on free GPU memory. `gpu-queue add <name> <command...>` to enqueue; `list` / `remove` / `status` / `start` / `stop` as needed. Do not run GPU jobs directly.
 
 ## Repository conventions
 
@@ -18,3 +17,7 @@
 - Keep generated run artifacts under the selected output directory; `logs/` is for log files only.
 - Use a new branch and open a concise PR when work is complete.
 - Add or update tests before implementation and keep the full suite green.
+
+## Local agent rules
+
+Read and follow `AGENTS.local.md` when present. Claude owns code and experiments; Codex owns LaTeX manuscript edits. Neither agent may perform the other's work. When showing formulas, render a temporary PDF under `/tmp/` and open it with Zathura instead of relying on terminal/chat formula rendering.
