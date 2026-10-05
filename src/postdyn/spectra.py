@@ -118,10 +118,51 @@ def spectral_metrics(values: torch.Tensor) -> dict[str, float]:
     }
 
 
+def energy_profile(direction: torch.Tensor, eigenvectors: torch.Tensor) -> torch.Tensor:
+    """Squared projections of a direction onto each eigenvector.
+
+    ``eigenvectors`` has shape ``(d, d)`` with columns sorted by descending
+    eigenvalue.  Returns a float64 tensor of shape ``(d,)`` where entry *i*
+    is ``(u_i^T hat_d)^2``.  The direction is normalized internally.
+    """
+    d = direction.to(dtype=torch.float64)
+    norm = d.norm()
+    if norm.item() == 0.0:
+        return torch.zeros(eigenvectors.shape[1], dtype=torch.float64)
+    d = d / norm
+    projections = eigenvectors.to(dtype=torch.float64).T @ d
+    return projections.square()
+
+
+def energy_high_low(
+    direction: torch.Tensor,
+    eigenvectors: torch.Tensor,
+    k: int,
+) -> dict[str, object]:
+    """E_high and E_low for a direction against sorted eigenvectors.
+
+    Returns a dict with ``E_high``, ``E_low``, ``k``, ``random_baseline``
+    (``k/d``), and ``profile`` (the full per-eigenvector squared projection).
+    """
+    profile = energy_profile(direction, eigenvectors)
+    d = int(profile.shape[0])
+    e_high = float(profile[:k].sum().item())
+    e_low = float(profile[d - k :].sum().item())
+    return {
+        "E_high": e_high,
+        "E_low": e_low,
+        "k": k,
+        "random_baseline": k / d,
+        "profile": [float(v) for v in profile],
+    }
+
+
 __all__ = [
     "band_slices",
     "effective_rank",
     "eigensystem",
+    "energy_high_low",
+    "energy_profile",
     "frobenius_magnitude",
     "match_eigenvectors",
     "rank_displacement",
