@@ -1,0 +1,21 @@
+scripts/run_rq1_measurements.py
+  s_b93329a3606ca5::t_c0e9937474e1be 105-106
+tests/test_rq1_measurements.py
+  s_b93329a3606ca5::t_7c81a3dcab793f 141-152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d3117f8412bd7dec2ec8d89f9c3085e2a5a97360",
+  "prompts": {},
+  "sessions": {
+    "s_b93329a3606ca5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8ef1aa88-aec4-4f09-b02d-0f096a837956",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
