@@ -1,0 +1,19 @@
+scripts/run_rq1_spectral.py
+  s_71c6cea06ef2c9::t_cbc1fea49c746f 48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b6cb8dca5cd8a9c77b08fcc1ab1f7d78e55077a0",
+  "prompts": {},
+  "sessions": {
+    "s_71c6cea06ef2c9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d5aff82-4085-4686-9c44-2d909d3816fd",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
