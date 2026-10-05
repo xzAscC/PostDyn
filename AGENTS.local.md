@@ -7,3 +7,7 @@
 - When formulas need to be shown to the user, create a temporary PDF under /tmp/, check its rendering, and open it with Zathura. Do not rely on terminal/chat LaTeX or plain-text formulas as the formula presentation.
 - Keep temporary formula explanations separate from the manuscript unless the user requests a manuscript edit.
 - Preserve the other agent's working changes. Do not stage or commit the other agent's files.
+
+## Local validation before OSC experiments
+
+Before submitting any experiment to OSC A100 or H100 GPUs, Claude must first pass the relevant local tests and complete a small end-to-end run on the local RTX 4090. Queue the local GPU run with `gpu-queue`; do not run it directly. Verify that the run completes and writes the expected results and logs before remote submission. Repeat this check after changes to the experiment code or configuration; if the local check cannot run or fails, resolve it or ask the user before submitting remotely.
