@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=rq1-spectral
-#SBATCH --account=PAS2139
-#SBATCH --partition=gpu
+#SBATCH --account=PAS2324
+#SBATCH --partition=nextgen
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=1
 #SBATCH --time=04:00:00
@@ -15,8 +15,7 @@ cd "$(dirname "$0")/.."
 export HF_HOME="${POSTDYN_HF_HOME:-$PWD/hf_cache}"
 mkdir -p "$HF_HOME" logs/rq1_spectral
 
-module load cuda/12.4
-module load python/3.13
+module load cuda/12.4.1
 
 uv sync --group dev
 
