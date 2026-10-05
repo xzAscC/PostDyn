@@ -102,6 +102,8 @@ def layer_measurements(
         "m3_eval": {k: m3_eval[k] for k in ("rho_bar", "rho_var", "R_K", "v", "b")},
         "dim_projection_eval": eval_proj,
         "sigma_eigenvalues": lam.tolist(),
+        "u_mu_pos": (u.T @ mu_p).tolist(),
+        "u_mu_neg": (u.T @ mu_n.double()).tolist(),
         "A_k": subspace_overlap_curve(u, w, ks),
     }
     return row, dim

@@ -138,3 +138,15 @@ class TestLayerMeasurements:
         assert sum(row["m1"]["profile"]) == pytest.approx(1.0)
         assert row["m3"]["rho"][0] > 0.9
         assert row["dim_projection_eval"]["pos"]["mean"] > row["dim_projection_eval"]["neg"]["mean"]
+
+    def test_mean_projections_on_sigma_eigenvectors(self):
+        from scripts.run_rq1_measurements import layer_measurements
+
+        g = torch.Generator().manual_seed(1)
+        pos = torch.randn(200, 12, generator=g, dtype=torch.float64) + 1.0
+        neg = torch.randn(200, 12, generator=g, dtype=torch.float64)
+        row, _ = layer_measurements(pos[:150], neg[:150], pos[150:], neg[150:])
+        up, un = torch.tensor(row["u_mu_pos"]), torch.tensor(row["u_mu_neg"])
+        assert len(up) == 12 and len(un) == 12
+        assert float(up.square().sum()) == pytest.approx(float(pos[:150].mean(0).square().sum()))
+        assert float(un.square().sum()) == pytest.approx(float(neg[:150].mean(0).square().sum()))
