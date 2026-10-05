@@ -27,7 +27,7 @@ def w1_stats(row: dict) -> tuple[float, float]:
 def main() -> None:
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
-    from matplotlib.ticker import LogLocator, NullLocator
+    from matplotlib.ticker import NullLocator
 
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--run", default=str(ROOT / "logs" / "rq1_measurements_v2"))
@@ -42,30 +42,32 @@ def main() -> None:
     })
     rows = [json.loads(l) for l in open(Path(args.run) / "metrics.jsonl")]
     layers = sorted({r["layer"] for r in rows})
-    fig, axes = plt.subplots(len(layers), len(TITLES), figsize=(7.0, 4.8), sharey=True)
+    fig, axes = plt.subplots(len(layers), len(TITLES), figsize=(7.0, 4.8), sharex=True, sharey=True)
     for r in rows:
         row, col = layers.index(r["layer"]), list(TITLES).index(r["domain"])
         ax = axes[row, col]
-        eta, rho = r["m3"]["eta"], r["m3"]["rho"]
+        rho = r["m3"]["rho"]
+        rank = list(range(1, len(rho) + 1))
         ax.grid(True, color="0.92", lw=0.5)
-        ax.scatter(eta[1:], rho[1:], s=3, color=OTHER, alpha=0.5, lw=0, rasterized=True)
-        ax.scatter(eta[:1], rho[:1], s=45, marker="*", color=W1, zorder=5, lw=0)
+        ax.scatter(rank[1:], rho[1:], s=3, color=OTHER, alpha=0.5, lw=0, rasterized=True)
+        ax.scatter(rank[:1], rho[:1], s=45, marker="*", color=W1, zorder=5, lw=0)
         cos, ratio = w1_stats(r)
         ax.annotate(
             rf"$\rho_1={rho[0]:.2f}$" "\n" rf"$\cos(w_1,\mu_+)={cos:.4f}$" "\n" rf"$v_1/\lambda_1={ratio:.2f}$",
-            xy=(eta[0], rho[0]), xytext=(0.5, 0.42), textcoords="axes fraction",
+            xy=(rank[0], rho[0]), xytext=(0.62, 0.42), textcoords="axes fraction",
             ha="center", va="bottom", fontsize=6.3, color="0.15",
             arrowprops=dict(arrowstyle="-|>", lw=0.5, color="0.4", mutation_scale=6, shrinkB=3),
         )
         ax.set_xscale("log")
-        ax.xaxis.set_major_locator(LogLocator(base=10, numticks=6))
+        ax.set_xticks([1, 10, 100, 1000], ["1", "10", "100", "1000"])
         ax.xaxis.set_minor_locator(NullLocator())
+        ax.set_xlim(0.8, len(rho) * 1.15)
         ax.set_ylim(-0.04, 1.08)
         if row == 0:
             ax.set_title(TITLES[r["domain"]])
         if col == 0:
             ax.set_ylabel(f"Layer {r['layer']}")
-    fig.supxlabel(r"Eigenvalue $\eta_i$ of $M_+$ (top third)", fontsize=7.5)
+    fig.supxlabel(r"Eigenvalue rank $i$ of $M_+$ (1 = largest)", fontsize=7.5)
     fig.supylabel(r"Mean contribution $\rho_i=b_i/\eta_i$", fontsize=7.5)
     handles = [Line2D([], [], marker="*", ls="", color=W1, ms=8), Line2D([], [], marker="o", ls="", color=OTHER, ms=3)]
     fig.legend(handles, [r"$w_1$", r"$w_2,\dots,w_K$"], loc="upper center", ncol=2, frameon=False, bbox_to_anchor=(0.5, 1.0))
