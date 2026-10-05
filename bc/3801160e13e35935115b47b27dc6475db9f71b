@@ -1,0 +1,19 @@
+scripts/run_rq1_spectral_osc.sh
+  s_71c6cea06ef2c9::t_9162a16116a9c8 3-4,18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bc3801160e13e35935115b47b27dc6475db9f71b",
+  "prompts": {},
+  "sessions": {
+    "s_71c6cea06ef2c9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d5aff82-4085-4686-9c44-2d909d3816fd",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
