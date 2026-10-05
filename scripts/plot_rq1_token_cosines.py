@@ -1,40 +1,51 @@
-"""Plot per-position DiM cosine (mean ± std) for RQ1 Measurement 4."""
+"""Plot DiM cosine (mean ± std) against token position for RQ1 Measurement 4."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
+import numpy as np
 import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 DOMAINS = {
-    "math": ("Math", "WikiText"),
-    "code": ("Code", "WikiText"),
-    "instruction_following": ("Instruction following", "WikiText"),
-    "safety": ("Harmful", "Benign"),
+    "math": "Math\nvs. WikiText",
+    "code": "Code\nvs. WikiText",
+    "instruction_following": "Instruction following\nvs. WikiText",
+    "safety": "Harmful\nvs. benign",
 }
 LAYERS = (6, 17, 28)
+TARGET, REFERENCE = "#2E5E96", "#B03A2E"
 
 
-def position_stats(
-    cos: torch.Tensor, lengths: torch.Tensor, min_count: int
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Mean and std of cosines at each token position with at least ``min_count`` values."""
+def binned_stats(
+    cos: torch.Tensor, lengths: torch.Tensor, edges: list[int], min_count: int
+) -> tuple[np.ndarray, torch.Tensor, torch.Tensor]:
+    """Token-weighted mean/std of cosines in position bins [lo, hi).
+
+    Bins reached by fewer than ``min_count`` prompts are dropped. Centers are
+    1-indexed geometric midpoints.
+    """
     pos = torch.cat([torch.arange(int(n)) for n in lengths])
     ok = ~torch.isnan(cos)
     cos, pos = cos[ok].double(), pos[ok]
-    count = torch.bincount(pos)
-    total = torch.bincount(pos, weights=cos)
-    sq = torch.bincount(pos, weights=cos.square())
-    keep = torch.nonzero(count >= min_count).squeeze(1)
-    mean = total[keep] / count[keep]
-    std = (sq[keep] / count[keep] - mean.square()).clamp_min(0).sqrt()
-    return keep, mean, std
+    centers, means, stds = [], [], []
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        if int((lengths > lo).sum()) < min_count:
+            continue
+        x = cos[(pos >= lo) & (pos < hi)]
+        if x.numel() == 0:
+            continue
+        centers.append(np.sqrt((lo + 1) * hi))
+        means.append(x.mean())
+        stds.append(x.std(unbiased=False))
+    return np.array(centers), torch.stack(means), torch.stack(stds)
 
 
 def main() -> None:
     import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
     from safetensors.torch import load_file
 
     p = argparse.ArgumentParser(description=__doc__)
@@ -43,28 +54,39 @@ def main() -> None:
     p.add_argument("--min-count", type=int, default=50)
     args = p.parse_args()
 
-    fig, axes = plt.subplots(len(LAYERS), len(DOMAINS), figsize=(13, 7.5), sharex=True)
-    for col, (dom, (pos_name, neg_name)) in enumerate(DOMAINS.items()):
+    plt.rcParams.update({
+        "font.size": 7.5, "axes.titlesize": 8, "axes.labelsize": 7.5,
+        "xtick.labelsize": 6.5, "ytick.labelsize": 6.5,
+        "axes.spines.top": False, "axes.spines.right": False,
+        "axes.linewidth": 0.6, "xtick.major.width": 0.6, "ytick.major.width": 0.6,
+    })
+    edges = sorted({0, *np.unique(np.round(np.logspace(0, np.log10(2048), 45)).astype(int)).tolist()})
+    fig, axes = plt.subplots(len(LAYERS), len(DOMAINS), figsize=(7.0, 4.8), sharex=True, sharey="row")
+    for col, (dom, title) in enumerate(DOMAINS.items()):
         data = load_file(str(Path(args.run) / f"token_cosines_{dom}.safetensors"))
         for row, layer in enumerate(LAYERS):
             ax = axes[row, col]
-            for side, name, color in (("pos", pos_name, "C0"), ("neg", neg_name, "C3")):
-                x, m, s = position_stats(
-                    data[f"L{layer}_{side}_cos"], data[f"L{layer}_{side}_len"], args.min_count
+            ax.axhline(0, color="0.55", lw=0.6, ls=(0, (3, 2)))
+            ax.grid(True, which="major", color="0.92", lw=0.5)
+            for side, color in (("neg", REFERENCE), ("pos", TARGET)):
+                x, m, s = binned_stats(
+                    data[f"L{layer}_{side}_cos"], data[f"L{layer}_{side}_len"], edges, args.min_count
                 )
-                x = (x + 1).numpy()
-                ax.plot(x, m.numpy(), color=color, lw=1, label=name)
-                ax.fill_between(x, (m - s).numpy(), (m + s).numpy(), color=color, alpha=0.2, lw=0)
-            ax.axhline(0, color="k", lw=0.5)
+                m, s = m.numpy(), s.numpy()
+                ax.fill_between(x, m - s, m + s, color=color, alpha=0.15, lw=0)
+                ax.plot(x, m, color=color, lw=1.3)
             ax.set_xscale("log")
+            ax.set_xticks([1, 10, 100, 1000], ["1", "10", "100", "1000"])
             if row == 0:
-                ax.set_title(f"{pos_name} vs. {neg_name}", fontsize=10)
-                ax.legend(fontsize=8, loc="upper left")
+                ax.set_title(title)
             if col == 0:
-                ax.set_ylabel(f"Layer {layer}\ncosine with DiM")
-            if row == len(LAYERS) - 1:
-                ax.set_xlabel("token position (1-indexed)")
-    fig.tight_layout()
+                ax.set_ylabel(f"Layer {layer}")
+    fig.supxlabel("Token position", fontsize=7.5)
+    fig.supylabel("Cosine with DiM", fontsize=7.5)
+    handles = [Line2D([], [], color=TARGET, lw=1.3), Line2D([], [], color=REFERENCE, lw=1.3)]
+    fig.legend(handles, ["Target domain", "Reference domain"], loc="upper center",
+               ncol=2, frameon=False, bbox_to_anchor=(0.5, 1.0))
+    fig.tight_layout(rect=(0, 0, 1, 0.95), h_pad=0.6, w_pad=0.4)
     fig.savefig(args.out)
     print(args.out)
 
