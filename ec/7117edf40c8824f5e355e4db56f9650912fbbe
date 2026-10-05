@@ -1,0 +1,45 @@
+AGENTS.md
+  s_637aaa2ca45a46::t_eaf64f58c3963b 20-23
+scripts/run_rq1_measurements.py
+  s_b93329a3606ca5::t_5357cef606092f 112-114,152,154,157,175-177
+  s_b93329a3606ca5::t_80ea3f6da19502 1-111,115-151,153,155-156,158-174,178-235
+src/postdyn/spectra.py
+  s_b93329a3606ca5::t_f44cc0fde1a753 164-166
+  s_b93329a3606ca5::t_17a551685eb68f 160-163,167-230,269-275,278,281,284-287
+  s_b93329a3606ca5::t_4c6b282db50a8b 231-255,258-268
+  s_b93329a3606ca5::t_fe9fa3654504de 256-257
+tests/test_rq1_measurements.py
+  s_b93329a3606ca5::t_fcecc2d65ca7fe 123-133,135-138,140
+  s_b93329a3606ca5::t_31abe1dbb97c3f 134,139
+  s_b93329a3606ca5::t_4a849cf7fd51e5 1-5,8-19,22-99,116-122
+  s_b93329a3606ca5::t_19a2e379d1e9dc 6-7,20-21
+  s_b93329a3606ca5::t_b962ad4efa759a 100-115
+src/postdyn/extract.py
+  s_b93329a3606ca5::t_998fffcf8e36e8 440-500
+tests/test_token_cosines_extract.py
+  s_b93329a3606ca5::t_3881e7192903cb 1-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ec7117edf40c8824f5e355e4db56f9650912fbbe",
+  "prompts": {},
+  "sessions": {
+    "s_637aaa2ca45a46": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10a27-f28a-7433-b5b0-0e4e7ea24c02",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    },
+    "s_b93329a3606ca5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8ef1aa88-aec4-4f09-b02d-0f096a837956",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
