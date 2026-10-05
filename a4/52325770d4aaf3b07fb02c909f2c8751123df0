@@ -1,0 +1,23 @@
+tests/test_rq1_dim_projection.py
+  s_b93329a3606ca5::t_5c1c42e619c068 1-84
+scripts/run_rq1_dim_projection.py
+  s_b93329a3606ca5::t_7447673bbc4232 1-292
+scripts/run_rq1_dim_projection_osc.sh
+  s_b93329a3606ca5::t_b1def53ae471dd 1-38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a452325770d4aaf3b07fb02c909f2c8751123df0",
+  "prompts": {},
+  "sessions": {
+    "s_b93329a3606ca5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8ef1aa88-aec4-4f09-b02d-0f096a837956",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
