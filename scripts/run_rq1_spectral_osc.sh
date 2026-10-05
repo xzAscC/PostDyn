@@ -10,7 +10,7 @@
 #SBATCH --error=logs/rq1_spectral/slurm-%j.err
 
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$HOME/Documents/PostDyn"
 
 export HF_HOME="${POSTDYN_HF_HOME:-$PWD/hf_cache}"
 mkdir -p "$HF_HOME" logs/rq1_spectral
