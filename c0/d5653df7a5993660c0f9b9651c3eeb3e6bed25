@@ -1,0 +1,25 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c0d5653df7a5993660c0f9b9651c3eeb3e6bed25",
+  "prompts": {},
+  "sessions": {
+    "s_71c6cea06ef2c9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d5aff82-4085-4686-9c44-2d909d3816fd",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    },
+    "s_b93329a3606ca5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8ef1aa88-aec4-4f09-b02d-0f096a837956",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
