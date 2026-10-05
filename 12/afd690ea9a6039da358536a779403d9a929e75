@@ -1,0 +1,32 @@
+tests/test_spectral_overlap.py
+  s_71c6cea06ef2c9::t_8f0258d1fbeeb0 1-94
+src/postdyn/spectra.py
+  s_71c6cea06ef2c9::t_732c974c77c161 121-159,164-165
+scripts/run_rq1_spectral.py
+  s_71c6cea06ef2c9::t_ce2c91b10407f2 131-132
+  s_71c6cea06ef2c9::t_3a7e313c6324ac 34
+  s_71c6cea06ef2c9::t_e0794c1247d357 101-102,108,110-113
+  s_71c6cea06ef2c9::t_dfba00a792f6f4 1-33,35-100,103-107,109,114-130,133-315
+tests/test_rq1_spectral.py
+  s_71c6cea06ef2c9::t_7bf42ae7c4b393 1-44,48-61,64-86,88-99,104-137
+  s_71c6cea06ef2c9::t_bfd7471eeb651a 45-47,62-63
+  s_71c6cea06ef2c9::t_e1234678aeaa9d 87,100-103
+scripts/run_rq1_spectral_osc.sh
+  s_71c6cea06ef2c9::t_30bcfe7508a391 1-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "12afd690ea9a6039da358536a779403d9a929e75",
+  "prompts": {},
+  "sessions": {
+    "s_71c6cea06ef2c9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d5aff82-4085-4686-9c44-2d909d3816fd",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
