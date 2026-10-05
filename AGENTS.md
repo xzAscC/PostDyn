@@ -18,3 +18,7 @@
 - Keep generated run artifacts under the selected output directory; `logs/` is for log files only.
 - Use a new branch and open a concise PR when work is complete.
 - Add or update tests before implementation and keep the full suite green.
+
+## Local agent rules
+
+Read and follow `AGENTS.local.md` when present. Claude owns code and experiments; Codex owns LaTeX manuscript edits. Neither agent may perform the other's work. When showing formulas, render a temporary PDF under `/tmp/` and open it with Zathura instead of relying on terminal/chat formula rendering.
