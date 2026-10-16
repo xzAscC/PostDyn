@@ -24,8 +24,9 @@ from scripts.plot_weight_diff import (  # noqa: E402
 )
 
 
+# olmo3-32b_rl: main of Olmo-3-32B-Think has the same weights as its branch step_750.
 FINAL_STEP = {"qwen-scaleml_sft": 320, "qwen-scaleml_rl": 180, "qwen-cutelemonlili_sft": 1818,
-              "qwen-cutelemonlili_rl": 620}
+              "qwen-cutelemonlili_rl": 620, "olmo3-32b_rl": 750}
 
 
 @dataclass
