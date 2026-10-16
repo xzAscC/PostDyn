@@ -18,7 +18,7 @@ import os
 import re
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import torch
 from safetensors import safe_open
@@ -147,19 +147,72 @@ def singular_values(m: torch.Tensor) -> torch.Tensor:
     return torch.linalg.eigvalsh(gram).flip(0).clamp_min(0).sqrt()
 
 
+def _top_singular(a: torch.Tensor, k: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """All singular values (descending) and the top-k left/right singular vectors, from one Gram eigh."""
+    a = a.double()
+    gram, rows_side = _gram(a)
+    evals, evecs = torch.linalg.eigh(gram)
+    sv = evals.flip(0).clamp_min(0).sqrt()
+    top = evecs[:, -k:].flip(1)
+    sigma = sv[:k].clamp_min(1e-300)
+    if rows_side:  # gram = W W^T: eigenvectors are left singular vectors
+        return sv, top, (a.T @ top) / sigma
+    return sv, (a @ top) / sigma, top  # gram = W^T W: eigenvectors are right singular vectors
+
+
 def principal_basis(w0: torch.Tensor, frac: float = OVERLAP_FRAC) -> tuple[torch.Tensor, torch.Tensor]:
     """Top-k left and right singular vectors of W0, k = round(frac * min(m, n)) (at least 1)."""
     k = max(1, round(frac * min(w0.shape)))
-    a = w0.double()
-    gram, rows_side = _gram(a)
-    evals, evecs = torch.linalg.eigh(gram)
-    top = evecs[:, -k:].flip(1)
-    sigma = evals[-k:].flip(0).clamp_min(1e-300).sqrt()
-    if rows_side:  # gram = W W^T: eigenvectors are left singular vectors
-        u, v = top, (a.T @ top) / sigma
-    else:  # gram = W^T W: eigenvectors are right singular vectors
-        u, v = (a @ top) / sigma, top
+    _, u, v = _top_singular(w0, k)
     return u.float().contiguous(), v.float().contiguous()
+
+
+def principal_angles(a: torch.Tensor, b: torch.Tensor) -> list[float]:
+    """Principal angles (degrees, ascending) between the column spans of orthonormal a and b.
+
+    Uses sines: the singular values of b - a a^T b are sin(theta_i). Unlike arccos of the singular
+    values of a^T b, this keeps tiny angles accurate.
+    """
+    a, b = a.double(), b.double()
+    sines = torch.linalg.svdvals(b - a @ (a.T @ b)).clamp(max=1.0)
+    return sorted(float(x) for x in torch.rad2deg(torch.asin(sines)))
+
+
+def _rounded(values: Any) -> list[float]:
+    return [float(f"{float(x):.5g}") for x in values]
+
+
+def spectral_stats(
+    start: torch.Tensor,
+    end: torch.Tensor,
+    basis0: tuple[torch.Tensor, torch.Tensor] | None,
+    sv0: torch.Tensor | None,
+    keep_curves: bool = False,
+    device: str = "cpu",
+) -> dict[str, Any]:
+    """Update norm, top-k principal angles and spectrum drift of one tensor (Zhu et al., 2025).
+
+    rel_update_norm = ||W1 - W0||_F / ||W0||_F. For matrices, with U0, V0 the top-k singular vectors of
+    W0 (basis0) and U1, V1 those of W1: principal angles between span(U0) and span(U1) (pa_u) and
+    between span(V0) and span(V1) (pa_v), and nss = ||sigma(W1) - sigma(W0)||_2 / ||sigma(W0)||_2 over
+    the full spectrum. keep_curves stores every angle and the top-k singular values of W0 and W1.
+    """
+    a0, a1 = start.to(device, torch.float64), end.to(device, torch.float64)
+    w0_norm, dw_norm = float(a0.norm()), float((a1 - a0).norm())
+    stats: dict[str, Any] = {"dw_fro": dw_norm, "w0_fro": w0_norm,
+                             "rel_update_norm": dw_norm / w0_norm if w0_norm > 0 else None}
+    if a0.ndim != 2 or basis0 is None or sv0 is None:
+        return stats
+    u0, v0 = (x.to(device, torch.float64) for x in basis0)
+    k = u0.shape[1]
+    sv1, u1, v1 = _top_singular(a1, k)
+    s0 = sv0.to(device, torch.float64)
+    pa_u, pa_v = principal_angles(u0, u1), principal_angles(v0, v1)
+    stats.update(k=k, pa_u_max=max(pa_u), pa_u_mean=sum(pa_u) / k, pa_v_max=max(pa_v), pa_v_mean=sum(pa_v) / k,
+                 nss=float((sv1 - s0).norm() / s0.norm()))
+    if keep_curves:
+        stats.update(pa_u=_rounded(pa_u), pa_v=_rounded(pa_v), sv0_top=_rounded(s0[:k]), sv1_top=_rounded(sv1[:k]))
+    return stats
 
 
 class BasisCache:
@@ -181,6 +234,20 @@ class BasisCache:
         save_file({"u": u.cpu(), "v": v.cpu()}, str(tmp))
         os.replace(tmp, path)  # atomic: concurrent jobs never read a partial file
         return u, v
+
+    def spectrum(self, name: str, w0: torch.Tensor) -> torch.Tensor:
+        """All singular values of W0 (float64), cached beside the basis."""
+        if self.root is None:
+            return singular_values(w0)
+        path = self.root / f"{name}.sv.safetensors"
+        if path.is_file():
+            return load_file(str(path), device=str(w0.device))["s"]
+        s = singular_values(w0)
+        self.root.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(f".tmp{os.getpid()}")
+        save_file({"s": s.cpu()}, str(tmp))
+        os.replace(tmp, path)
+        return s
 
 
 def update_stats(
@@ -242,11 +309,13 @@ def compare(
     basis_dir: str | os.PathLike[str] | None = None,
     device: str = "cpu",
     log: Callable[[str], None] = print,
-    angles_only: bool = False,
+    mode: str = "metrics",
+    keep_curves: bool = False,
 ) -> None:
     """Append one JSON row per tensor to ``out_path``, skipping rows already written.
 
-    With ``angles_only`` the row holds only the per-row rotation angles (angle_stats).
+    mode: "metrics" (update_stats), "angles" (angle_stats: per-row rotation) or "spectral"
+    (spectral_stats: update norm, top-k principal angles, spectrum drift).
     """
     out = Path(out_path)
     start_files, end_files = tensor_files(start_dir), tensor_files(end_dir)
@@ -271,16 +340,22 @@ def compare(
             raise ValueError(f"{name}: shape {tuple(start.shape)} != {tuple(end.shape)}")
         layer, component = parse_name(name)
         row: dict[str, object] = {"name": name, "layer": layer, "component": component, "shape": list(start.shape)}
-        if angles_only:
+        if mode == "angles":
             row.update(angle_stats(start.to(device), end.to(device)))
+        elif mode == "spectral":
+            matrix = start.ndim == 2
+            w0 = start.to(device, torch.float32)
+            row.update(spectral_stats(start, end, cache.get(name, w0) if matrix else None,
+                                      cache.spectrum(name, w0) if matrix else None, keep_curves, device))
         else:
             basis = cache.get(name, start.to(device, torch.float32)) if start.ndim == 2 else None
             row.update(update_stats(start, end, basis=basis, device=device))
-        for key in ("sparsity", "one_minus_cos", "gini", "erank", "overlap", "theta_mean", "theta_std"):
+        for key in ("sparsity", "one_minus_cos", "gini", "erank", "overlap", "theta_mean", "theta_std",
+                    "rel_update_norm", "pa_u_max", "pa_v_max", "nss"):
             value = row.get(key)
             if isinstance(value, float) and not math.isfinite(value):
                 raise ValueError(f"{name}: non-finite {key}={value}")
         append_jsonl(out, row)
         if (i + 1) % 50 == 0 or i + 1 == len(todo):
-            key = "theta_mean" if angles_only else "sparsity"
+            key = {"angles": "theta_mean", "spectral": "rel_update_norm"}.get(mode, "sparsity")
             log(f"  {i + 1}/{len(todo)} {name} {key}={row[key]:.4g}")

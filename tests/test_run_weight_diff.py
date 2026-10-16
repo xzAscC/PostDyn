@@ -142,6 +142,20 @@ def test_failing_task_is_recorded_and_skipped(tmp_path: Path) -> None:
     assert undone == [("toy_sft", "step000001")]
 
 
+def test_main_spectral_mode_keeps_curves_only_for_final(tmp_path: Path) -> None:
+    out = tmp_path / "logs" / "weights"
+    main(["--config", str(_config(tmp_path)), "--output", str(out), "--device", "cpu", "--which", "all",
+          "--basis-root", str(tmp_path / "basis"), "--spectral"])
+    close_all_jsonl_handles()
+    run = out / "toy_sft"
+    final = json.loads((run / "final.spectral.jsonl").read_text().splitlines()[0])
+    mid = json.loads((run / "step000005.spectral.jsonl").read_text().splitlines()[0])
+    assert "pa_u" in final and "pa_u" not in mid
+    assert final["rel_update_norm"] > mid["rel_update_norm"] > 0
+    summary = json.loads((run / "final.spectral.summary.json").read_text())
+    assert summary["nss"] == pytest.approx(final["nss"])
+
+
 def test_main_rejects_unknown_run(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         main(["--config", str(_config(tmp_path)), "--output", str(tmp_path / "o"), "--runs", "nope"])

@@ -17,9 +17,11 @@ from postdyn.weight_diff import (
     effective_rank,
     gini,
     parse_name,
+    principal_angles,
     principal_basis,
     select_uniform,
     singular_values,
+    spectral_stats,
     tensor_files,
     update_stats,
 )
@@ -155,6 +157,30 @@ def test_angle_stats_resolves_tiny_angles_and_vectors() -> None:
     assert angle_stats(w0, w1)["theta_mean"] == pytest.approx(float(ref), rel=1e-6)
     vec = angle_stats(torch.ones(4), torch.tensor([1.0, 1.0, 1.0, 2.0]))
     assert vec["rows"] == 1 and vec["theta_std"] is None
+
+
+def test_principal_angles_of_known_rotation() -> None:
+    t = math.radians(3.0)
+    a = torch.tensor([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]], dtype=torch.float64)  # span(e1, e2)
+    b = torch.tensor([[1.0, 0.0], [0.0, math.cos(t)], [0.0, math.sin(t)]], dtype=torch.float64)
+    assert principal_angles(a, b) == pytest.approx([0.0, 3.0], abs=1e-9)
+
+
+def test_spectral_stats_identity_scaling_and_curves() -> None:
+    torch.manual_seed(3)
+    w0 = torch.randn(40, 20)
+    basis = principal_basis(w0, frac=0.1)
+    sv0 = singular_values(w0)
+    same = spectral_stats(w0, w0.clone(), basis, sv0)
+    assert same["pa_u_max"] == pytest.approx(0.0, abs=1e-3)
+    assert same["nss"] == pytest.approx(0.0, abs=1e-12) and same["rel_update_norm"] == 0.0
+    double = spectral_stats(w0, 2 * w0, basis, sv0, keep_curves=True)
+    assert double["pa_v_max"] == pytest.approx(0.0, abs=1e-3)  # same singular vectors
+    assert double["nss"] == pytest.approx(1.0, rel=1e-6)
+    assert double["rel_update_norm"] == pytest.approx(1.0, rel=1e-6)
+    assert len(double["pa_u"]) == len(double["sv0_top"]) == len(double["sv1_top"]) == 2
+    vec = spectral_stats(torch.ones(4), torch.ones(4) * 3, None, None)
+    assert vec["rel_update_norm"] == pytest.approx(2.0) and "nss" not in vec
 
 
 def test_update_stats_vector_has_only_vector_metrics() -> None:

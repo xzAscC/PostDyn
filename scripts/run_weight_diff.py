@@ -84,10 +84,25 @@ def summarize_angles(path: Path) -> dict[str, float]:
             "theta_ulp": sum(r["theta_ulp"] for r in mats) / len(mats)}
 
 
-def run_task(task: Task, output: Path, basis_root: str | None, device: str, angles: bool = False) -> str:
+def summarize_spectral(path: Path) -> dict[str, float]:
+    """Mean over matrices of the max top-k principal angles, spectrum drift and relative update norm."""
+    rows = {r["name"]: r for r in map(json.loads, filter(str.strip, path.read_text().splitlines()))}
+    mats = [r for r in rows.values() if "nss" in r]
+    summary: dict[str, float] = {"tensors": len(rows)}
+    for key in ("pa_u_max", "pa_v_max", "nss", "rel_update_norm"):
+        values = [r[key] for r in mats if r.get(key) is not None]
+        if values:
+            summary[key] = sum(values) / len(values)
+    return summary
+
+
+SUMMARIZE = {"metrics": summarize, "angles": summarize_angles, "spectral": summarize_spectral}
+
+
+def run_task(task: Task, output: Path, basis_root: str | None, device: str, mode: str = "metrics") -> str:
     """Return done, unready, busy, failed or computed."""
     run_dir = RunDir(output / task.run["name"])
-    stem = f"{task.label}.angles" if angles else task.label
+    stem = task.label if mode == "metrics" else f"{task.label}.{mode}"
     summary_path = run_dir.path(f"{stem}.summary.json")
     if summary_path.is_file():
         return "done"
@@ -112,14 +127,14 @@ def run_task(task: Task, output: Path, basis_root: str | None, device: str, angl
         out = run_dir.path(f"{stem}.jsonl")
         try:
             compare(start, end, out, basis_dir=basis, device=device, log=lambda m: print(m, flush=True),
-                    angles_only=angles)
+                    mode=mode, keep_curves=task.label == "final")
         except Exception:  # record and move on; one bad checkpoint must not stop the worker
             run_dir.path(f"{stem}.failed").write_text(traceback.format_exc())
             print(f"   FAILED {task.run['name']} {task.label}:\n{traceback.format_exc()}", flush=True)
             return "failed"
         summary = {"run": task.run["name"], "family": task.run["family"], "row": task.run["row"],
                    "label": task.label, "start": str(start), "end": str(end),
-                   **(summarize_angles(out) if angles else summarize(out))}
+                   **SUMMARIZE[mode](out)}
         atomic_write_json(summary_path, summary)
         print(f"   done in {time.time() - t0:.0f}s: {summary}", flush=True)
     return "computed"
@@ -137,6 +152,8 @@ def main(argv: list[str] | None = None) -> list[tuple[str, str]]:
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--wait-minutes", type=float, default=0, help="keep retrying unready or busy tasks")
     parser.add_argument("--angles", action="store_true", help="only per-row rotation angles (no SVD)")
+    parser.add_argument("--spectral", action="store_true",
+                        help="update norm, top-10%% principal angles and spectrum drift")
     args = parser.parse_args(argv)
 
     runs = json.loads(Path(args.config).read_text())["runs"]
@@ -149,14 +166,15 @@ def main(argv: list[str] | None = None) -> list[tuple[str, str]]:
     output = Path(args.output)
     deadline = time.time() + 60 * args.wait_minutes
 
-    mode = "angles-" if args.angles else ""
-    with tee_log(RunDir(output / f"{mode}{args.which}-s{args.shard}of{args.num_shards}")):
+    mode = "angles" if args.angles else "spectral" if args.spectral else "metrics"
+    prefix = "" if mode == "metrics" else f"{mode}-"
+    with tee_log(RunDir(output / f"{prefix}{args.which}-s{args.shard}of{args.num_shards}")):
         print(f"{len(pending)} tasks on {args.device}", flush=True)
         failed = []
         while True:
             skipped, progressed, unready = [], False, False
             for task in pending:
-                status = run_task(task, output, args.basis_root, args.device, args.angles)
+                status = run_task(task, output, args.basis_root, args.device, mode)
                 if status == "failed":
                     failed.append(task)
                 if status in ("unready", "busy"):
