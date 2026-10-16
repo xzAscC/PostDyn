@@ -1,0 +1,23 @@
+scripts/plot_weight_diff.py
+  s_59896eec6221ef::t_5b9c9bbf8188fe 3-6,53,93-94,115-116,131-133,142,160-162
+scripts/plot_weight_dynamics.py
+  s_59896eec6221ef::t_63f7e69f6a71b8 3,22,95-96
+tests/test_plot_weight_diff.py
+  s_59896eec6221ef::t_7853faf7795876 45,47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c74f39994e36828710796dd9466b7bf0b79ea685",
+  "prompts": {},
+  "sessions": {
+    "s_59896eec6221ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c2d9c709-3b89-4a97-9c6d-1b70e2199b54",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
