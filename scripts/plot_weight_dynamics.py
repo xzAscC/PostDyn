@@ -59,7 +59,8 @@ def trajectory(run_dir: Path, metric: str, log: bool = False) -> dict[str, Traje
 
 
 def _short(step: int) -> str:
-    return f"{step / 1000:g}k" if step >= 1000 else str(step)
+    """1596 -> 1.6k, 43000 -> 43k, 950 -> 950."""
+    return f"{step / 1000:.1f}".rstrip("0").rstrip(".") + "k" if step >= 1000 else str(step)
 
 
 def _band(mean: list[float], std: list[float], log: bool) -> tuple[list[float], list[float]]:
@@ -75,7 +76,7 @@ def plot_metric(logs: Path, metric: str, out: Path) -> None:
     _style(plt)
     ylabel, percent, log = METRICS[metric]
     scale = 100 if percent else 1
-    fig, axes = plt.subplots(2, len(FAMILIES), figsize=(5.5, 2.35), layout="constrained", squeeze=False)
+    fig, axes = plt.subplots(2, len(FAMILIES), figsize=(5.65, 3.9), layout="constrained", squeeze=False)
     seen: dict[str, tuple[str, str, str]] = {}
     for col, (title, *runs) in enumerate(FAMILIES):
         for row, run in enumerate(runs):
@@ -89,7 +90,7 @@ def plot_metric(logs: Path, metric: str, out: Path) -> None:
                 ax.set_xticks([])
                 ax.set_yticks([])
             else:
-                x_final = steps[-1] + 0.2 * max(steps[-1] - steps[0], 1)
+                x_final = steps[-1] + 0.3 * max(steps[-1] - steps[0], 1)
                 for comp, t in trajs.items():
                     name, color, ls = STYLE.get(comp, (comp, MUTED, "-"))
                     mean = [scale * m for m in t.mean]

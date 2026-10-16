@@ -48,3 +48,9 @@ def test_main_writes_pdfs(tmp_path: Path) -> None:
     main(["--logs", str(logs), "--out-dir", str(tmp_path / "figs"), "--metrics", "sparsity", "one_minus_cos"])
     assert sorted(p.name for p in (tmp_path / "figs").iterdir()) == [
         "weights_steps_one_minus_cos.pdf", "weights_steps_sparsity.pdf"]
+
+
+def test_short_step_labels() -> None:
+    from scripts.plot_weight_dynamics import _short
+
+    assert [_short(s) for s in (950, 1596, 10790, 43000)] == ["950", "1.6k", "10.8k", "43k"]
