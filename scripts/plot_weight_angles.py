@@ -1,8 +1,7 @@
 """Plot per-row rotation angles (degrees) of the weight update, from run_weight_diff.py --angles.
 
 Three figures, rows SFT / RL and columns model families, one shared log y axis per figure:
-  weights_angle_final_matrices.pdf  start vs final, projection matrices: mean over rows per layer,
-                                    band = +-1 std over rows
+  weights_angle_final_matrices.pdf  start vs final, projection matrices: mean over rows per layer
   weights_angle_final_vectors.pdf   start vs final, norm weights and biases (one row each)
   weights_angle_steps.pdf           matrices over training: geometric mean over layers per
                                     checkpoint, band = x/÷ 10^std(log10) over layers; final at right
@@ -84,6 +83,7 @@ def _finish(fig: Any, seen: dict[str, tuple[str, str, str]], xlabel: str, out: P
 
 def _empty(ax: Any, text: str) -> None:
     ax.text(0.5, 0.5, text, ha="center", va="center", color=MUTED, transform=ax.transAxes)
+    ax.set_xticks([])
 
 
 def plot_final(logs: Path, out: Path, matrices: bool) -> None:
@@ -99,12 +99,10 @@ def plot_final(logs: Path, out: Path, matrices: bool) -> None:
             if rows is None:
                 _empty(ax, "not run yet")
                 continue
-            for comp, (layers, mean, std) in layer_curves(rows, matrices).items():
+            for comp, (layers, mean, _) in layer_curves(rows, matrices).items():
                 name, color, ls = STYLE.get(comp, (comp, MUTED, "-"))
+                mean = [m if m > 0 else float("nan") for m in mean]  # unchanged tensors: no point on a log axis
                 ax.plot(layers, mean, color=color, ls=ls, lw=0.9)
-                if matrices:
-                    ax.fill_between(layers, [m - s for m, s in zip(mean, std)], [m + s for m, s in zip(mean, std)],
-                                    color=color, alpha=0.12, lw=0)
                 seen[comp] = (name, color, ls)
             ax.axhline(bf16_floor(rows, matrices), color=MUTED, ls=(0, (4, 2)), lw=0.8)
     _finish(fig, seen, "Layer", out)
@@ -129,7 +127,7 @@ def plot_steps(logs: Path, out: Path) -> None:
             per_label = {lab: layer_curves(load_rows(run_dir / f"{lab}.angles.jsonl"), True) for lab in labels}
             final = angle_rows(run_dir, "final")
             final_curves = layer_curves(final, True) if final else {}
-            x_final = steps[-1] + 0.2 * max(steps[-1] - steps[0], 1)
+            x_final = steps[-1] + 0.3 * max(steps[-1] - steps[0], 1)
             for comp in MATRICES:
                 stats = [_mean_std(per_label[lab][comp][1], log=True) for lab in labels if comp in per_label[lab]]
                 if not stats:
