@@ -1,7 +1,9 @@
 """Plot per-layer weight-update metrics: rows SFT / RL, columns model families, one line per component.
 
-Reads <logs>/<run>/<label>.jsonl from run_weight_diff.py and writes one PDF per metric,
-weights_<label>_<metric>.pdf.
+Reads <logs>/<run>/<label>.jsonl from run_weight_diff.py and writes one PDF per metric:
+weights_<label>_<metric>.pdf for the projection matrices, and weights_<label>_<metric>_vectors.pdf
+for norm weights and biases when they have the metric (they sit near 100% sparsity and would squash
+the matrix lines).
 """
 
 from __future__ import annotations
@@ -48,6 +50,7 @@ STYLE = {
     "post_attention_layernorm.weight": ("post_attn_ln", "#505963", "--"),
     "post_feedforward_layernorm.weight": ("post_ffn_ln", "#74818A", "--"),
 }
+MATRICES = [c for c in STYLE if c.endswith("_proj.weight")]
 INK, MUTED, RULE = "#203342", "#74818A", "#DCE3E6"
 
 
@@ -87,7 +90,8 @@ def _style(plt: Any) -> None:
     })
 
 
-def plot_metric(logs: Path, label: str, metric: str, out: Path) -> None:
+def plot_metric(logs: Path, label: str, metric: str, out: Path, matrices: bool = True) -> bool:
+    """Draw one kind of tensor (projection matrices or norm/bias vectors); False and no file if none has the metric."""
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
 
@@ -108,6 +112,8 @@ def plot_metric(logs: Path, label: str, metric: str, out: Path) -> None:
                 ax.set_yticks([])
             else:
                 for component, (layers, values) in series(load_rows(path), metric).items():
+                    if (component in MATRICES) != matrices:
+                        continue
                     name, color, ls = STYLE.get(component, (component, MUTED, "-"))
                     ys = [100 * v for v in values] if percent else values
                     if log:  # exact zeros (unchanged tensors) cannot be drawn on a log axis
@@ -122,6 +128,9 @@ def plot_metric(logs: Path, label: str, metric: str, out: Path) -> None:
                 ax.set_ylabel(ROW_TITLES[row], fontweight="bold")
             if row == 1:
                 ax.set_xlabel("Layer")
+    if not seen and not matrices:
+        plt.close(fig)
+        return False
     fig.supylabel(ylabel, fontsize=8, color=INK)
     order = [c for c in STYLE if c in seen] + [c for c in seen if c not in STYLE]
     handles = [Line2D([], [], color=seen[c][1], ls=seen[c][2], lw=0.9) for c in order]
@@ -130,6 +139,7 @@ def plot_metric(logs: Path, label: str, metric: str, out: Path) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out)
     plt.close(fig)
+    return True
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -147,6 +157,9 @@ def main(argv: list[str] | None = None) -> None:
             out = Path(out_dir) / f"weights_{args.label}_{metric}.pdf"
             plot_metric(Path(args.logs), args.label, metric, out)
             print(out)
+            vec = out.with_name(f"{out.stem}_vectors.pdf")
+            if plot_metric(Path(args.logs), args.label, metric, vec, matrices=False):
+                print(vec)
 
 
 if __name__ == "__main__":

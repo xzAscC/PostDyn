@@ -42,7 +42,8 @@ def test_main_writes_one_pdf_per_metric(tmp_path: Path) -> None:
         (logs / run / "final.jsonl").write_text("\n".join(json.dumps(r) for r in _rows()) + "\n")
         (logs / run / "final.summary.json").write_text("{}")
     main(["--logs", str(logs), "--out-dir", str(tmp_path / "figs"), "--metrics", "sparsity", "rank_ratio"])
+    # only sparsity has norm-weight values, so only it gets a vectors figure
     assert sorted(p.name for p in (tmp_path / "figs").iterdir()) == [
-        "weights_final_rank_ratio.pdf", "weights_final_sparsity.pdf"]
+        "weights_final_rank_ratio.pdf", "weights_final_sparsity.pdf", "weights_final_sparsity_vectors.pdf"]
     with pytest.raises(SystemExit):
         main(["--logs", str(logs), "--out-dir", str(tmp_path / "figs"), "--metrics", "nope"])

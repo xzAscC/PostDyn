@@ -1,6 +1,6 @@
 """Plot weight-update metrics over training: rows SFT / RL, columns model families.
 
-Each component is one line: its mean over layers at every finished intermediate checkpoint
+Each projection matrix is one line (norm weights and biases are left out): its mean over layers at every finished intermediate checkpoint
 (stepNNNNNN.jsonl), with a +-1 std band over layers; the final checkpoint is a separate point at
 the right. Log-scale metrics use the geometric mean and a band of x/÷ 10^std(log10 value).
 Writes weights_steps_<metric>.pdf.
@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scripts.plot_weight_diff import (  # noqa: E402
-    FAMILIES, INK, METRICS, MUTED, ROW_TITLES, RULE, STYLE, _style, load_rows, series,
+    FAMILIES, INK, MATRICES, METRICS, MUTED, ROW_TITLES, RULE, STYLE, _style, load_rows, series,
 )
 
 
@@ -92,6 +92,8 @@ def plot_metric(logs: Path, metric: str, out: Path) -> None:
             else:
                 x_final = steps[-1] + 0.3 * max(steps[-1] - steps[0], 1)
                 for comp, t in trajs.items():
+                    if comp not in MATRICES:
+                        continue
                     name, color, ls = STYLE.get(comp, (comp, MUTED, "-"))
                     mean = [scale * m for m in t.mean]
                     std = t.std if log else [scale * s for s in t.std]
