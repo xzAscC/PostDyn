@@ -86,6 +86,15 @@ def test_update_stats_matrix_metrics() -> None:
     assert stats["gini"] > 0.9
 
 
+def test_one_minus_cos_resolves_tiny_rotations() -> None:
+    torch.manual_seed(0)
+    w0 = torch.randn(64, 4096)
+    w1 = w0 + 1e-4 * torch.randn(64, 4096)  # 1 - cos ~ 5e-9, below float32 resolution of cos
+    a, b = w0.double(), w1.double()
+    exact = float((1 - (a * b).sum(1) / (a.norm(dim=1) * b.norm(dim=1))).mean())
+    assert update_stats(w0, w1)["one_minus_cos"] == pytest.approx(exact, rel=1e-3)
+
+
 def test_update_stats_vector_has_only_vector_metrics() -> None:
     stats = update_stats(torch.ones(5), torch.ones(5) * 2)
     assert stats["sparsity"] == 0.0

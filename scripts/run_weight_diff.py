@@ -1,15 +1,19 @@
 """Compare each run's start checkpoint with its final or intermediate checkpoints, tensor by tensor.
 
 Rows go to <output>/<run>/<label>.jsonl (label = final or stepNNNNNN), one summary JSON per
-checkpoint next to it. Checkpoints are read from the local Hugging Face cache only; with
---wait-minutes a job polls until the downloader has finished a checkpoint.
+checkpoint next to it. Checkpoints are read from the local Hugging Face cache only.
+
+Every job is a worker over the same task list: it skips tasks that are done (summary exists),
+held by another worker (file lock), or not downloaded yet, and with --wait-minutes it keeps
+coming back to the skipped ones. Jobs in different queues can therefore share the work.
 """
 
 from __future__ import annotations
 
 import argparse
-import sys
+import fcntl
 import json
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,60 +39,84 @@ class Task:
 
 
 def build_tasks(runs: list[dict[str, Any]], which: str, shard: int = 0, num_shards: int = 1) -> list[Task]:
-    """Flatten runs into (run, checkpoint) tasks in config order, then keep every num_shards-th."""
+    """Flatten runs into (run, checkpoint) tasks: finals first, then intermediates in config order."""
     tasks = []
-    for run in runs:
-        if which == "final":
-            tasks.append(Task(run, "final", run["final"]))
-        else:
+    if which in ("final", "all"):
+        tasks += [Task(run, "final", run["final"]) for run in runs]
+    if which in ("intermediate", "all"):
+        for run in runs:
             tasks += [Task(run, f"step{c['step']:06d}", c) for c in run["intermediates"]]
     return tasks[shard::num_shards]
 
 
-def resolve(spec: dict[str, Any], wait_minutes: float) -> Path:
-    """Local directory of a checkpoint; wait until every safetensors shard is present."""
-    deadline = time.time() + 60 * wait_minutes
-    while True:
-        try:
-            if "path" in spec:
-                path = Path(spec["path"])
-            else:
-                path = Path(snapshot_download(spec["repo"], revision=spec["revision"], local_files_only=True))
-            files = tensor_files(path)
-            if files and all(f.is_file() for f in set(files.values())):
-                return path
-        except Exception as exc:  # not downloaded yet
-            if time.time() >= deadline:
-                raise
-            print(f"waiting for {spec}: {type(exc).__name__}", flush=True)
+def ready(spec: dict[str, Any]) -> Path | None:
+    """Local directory of a fully downloaded checkpoint, or None."""
+    try:
+        if "path" in spec:
+            path = Path(spec["path"])
         else:
-            if time.time() >= deadline:
-                raise FileNotFoundError(f"incomplete checkpoint {spec}")
-        time.sleep(60)
+            path = Path(snapshot_download(spec["repo"], revision=spec["revision"], local_files_only=True))
+        files = tensor_files(path)
+    except Exception:
+        return None
+    return path if files and all(f.is_file() for f in set(files.values())) else None
 
 
 def summarize(path: Path) -> dict[str, float]:
-    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
-    numel = sum(r["numel"] for r in rows)
-    summary = {"tensors": len(rows), "sparsity": 1 - sum(r["changed_tol"] for r in rows) / numel}
+    rows = {r["name"]: r for r in map(json.loads, filter(str.strip, path.read_text().splitlines()))}
+    numel = sum(r["numel"] for r in rows.values())
+    summary = {"tensors": len(rows), "sparsity": 1 - sum(r["changed_tol"] for r in rows.values()) / numel}
     for key in MEAN_KEYS:
-        values = [r[key] for r in rows if r.get(key) is not None]
+        values = [r[key] for r in rows.values() if r.get(key) is not None]
         if values:
             summary[key] = sum(values) / len(values)
     return summary
 
 
-def main(argv: list[str] | None = None) -> None:
+def run_task(task: Task, output: Path, basis_root: str | None, device: str) -> str:
+    """Return done, unready, busy or computed."""
+    run_dir = RunDir(output / task.run["name"])
+    summary_path = run_dir.path(f"{task.label}.summary.json")
+    if summary_path.is_file():
+        return "done"
+    start, end = ready(task.run["start"]), ready(task.end)
+    if start is None or end is None:
+        return "unready"
+    lock_path = run_dir.path(f"{task.label}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return "busy"
+        if summary_path.is_file():  # another worker finished it meanwhile
+            return "done"
+        t0 = time.time()
+        print(f"== {task.run['name']} {task.label}: {start} -> {end}", flush=True)
+        basis = None
+        if basis_root:
+            key = task.run["start"].get("repo", task.run["start"].get("path", "")).replace("/", "__")
+            basis = Path(basis_root) / key
+        out = run_dir.path(f"{task.label}.jsonl")
+        compare(start, end, out, basis_dir=basis, device=device, log=lambda m: print(m, flush=True))
+        summary = {"run": task.run["name"], "family": task.run["family"], "row": task.run["row"],
+                   "label": task.label, "start": str(start), "end": str(end), **summarize(out)}
+        atomic_write_json(summary_path, summary)
+        print(f"   done in {time.time() - t0:.0f}s: {summary}", flush=True)
+    return "computed"
+
+
+def main(argv: list[str] | None = None) -> list[tuple[str, str]]:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="configs/weight_runs.json")
     parser.add_argument("--runs", nargs="*", help="run names (default: all)")
-    parser.add_argument("--which", choices=["final", "intermediate"], default="final")
+    parser.add_argument("--which", choices=["final", "intermediate", "all"], default="final")
     parser.add_argument("--shard", type=int, default=0)
     parser.add_argument("--num-shards", type=int, default=1)
     parser.add_argument("--output", default="logs/weights")
     parser.add_argument("--basis-root", default=None, help="cache of W0 principal bases, one folder per start")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--wait-minutes", type=float, default=0)
+    parser.add_argument("--wait-minutes", type=float, default=0, help="keep retrying unready or busy tasks")
     args = parser.parse_args(argv)
 
     runs = json.loads(Path(args.config).read_text())["runs"]
@@ -97,28 +125,30 @@ def main(argv: list[str] | None = None) -> None:
         if unknown:
             parser.error(f"unknown runs: {sorted(unknown)}")
         runs = [r for r in runs if r["name"] in args.runs]
-    tasks = build_tasks(runs, args.which, args.shard, args.num_shards)
+    pending = build_tasks(runs, args.which, args.shard, args.num_shards)
     output = Path(args.output)
+    deadline = time.time() + 60 * args.wait_minutes
 
     with tee_log(RunDir(output / f"{args.which}-s{args.shard}of{args.num_shards}")):
-        print(f"{len(tasks)} tasks on {args.device}: {[(t.run['name'], t.label) for t in tasks]}", flush=True)
-        for task in tasks:
-            t0 = time.time()
-            start = resolve(task.run["start"], args.wait_minutes)
-            end = resolve(task.end, args.wait_minutes)
-            print(f"== {task.run['name']} {task.label}: {start} -> {end}", flush=True)
-            run_dir = RunDir(output / task.run["name"])
-            out = run_dir.path(f"{task.label}.jsonl")
-            basis = None
-            if args.basis_root:
-                key = task.run["start"].get("repo", task.run["start"].get("path", "")).replace("/", "__")
-                basis = Path(args.basis_root) / key
-            compare(start, end, out, basis_dir=basis, device=args.device,
-                    log=lambda m: print(m, flush=True))
-            summary = {"run": task.run["name"], "family": task.run["family"], "row": task.run["row"],
-                       "label": task.label, "start": str(start), "end": str(end), **summarize(out)}
-            atomic_write_json(run_dir.path(f"{task.label}.summary.json"), summary)
-            print(f"   done in {time.time() - t0:.0f}s: {summary}", flush=True)
+        print(f"{len(pending)} tasks on {args.device}", flush=True)
+        while True:
+            skipped, progressed, unready = [], False, False
+            for task in pending:
+                status = run_task(task, output, args.basis_root, args.device)
+                if status in ("unready", "busy"):
+                    skipped.append(task)
+                progressed |= status == "computed"
+                unready |= status == "unready"
+            pending = skipped
+            # tasks held by other workers are theirs; only wait for downloads
+            if not unready or time.time() >= deadline:
+                break
+            if not progressed:
+                print(f"{len(pending)} tasks waiting (unready or busy); retry in 60 s", flush=True)
+                time.sleep(60)
+        undone = [(t.run["name"], t.label) for t in pending]
+        print(f"worker exits; not done here: {undone}", flush=True)
+    return undone
 
 
 if __name__ == "__main__":

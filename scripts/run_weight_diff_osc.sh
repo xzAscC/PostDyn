@@ -20,7 +20,8 @@ export HF_TOKEN_PATH="$HOME/.cache/huggingface/token"
 export HF_HUB_OFFLINE=1
 mkdir -p logs/weights
 
-module load cuda/12.4.1
+# The torch wheel bundles its CUDA runtime; the module is only loaded where it exists (not on Cardinal).
+module load cuda/12.4.1 2>/dev/null || true
 
 uv run python scripts/run_weight_diff.py --output logs/weights --basis-root "$SCRATCH/postdyn_basis" "$@"
 

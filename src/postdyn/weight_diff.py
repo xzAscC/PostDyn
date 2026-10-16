@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import TypeVar
 
 import torch
-import torch.nn.functional as F
 from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 
@@ -78,6 +77,20 @@ def gini(x: torch.Tensor, chunk: int = 2**26) -> float | None:
     return float(1 - 2 * weighted / (total * n))
 
 
+def row_one_minus_cos(a: torch.Tensor, b: torch.Tensor, chunk: int = 4096) -> float:
+    """Mean over rows of 1 - cos(a_i, b_i), computed as ||a_i/|a_i| - b_i/|b_i|||^2 / 2 in float64.
+
+    Fine-tuned rows have 1 - cos around 1e-6 or smaller, below the float32 resolution of cos itself.
+    """
+    total = 0.0
+    for lo in range(0, a.shape[0], chunk):
+        x, y = a[lo : lo + chunk].double(), b[lo : lo + chunk].double()
+        x = x / x.norm(dim=1, keepdim=True).clamp_min(1e-300)
+        y = y / y.norm(dim=1, keepdim=True).clamp_min(1e-300)
+        total += float((x - y).square().sum(dim=1).sum() / 2)
+    return total / a.shape[0]
+
+
 def effective_rank(sv: torch.Tensor) -> float:
     """exp of the entropy of singular values normalized to sum 1."""
     p = sv.double() / sv.double().sum()
@@ -130,7 +143,7 @@ def update_stats(
         "numel": dw.numel(),
         "changed_tol": changed,
         "sparsity": 1 - changed / dw.numel(),
-        "one_minus_cos": float(1 - F.cosine_similarity(rows0, rows1, dim=1).double().mean()),
+        "one_minus_cos": row_one_minus_cos(rows0, rows1),
         "gini": gini(dw),
         "zero_update": zero,
     }
