@@ -98,11 +98,35 @@ def effective_rank(sv: torch.Tensor) -> float:
     return float(torch.exp(-(p * p.log()).sum()))
 
 
+def _gram(a: torch.Tensor) -> tuple[torch.Tensor, bool]:
+    """Gram matrix of the smaller side in float64 and whether it is a @ a.T (rows side)."""
+    a = a.double()
+    return (a @ a.T, True) if a.shape[0] <= a.shape[1] else (a.T @ a, False)
+
+
+def singular_values(m: torch.Tensor) -> torch.Tensor:
+    """Singular values in descending order, from the eigenvalues of the smaller Gram matrix.
+
+    Much faster on GPU than an SVD of a 5120 x 27648 matrix; float64 keeps sigma accurate down to
+    about 1e-8 * sigma_1, far below the rank tolerance used here.
+    """
+    gram, _ = _gram(m)
+    return torch.linalg.eigvalsh(gram).flip(0).clamp_min(0).sqrt()
+
+
 def principal_basis(w0: torch.Tensor, frac: float = OVERLAP_FRAC) -> tuple[torch.Tensor, torch.Tensor]:
     """Top-k left and right singular vectors of W0, k = round(frac * min(m, n)) (at least 1)."""
-    u, _, vh = torch.linalg.svd(w0.float(), full_matrices=False)
     k = max(1, round(frac * min(w0.shape)))
-    return u[:, :k].contiguous(), vh[:k].T.contiguous()
+    a = w0.double()
+    gram, rows_side = _gram(a)
+    evals, evecs = torch.linalg.eigh(gram)
+    top = evecs[:, -k:].flip(1)
+    sigma = evals[-k:].flip(0).clamp_min(1e-300).sqrt()
+    if rows_side:  # gram = W W^T: eigenvectors are left singular vectors
+        u, v = top, (a.T @ top) / sigma
+    else:  # gram = W^T W: eigenvectors are right singular vectors
+        u, v = (a @ top) / sigma, top
+    return u.float().contiguous(), v.float().contiguous()
 
 
 class BasisCache:
@@ -150,7 +174,7 @@ def update_stats(
     if dw.ndim != 2:
         return stats
     max_rank = min(dw.shape)
-    sv = torch.linalg.svdvals(dw)
+    sv = singular_values(dw)
     # PyTorch's default matrix_rank tolerance for float32 input
     rank = 0 if zero else int((sv > sv[0] * max(dw.shape) * _EPS32).sum())
     erank = None if zero else effective_rank(sv)
@@ -171,6 +195,10 @@ def update_stats(
 def _done_names(out_path: Path) -> set[str]:
     if not out_path.is_file():
         return set()
+    data = out_path.read_bytes()
+    if data and not data.endswith(b"\n"):  # a killed job left half a line: drop it
+        with out_path.open("r+b") as handle:
+            handle.truncate(data.rfind(b"\n") + 1)
     return {json.loads(line)["name"] for line in out_path.read_text().splitlines() if line.strip()}
 
 

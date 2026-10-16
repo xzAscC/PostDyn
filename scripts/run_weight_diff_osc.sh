@@ -23,6 +23,6 @@ mkdir -p logs/weights
 # The torch wheel bundles its CUDA runtime; the module is only loaded where it exists (not on Cardinal).
 module load cuda/12.4.1 2>/dev/null || true
 
-uv run python scripts/run_weight_diff.py --output logs/weights --basis-root "$SCRATCH/postdyn_basis" "$@"
+uv run python scripts/run_weight_diff.py --output logs/weights --basis-root "$SCRATCH/postdyn_basis_gram" "$@"
 
 echo "=== weight diff complete $(date -Is) ==="

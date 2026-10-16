@@ -17,6 +17,7 @@ from postdyn.weight_diff import (
     parse_name,
     principal_basis,
     select_uniform,
+    singular_values,
     tensor_files,
     update_stats,
 )
@@ -63,6 +64,37 @@ def test_gini_matches_mean_difference_formula() -> None:
 def test_effective_rank_of_equal_singular_values() -> None:
     assert effective_rank(torch.tensor([2.0, 2.0, 2.0, 0.0])) == pytest.approx(3.0)
     assert effective_rank(torch.tensor([5.0])) == pytest.approx(1.0)
+
+
+def test_singular_values_match_svd_for_wide_and_tall() -> None:
+    torch.manual_seed(1)
+    for shape in ((30, 70), (70, 30)):
+        a = torch.randn(*shape)
+        ref = torch.linalg.svdvals(a.double())
+        assert torch.allclose(singular_values(a), ref, rtol=1e-8, atol=1e-10)
+
+
+def test_principal_basis_spans_top_singular_subspace() -> None:
+    torch.manual_seed(2)
+    for shape in ((60, 40), (40, 60)):
+        w = torch.randn(*shape)
+        u, v = principal_basis(w, frac=0.25)
+        uu, _, vvh = torch.linalg.svd(w.double(), full_matrices=False)
+        k = u.shape[1]
+        assert torch.allclose(u.double() @ u.double().T, uu[:, :k] @ uu[:, :k].T, atol=1e-5)
+        assert torch.allclose(v.double() @ v.double().T, vvh[:k].T @ vvh[:k], atol=1e-5)
+
+
+def test_compare_repairs_a_truncated_last_line(tmp_path: Path) -> None:
+    w = torch.randn(4, 4).to(torch.bfloat16)
+    start = _save_sharded(tmp_path / "start", [{"model.layers.0.mlp.up_proj.weight": w, "model.norm.weight": w[0].clone()}])
+    end = _save_sharded(tmp_path / "end", [{"model.layers.0.mlp.up_proj.weight": w + 1, "model.norm.weight": w[0].clone()}])
+    out = tmp_path / "pair.jsonl"
+    out.write_text(json.dumps({"name": "lm_head.weight"}) + "\n" + '{"name": "model.norm.wei')  # killed mid-write
+    compare(start, end, out)
+    close_all_jsonl_handles()
+    names = [json.loads(line)["name"] for line in out.read_text().splitlines()]
+    assert names == ["lm_head.weight", "model.layers.0.mlp.up_proj.weight", "model.norm.weight"]
 
 
 def test_principal_basis_shapes_use_ten_percent() -> None:
