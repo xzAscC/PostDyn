@@ -1,0 +1,36 @@
+scripts/make_weight_runs.py
+  s_59896eec6221ef::t_88901756d27f6e 1-87
+scripts/download_checkpoints.py
+  s_59896eec6221ef::t_89fd86c8fbe929 1-54
+scripts/run_weight_diff_osc.sh
+  s_59896eec6221ef::t_50ab2e33fd10ba 1-27
+tests/test_make_weight_runs.py
+  s_59896eec6221ef::t_d2992694254ff8 1-36
+tests/test_run_weight_diff.py
+  s_59896eec6221ef::t_f7bdd048734df2 4,12-14
+  s_59896eec6221ef::t_68f03a685f133b 1-3,5-11,15-62
+scripts/run_weight_diff.py
+  s_59896eec6221ef::t_42261dd8c1d5e9 1-121
+tests/test_weight_diff.py
+  s_59896eec6221ef::t_639a6a833fb46c 4,12-22,42-74,76,78-87,89-94,97-102,104-112,115,126-129,131,133-139
+  s_59896eec6221ef::t_4c7c66814bf63a 1-3,5-11,23-41,75,77,88,95-96,103,113-114,116-125,130,132,140-148
+src/postdyn/weight_diff.py
+  s_59896eec6221ef::t_25bab353991312 1-10,16,19,21,24,26,31,33-34,57-115,117-135,137-154,168,178,187,194,196-201,204
+  s_59896eec6221ef::t_d1ffa283095e9f 11-15,17-18,20,22-23,25,27-30,32,35-56,116,136,155-167,169-177,179-186,188-193,195,202-203
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "77162ba1040df405a2212816211ae2140f59fdee",
+  "prompts": {},
+  "sessions": {
+    "s_59896eec6221ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c2d9c709-3b89-4a97-9c6d-1b70e2199b54",
+        "model": "unknown"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
