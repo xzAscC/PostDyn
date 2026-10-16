@@ -1,0 +1,21 @@
+tests/test_plot_weight_angles.py
+  s_59896eec6221ef::t_687f6187e449b4 1-56
+scripts/plot_weight_angles.py
+  s_59896eec6221ef::t_156076bc205efa 1-170
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "388fc84a8c16403a21072c135f18895f4862d69b",
+  "prompts": {},
+  "sessions": {
+    "s_59896eec6221ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c2d9c709-3b89-4a97-9c6d-1b70e2199b54",
+        "model": "unknown"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
