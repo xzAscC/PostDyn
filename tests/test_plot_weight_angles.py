@@ -40,11 +40,11 @@ def test_layer_curves_split_matrices_and_vectors() -> None:
     assert vecs == {"input_layernorm.weight": ([0, 1], [0.01, 0.01], [0.0, 0.0])}
 
 
-def test_main_writes_three_figures(tmp_path: Path) -> None:
+def test_main_writes_two_figures(tmp_path: Path) -> None:
     logs = tmp_path / "weights"
     _write(logs / "olmo3-7b_sft", "final", _rows())
     _write(logs / "olmo3-7b_sft", "step000010", _rows(0.5))
     _write(logs / "qwen-scaleml_rl", "final", _rows(2.0))
     main(["--logs", str(logs), "--out-dir", str(tmp_path / "figs")])
     assert sorted(p.name for p in (tmp_path / "figs").iterdir()) == [
-        "weights_angle_final_matrices.pdf", "weights_angle_final_vectors.pdf", "weights_angle_steps.pdf"]
+        "weights_angle_final_matrices.pdf", "weights_angle_steps.pdf"]

@@ -1,8 +1,7 @@
 """Plot per-row rotation angles (degrees) of the weight update, from run_weight_diff.py --angles.
 
-Three figures, rows SFT / RL and columns model families, one shared log y axis per figure:
+Two figures, rows SFT / RL and columns model families, one shared log y axis per figure:
   weights_angle_final_matrices.pdf  start vs final, projection matrices: mean over rows per layer
-  weights_angle_final_vectors.pdf   start vs final, norm weights and biases (one row each)
   weights_angle_steps.pdf           matrices over training: geometric mean over layers per
                                     checkpoint, band = x/÷ 10^std(log10) over layers; the final
                                     checkpoint continues the line (plot_weight_dynamics.final_x)
@@ -146,7 +145,6 @@ def main(argv: list[str] | None = None) -> None:
     logs = Path(args.logs)
     for out_dir in map(Path, args.out_dir):
         plot_final(logs, out_dir / "weights_angle_final_matrices.pdf", matrices=True)
-        plot_final(logs, out_dir / "weights_angle_final_vectors.pdf", matrices=False)
         plot_steps(logs, out_dir / "weights_angle_steps.pdf")
         print(out_dir)
 
