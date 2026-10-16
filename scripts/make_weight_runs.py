@@ -8,6 +8,7 @@ own first checkpoint. Run on a machine with Hugging Face API access (metadata on
 from __future__ import annotations
 
 import argparse
+import sys
 import json
 import re
 import time
@@ -15,6 +16,9 @@ from pathlib import Path
 from typing import Any
 
 from huggingface_hub import HfApi
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 
 from postdyn.weight_diff import select_uniform
 

@@ -8,6 +8,7 @@ checkpoint next to it. Checkpoints are read from the local Hugging Face cache on
 from __future__ import annotations
 
 import argparse
+import sys
 import json
 import time
 from dataclasses import dataclass
@@ -16,6 +17,9 @@ from typing import Any
 
 import torch
 from huggingface_hub import snapshot_download
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 
 from postdyn.persistence import RunDir, atomic_write_json, tee_log
 from postdyn.weight_diff import compare, tensor_files
