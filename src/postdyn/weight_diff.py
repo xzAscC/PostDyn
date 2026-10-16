@@ -91,6 +91,39 @@ def row_one_minus_cos(a: torch.Tensor, b: torch.Tensor, chunk: int = 4096) -> fl
     return total / a.shape[0]
 
 
+def bf16_ulp(w: torch.Tensor) -> torch.Tensor:
+    """Spacing between neighbouring bfloat16 values at each entry (0 for zeros)."""
+    _, exponent = torch.frexp(w.float())  # |w| in [2^(e-1), 2^e)
+    ulp = torch.ldexp(torch.ones_like(w, dtype=torch.float32), exponent - 8)
+    return torch.where(w == 0, torch.zeros_like(ulp), ulp)
+
+
+def angle_stats(start: torch.Tensor, end: torch.Tensor, chunk: int = 4096) -> dict[str, float | int | None]:
+    """Rotation angle (degrees) of each row from start to end: mean and std over rows.
+
+    theta_i = 2 asin(d_i / 2), d_i = || a_i/|a_i| - b_i/|b_i| ||, exact and stable for tiny angles.
+    theta_ulp = mean over rows of ||ulp(a_i)|| / |a_i| in degrees: the rotation of a long row whose
+    entries each move by one bfloat16 step in random directions (the storage-precision floor).
+    A 1-D tensor counts as one row.
+    """
+    a_all = start.reshape(1, -1) if start.ndim == 1 else start
+    b_all = end.reshape(1, -1) if end.ndim == 1 else end
+    thetas, refs = [], []
+    for lo in range(0, a_all.shape[0], chunk):
+        a, b = a_all[lo : lo + chunk].double(), b_all[lo : lo + chunk].double()
+        na, nb = a.norm(dim=1, keepdim=True).clamp_min(1e-300), b.norm(dim=1, keepdim=True).clamp_min(1e-300)
+        d = (a / na - b / nb).norm(dim=1)
+        thetas.append(torch.rad2deg(2 * torch.asin((d / 2).clamp(max=1.0))))
+        refs.append(torch.rad2deg(bf16_ulp(a_all[lo : lo + chunk]).double().norm(dim=1) / na.squeeze(1)))
+    theta, ref = torch.cat(thetas), torch.cat(refs)
+    return {
+        "rows": theta.numel(),
+        "theta_mean": float(theta.mean()),
+        "theta_std": float(theta.std(correction=0)) if theta.numel() > 1 else None,
+        "theta_ulp": float(ref.mean()),
+    }
+
+
 def effective_rank(sv: torch.Tensor) -> float:
     """exp of the entropy of singular values normalized to sum 1."""
     p = sv.double() / sv.double().sum()
@@ -209,8 +242,12 @@ def compare(
     basis_dir: str | os.PathLike[str] | None = None,
     device: str = "cpu",
     log: Callable[[str], None] = print,
+    angles_only: bool = False,
 ) -> None:
-    """Append one JSON row per tensor to ``out_path``, skipping rows already written."""
+    """Append one JSON row per tensor to ``out_path``, skipping rows already written.
+
+    With ``angles_only`` the row holds only the per-row rotation angles (angle_stats).
+    """
     out = Path(out_path)
     start_files, end_files = tensor_files(start_dir), tensor_files(end_dir)
     if set(start_files) != set(end_files):
@@ -232,14 +269,18 @@ def compare(
         start, end = load(start_files, name), load(end_files, name)
         if start.shape != end.shape:
             raise ValueError(f"{name}: shape {tuple(start.shape)} != {tuple(end.shape)}")
-        basis = cache.get(name, start.to(device, torch.float32)) if start.ndim == 2 else None
         layer, component = parse_name(name)
         row: dict[str, object] = {"name": name, "layer": layer, "component": component, "shape": list(start.shape)}
-        row.update(update_stats(start, end, basis=basis, device=device))
-        for key in ("sparsity", "one_minus_cos", "gini", "erank", "overlap"):
+        if angles_only:
+            row.update(angle_stats(start.to(device), end.to(device)))
+        else:
+            basis = cache.get(name, start.to(device, torch.float32)) if start.ndim == 2 else None
+            row.update(update_stats(start, end, basis=basis, device=device))
+        for key in ("sparsity", "one_minus_cos", "gini", "erank", "overlap", "theta_mean", "theta_std"):
             value = row.get(key)
             if isinstance(value, float) and not math.isfinite(value):
                 raise ValueError(f"{name}: non-finite {key}={value}")
         append_jsonl(out, row)
         if (i + 1) % 50 == 0 or i + 1 == len(todo):
-            log(f"  {i + 1}/{len(todo)} {name} sparsity={row['sparsity']:.4f}")
+            key = "theta_mean" if angles_only else "sparsity"
+            log(f"  {i + 1}/{len(todo)} {name} {key}={row[key]:.4g}")

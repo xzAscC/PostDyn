@@ -101,6 +101,20 @@ def test_worker_does_not_wait_for_tasks_held_by_others(tmp_path: Path) -> None:
         lock.close()
 
 
+def test_main_angles_mode_writes_separate_files(tmp_path: Path) -> None:
+    out = tmp_path / "logs" / "weights"
+    args = ["--config", str(_config(tmp_path)), "--output", str(out), "--device", "cpu", "--which", "all"]
+    main([*args, "--angles"])
+    close_all_jsonl_handles()
+    run = out / "toy_sft"
+    assert (run / "final.angles.summary.json").is_file() and (run / "step000005.angles.jsonl").is_file()
+    assert not (run / "final.summary.json").exists()  # the metric pass is separate
+    row = json.loads((run / "final.angles.jsonl").read_text().splitlines()[0])
+    assert row["theta_mean"] > 0 and "sparsity" not in row
+    summary = json.loads((run / "final.angles.summary.json").read_text())
+    assert summary["theta_mean"] == pytest.approx(row["theta_mean"])
+
+
 def test_main_rejects_unknown_run(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         main(["--config", str(_config(tmp_path)), "--output", str(tmp_path / "o"), "--runs", "nope"])

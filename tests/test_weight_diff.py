@@ -11,6 +11,8 @@ from safetensors.torch import save_file
 from postdyn.persistence import close_all_jsonl_handles
 from postdyn.weight_diff import (
     BasisCache,
+    angle_stats,
+    bf16_ulp,
     compare,
     effective_rank,
     gini,
@@ -125,6 +127,34 @@ def test_one_minus_cos_resolves_tiny_rotations() -> None:
     a, b = w0.double(), w1.double()
     exact = float((1 - (a * b).sum(1) / (a.norm(dim=1) * b.norm(dim=1))).mean())
     assert update_stats(w0, w1)["one_minus_cos"] == pytest.approx(exact, rel=1e-3)
+
+
+def test_bf16_ulp_matches_spacing() -> None:
+    w = torch.tensor([1.0, 1.5, 0.75, -3.0, 0.0])
+    assert bf16_ulp(w).tolist() == [2**-7, 2**-7, 2**-8, 2**-6, 0.0]
+
+
+def test_angle_stats_rows_and_reference() -> None:
+    start = torch.tensor([[1.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+    end = torch.tensor([[1.0, 1.0], [1.0, 0.0], [0.0, 2.0]])  # 45, 0 and 0 degrees
+    stats = angle_stats(start, end)
+    assert stats["theta_mean"] == pytest.approx(15.0)
+    assert stats["theta_std"] == pytest.approx(math.sqrt((30**2 + 15**2 * 2) / 3))
+    assert stats["rows"] == 3
+    # every row is a unit basis vector: one ulp of 1.0 is 2^-7 rad of rotation
+    assert stats["theta_ulp"] == pytest.approx(math.degrees(2**-7))
+
+
+def test_angle_stats_resolves_tiny_angles_and_vectors() -> None:
+    torch.manual_seed(0)
+    w0 = torch.randn(8, 4096, dtype=torch.float64)
+    w1 = w0 + 1e-6 * torch.randn(8, 4096, dtype=torch.float64)
+    a, b = w0 / w0.norm(dim=1, keepdim=True), w1 / w1.norm(dim=1, keepdim=True)
+    d = (a - b).norm(dim=1)
+    ref = torch.rad2deg(2 * torch.asin(d / 2)).mean()
+    assert angle_stats(w0, w1)["theta_mean"] == pytest.approx(float(ref), rel=1e-6)
+    vec = angle_stats(torch.ones(4), torch.tensor([1.0, 1.0, 1.0, 2.0]))
+    assert vec["rows"] == 1 and vec["theta_std"] is None
 
 
 def test_update_stats_vector_has_only_vector_metrics() -> None:

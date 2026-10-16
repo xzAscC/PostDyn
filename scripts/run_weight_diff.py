@@ -73,16 +73,25 @@ def summarize(path: Path) -> dict[str, float]:
     return summary
 
 
-def run_task(task: Task, output: Path, basis_root: str | None, device: str) -> str:
+def summarize_angles(path: Path) -> dict[str, float]:
+    """Mean over matrices (tensors with a row std) of the mean row angle and its bf16 floor."""
+    rows = {r["name"]: r for r in map(json.loads, filter(str.strip, path.read_text().splitlines()))}
+    mats = [r for r in rows.values() if r.get("theta_std") is not None] or list(rows.values())
+    return {"tensors": len(rows), "theta_mean": sum(r["theta_mean"] for r in mats) / len(mats),
+            "theta_ulp": sum(r["theta_ulp"] for r in mats) / len(mats)}
+
+
+def run_task(task: Task, output: Path, basis_root: str | None, device: str, angles: bool = False) -> str:
     """Return done, unready, busy or computed."""
     run_dir = RunDir(output / task.run["name"])
-    summary_path = run_dir.path(f"{task.label}.summary.json")
+    stem = f"{task.label}.angles" if angles else task.label
+    summary_path = run_dir.path(f"{stem}.summary.json")
     if summary_path.is_file():
         return "done"
     start, end = ready(task.run["start"]), ready(task.end)
     if start is None or end is None:
         return "unready"
-    lock_path = run_dir.path(f"{task.label}.lock")
+    lock_path = run_dir.path(f"{stem}.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("w") as lock:
         try:
@@ -97,10 +106,12 @@ def run_task(task: Task, output: Path, basis_root: str | None, device: str) -> s
         if basis_root:
             key = task.run["start"].get("repo", task.run["start"].get("path", "")).replace("/", "__")
             basis = Path(basis_root) / key
-        out = run_dir.path(f"{task.label}.jsonl")
-        compare(start, end, out, basis_dir=basis, device=device, log=lambda m: print(m, flush=True))
+        out = run_dir.path(f"{stem}.jsonl")
+        compare(start, end, out, basis_dir=basis, device=device, log=lambda m: print(m, flush=True),
+                angles_only=angles)
         summary = {"run": task.run["name"], "family": task.run["family"], "row": task.run["row"],
-                   "label": task.label, "start": str(start), "end": str(end), **summarize(out)}
+                   "label": task.label, "start": str(start), "end": str(end),
+                   **(summarize_angles(out) if angles else summarize(out))}
         atomic_write_json(summary_path, summary)
         print(f"   done in {time.time() - t0:.0f}s: {summary}", flush=True)
     return "computed"
@@ -117,6 +128,7 @@ def main(argv: list[str] | None = None) -> list[tuple[str, str]]:
     parser.add_argument("--basis-root", default=None, help="cache of W0 principal bases, one folder per start")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--wait-minutes", type=float, default=0, help="keep retrying unready or busy tasks")
+    parser.add_argument("--angles", action="store_true", help="only per-row rotation angles (no SVD)")
     args = parser.parse_args(argv)
 
     runs = json.loads(Path(args.config).read_text())["runs"]
@@ -129,12 +141,13 @@ def main(argv: list[str] | None = None) -> list[tuple[str, str]]:
     output = Path(args.output)
     deadline = time.time() + 60 * args.wait_minutes
 
-    with tee_log(RunDir(output / f"{args.which}-s{args.shard}of{args.num_shards}")):
+    mode = "angles-" if args.angles else ""
+    with tee_log(RunDir(output / f"{mode}{args.which}-s{args.shard}of{args.num_shards}")):
         print(f"{len(pending)} tasks on {args.device}", flush=True)
         while True:
             skipped, progressed, unready = [], False, False
             for task in pending:
-                status = run_task(task, output, args.basis_root, args.device)
+                status = run_task(task, output, args.basis_root, args.device, args.angles)
                 if status in ("unready", "busy"):
                     skipped.append(task)
                 progressed |= status == "computed"
