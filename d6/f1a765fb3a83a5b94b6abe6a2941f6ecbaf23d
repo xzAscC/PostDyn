@@ -1,0 +1,25 @@
+scripts/run_weight_diff.py
+  s_59896eec6221ef::t_4057fce5f5c609 87-102,105,130,137,155-156,169-171,177
+src/postdyn/weight_diff.py
+  s_59896eec6221ef::t_dd960638dbb39c 21,150-152,155,157,159-166,170-217,238-251,312-313,317-318,343,345-349,353-354,360
+tests/test_run_weight_diff.py
+  s_59896eec6221ef::t_dad3fddd077bf4 145-158
+tests/test_weight_diff.py
+  s_59896eec6221ef::t_e8029eb005354b 20,24,162-185
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d6f1a765fb3a83a5b94b6abe6a2941f6ecbaf23d",
+  "prompts": {},
+  "sessions": {
+    "s_59896eec6221ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c2d9c709-3b89-4a97-9c6d-1b70e2199b54",
+        "model": "unknown"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
