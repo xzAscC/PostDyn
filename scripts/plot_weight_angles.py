@@ -4,7 +4,8 @@ Three figures, rows SFT / RL and columns model families, one shared log y axis p
   weights_angle_final_matrices.pdf  start vs final, projection matrices: mean over rows per layer
   weights_angle_final_vectors.pdf   start vs final, norm weights and biases (one row each)
   weights_angle_steps.pdf           matrices over training: geometric mean over layers per
-                                    checkpoint, band = x/÷ 10^std(log10) over layers; final at right
+                                    checkpoint, band = x/÷ 10^std(log10) over layers; the final
+                                    checkpoint continues the line (plot_weight_dynamics.final_x)
 Each panel has a dashed gray line at the bf16 floor: the median over tensors of the angle a row
 turns if every entry moves by one bfloat16 step.
 """
@@ -22,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scripts.plot_weight_diff import FAMILIES, INK, MUTED, ROW_TITLES, RULE, STYLE, _style, load_rows  # noqa: E402
-from scripts.plot_weight_dynamics import _band, _mean_std, _short  # noqa: E402
+from scripts.plot_weight_dynamics import _band, _mean_std, final_x, step_ticks  # noqa: E402
 
 MATRICES = [c for c in STYLE if c.endswith("_proj.weight")]
 
@@ -127,26 +128,23 @@ def plot_steps(logs: Path, out: Path) -> None:
             per_label = {lab: layer_curves(load_rows(run_dir / f"{lab}.angles.jsonl"), True) for lab in labels}
             final = angle_rows(run_dir, "final")
             final_curves = layer_curves(final, True) if final else {}
-            x_final = steps[-1] + 0.3 * max(steps[-1] - steps[0], 1)
+            x_final = final_x(run, steps)
             for comp in MATRICES:
-                stats = [_mean_std(per_label[lab][comp][1], log=True) for lab in labels if comp in per_label[lab]]
-                if not stats:
+                points = [(s, *_mean_std(per_label[lab][comp][1], log=True))
+                          for s, lab in zip(steps, labels) if comp in per_label[lab]]
+                if comp in final_curves:  # the final checkpoint continues the line
+                    points.append((x_final, *_mean_std(final_curves[comp][1], log=True)))
+                if not points:
                     continue
                 name, color, ls = STYLE[comp]
-                mean, std = [m for m, _ in stats], [s for _, s in stats]
+                xs, mean, std = [x for x, _, _ in points], [m for _, m, _ in points], [s for _, _, s in points]
                 lo, hi = _band(mean, std, log=True)
-                ax.plot(steps, mean, color=color, ls=ls, lw=0.9)
-                ax.fill_between(steps, lo, hi, color=color, alpha=0.10, lw=0)
-                if comp in final_curves:
-                    fm, fs = _mean_std(final_curves[comp][1], log=True)
-                    flo, fhi = _band([fm], [fs], log=True)
-                    ax.errorbar([x_final], [fm], yerr=[[fm - flo[0]], [fhi[0] - fm]], fmt="o", ms=2, color=color,
-                                elinewidth=0.6, capsize=1.5)
+                ax.plot(xs, mean, color=color, ls=ls, lw=0.9)
+                ax.fill_between(xs, lo, hi, color=color, alpha=0.10, lw=0)
                 seen[comp] = (name, color, ls)
             ref_rows = final or load_rows(run_dir / f"{labels[-1]}.angles.jsonl")
             ax.axhline(bf16_floor(ref_rows, True), color=MUTED, ls=(0, (4, 2)), lw=0.8)
-            ax.axvline((steps[-1] + x_final) / 2, color=RULE, lw=0.6)
-            ax.set_xticks([steps[0], steps[-1], x_final], [_short(steps[0]), _short(steps[-1]), "final"])
+            step_ticks(ax, x_final)
     _finish(fig, seen, "Training Step", out)
     plt.close(fig)
 

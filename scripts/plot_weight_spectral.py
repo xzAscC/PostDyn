@@ -7,8 +7,8 @@ Follows Fig. 4 of The Path Not Taken (arXiv 2511.08567). Five figures, columns =
   weights_spectral_exemplar.pdf        one matrix (middle layer, --exemplar component): all top-k principal
                                        angles (U solid, V dashed) and the top-k singular values before/after
   weights_spectral_steps.pdf           rows = the three metrics, geometric mean over all projection matrices
-                                       per checkpoint vs training progress (step / last intermediate step);
-                                       SFT and RL in one panel, final checkpoint at the right
+                                       per checkpoint vs training progress (step / final step, see
+                                       plot_weight_dynamics.final_x); SFT and RL in one panel
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scripts.plot_weight_diff import FAMILIES, INK, MUTED, ROW_TITLES, RULE, STYLE, _style, load_rows  # noqa: E402
+from scripts.plot_weight_dynamics import final_x  # noqa: E402
 
 MATRICES = [c for c in STYLE if c.endswith("_proj.weight")]
 METRICS = {
@@ -150,24 +151,24 @@ def plot_steps(logs: Path, out: Path) -> None:
             steps = [int(re.fullmatch(r"step(\d+)", lab).group(1)) for lab in labels]
             final = spectral_rows(run_dir, "final")
             color, ls, marker = ROW_STYLE[row_name]
+            if not steps:
+                continue
+            x_final = final_x(run, steps)
             for i, metric in enumerate(METRICS):
-                ax = axes[i, col]
-                if steps:
-                    xs = [s / steps[-1] for s in steps]
-                    ys = [matrix_mean(load_rows(run_dir / f"{lab}.spectral.jsonl"), metric) for lab in labels]
-                    ax.plot(xs, ys, color=color, ls=ls, marker=marker, ms=2.5, lw=0.9)
-                if final:
-                    ax.plot([1.2], [matrix_mean(final, metric)], color=color, marker=marker, ms=3.5, ls="none")
+                xs = [s / x_final for s in steps]
+                ys = [matrix_mean(load_rows(run_dir / f"{lab}.spectral.jsonl"), metric) for lab in labels]
+                if final:  # the final checkpoint continues the line at x = 1
+                    xs, ys = [*xs, 1.0], [*ys, matrix_mean(final, metric)]
+                axes[i, col].plot(xs, ys, color=color, ls=ls, marker=marker, ms=2.5, lw=0.9)
     for i, metric in enumerate(METRICS):
         axes[i, 0].set_ylabel(METRICS[metric].replace(", Top-10% U", "\nTop-10% U"), linespacing=0.85)
         for ax in axes[i]:
             ax.set_yscale("log")
             ax.grid(axis="y", color=RULE, lw=0.4)
             ax.set_axisbelow(True)
-            ax.axvline(1.1, color=RULE, lw=0.6)
-            ax.set_xticks([0, 0.5, 1.0, 1.2], ["0", "0.5", "1", "final"])
+            ax.set_xticks([0, 0.5, 1.0], ["0", "0.5", "final"])
     for ax in axes[-1]:
-        ax.set_xlabel("Step / Last Step")
+        ax.set_xlabel("Step / Final Step")
     _legend(fig, [("SFT", *ROW_STYLE["SFT"]), ("RL", *ROW_STYLE["RL"])], ncol=2)
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out)

@@ -1,8 +1,9 @@
 """Plot weight-update metrics over training: rows SFT / RL, columns model families.
 
 Each projection matrix is one line (norm weights and biases are left out): its mean over layers at every finished intermediate checkpoint
-(stepNNNNNN.jsonl), with a +-1 std band over layers; the final checkpoint is a separate point at
-the right. Log-scale metrics use the geometric mean and a band of x/÷ 10^std(log10 value).
+(stepNNNNNN.jsonl), with a +-1 std band over layers. The final checkpoint continues the line and its
+tick reads "final"; it sits at its real step where the repository name gives one (FINAL_STEP), otherwise
+one median checkpoint gap after the last intermediate. Log-scale metrics use the geometric mean and a band of x/÷ 10^std(log10 value).
 Writes weights_steps_<metric>.pdf.
 """
 
@@ -21,6 +22,10 @@ sys.path.insert(0, str(ROOT))
 from scripts.plot_weight_diff import (  # noqa: E402
     FAMILIES, INK, MATRICES, METRICS, MUTED, ROW_TITLES, RULE, STYLE, _style, load_rows, series,
 )
+
+
+FINAL_STEP = {"qwen-scaleml_sft": 320, "qwen-scaleml_rl": 180, "qwen-cutelemonlili_sft": 1818,
+              "qwen-cutelemonlili_rl": 620}
 
 
 @dataclass
@@ -63,6 +68,24 @@ def _short(step: int) -> str:
     return f"{step / 1000:.1f}".rstrip("0").rstrip(".") + "k" if step >= 1000 else str(step)
 
 
+def final_x(run: str, steps: list[int]) -> float:
+    """x position of the final checkpoint: its real step, else one median gap after the last intermediate."""
+    if run in FINAL_STEP:
+        return FINAL_STEP[run]
+    gaps = sorted(b - a for a, b in zip(steps, steps[1:]))
+    return steps[-1] + (gaps[len(gaps) // 2] if gaps else 1)
+
+
+def step_ticks(ax: object, x_final: float) -> None:
+    """About three step ticks inside the axis, then a "final" tick; drop step ticks crowding it."""
+    from matplotlib.ticker import MaxNLocator
+
+    ax.xaxis.set_major_locator(MaxNLocator(3, integer=True))
+    lo, _ = ax.get_xlim()
+    ticks = [t for t in ax.get_xticks() if lo <= t < x_final - 0.2 * (x_final - lo)]
+    ax.set_xticks([*ticks, x_final], [*(_short(int(t)) for t in ticks), "final"])
+
+
 def _band(mean: list[float], std: list[float], log: bool) -> tuple[list[float], list[float]]:
     if log:
         return [m / 10**s for m, s in zip(mean, std)], [m * 10**s for m, s in zip(mean, std)]
@@ -90,28 +113,24 @@ def plot_metric(logs: Path, metric: str, out: Path) -> None:
                 ax.set_xticks([])
                 ax.set_yticks([])
             else:
-                x_final = steps[-1] + 0.3 * max(steps[-1] - steps[0], 1)
+                x_final = final_x(run, steps)
                 for comp, t in trajs.items():
                     if comp not in MATRICES:
                         continue
                     name, color, ls = STYLE.get(comp, (comp, MUTED, "-"))
-                    mean = [scale * m for m in t.mean]
-                    std = t.std if log else [scale * s for s in t.std]
-                    lo, hi = _band(mean, std, log)
-                    ax.plot(t.steps, mean, color=color, ls=ls, lw=0.9)
-                    ax.fill_between(t.steps, lo, hi, color=color, alpha=0.10, lw=0)
+                    points = list(zip(t.steps, t.mean, t.std))
                     if t.final is not None:
-                        fm = scale * t.final[0]
-                        fs = t.final[1] if log else scale * t.final[1]
-                        flo, fhi = _band([fm], [fs], log)
-                        ax.errorbar([x_final], [fm], yerr=[[fm - flo[0]], [fhi[0] - fm]], fmt="o", ms=2,
-                                    color=color, elinewidth=0.6, capsize=1.5)
+                        points.append((x_final, *t.final))
+                    xs = [x for x, _, _ in points]
+                    mean = [scale * m for _, m, _ in points]
+                    std = [s if log else scale * s for _, _, s in points]
+                    lo, hi = _band(mean, std, log)
+                    ax.plot(xs, mean, color=color, ls=ls, lw=0.9)
+                    ax.fill_between(xs, lo, hi, color=color, alpha=0.10, lw=0)
                     seen[comp] = (name, color, ls)
                 if log:
                     ax.set_yscale("log")
-                ax.axvline((steps[-1] + x_final) / 2, color=RULE, lw=0.6)
-                ticks = [steps[0], steps[-1]]
-                ax.set_xticks([*ticks, x_final], [*(_short(s) for s in ticks), "final"])
+                step_ticks(ax, x_final)
             if row == 0:
                 ax.set_title(title, fontsize=7, loc="left", linespacing=0.85)
             if col == 0:

@@ -50,6 +50,13 @@ def test_main_writes_pdfs(tmp_path: Path) -> None:
         "weights_steps_one_minus_cos.pdf", "weights_steps_sparsity.pdf"]
 
 
+def test_final_x_uses_known_step_else_median_gap() -> None:
+    from scripts.plot_weight_dynamics import final_x
+
+    assert final_x("qwen-scaleml_sft", [20, 60, 80, 300]) == 320
+    assert final_x("olmo3-7b_sft", [1000, 6000, 10000, 15000]) == 15000 + 5000  # median of 5000, 4000, 5000
+
+
 def test_short_step_labels() -> None:
     from scripts.plot_weight_dynamics import _short
 
