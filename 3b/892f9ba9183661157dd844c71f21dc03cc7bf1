@@ -1,0 +1,25 @@
+scripts/download_checkpoints.py
+  s_59896eec6221ef::t_59489fa3c4dcaf 18-20,47-48
+scripts/run_weight_diff.py
+  s_59896eec6221ef::t_841875f9f3a34b 18,60-61,88,113-119,155,160-161,173
+tests/test_make_weight_runs.py
+  s_59896eec6221ef::t_d37cb5fed572bd 37-53
+tests/test_run_weight_diff.py
+  s_59896eec6221ef::t_35db23894bc263 14,118-144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3b892f9ba9183661157dd844c71f21dc03cc7bf1",
+  "prompts": {},
+  "sessions": {
+    "s_59896eec6221ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c2d9c709-3b89-4a97-9c6d-1b70e2199b54",
+        "model": "unknown"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
