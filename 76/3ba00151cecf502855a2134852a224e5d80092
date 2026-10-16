@@ -1,0 +1,25 @@
+scripts/plot_weight_angles.py
+  s_59896eec6221ef::t_bcc3e0c363424b 7-8,26,131,133-137,140,142-143,147
+scripts/plot_weight_dynamics.py
+  s_59896eec6221ef::t_80b49f5ada79ef 4-6,27-30,71-88,116,121,123-129,133
+scripts/plot_weight_spectral.py
+  s_59896eec6221ef::t_57310715ce95bd 10-11,27,154-156,158-162,169,171
+tests/test_plot_weight_dynamics.py
+  s_59896eec6221ef::t_da19d6d94fdea8 53-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "763ba00151cecf502855a2134852a224e5d80092",
+  "prompts": {},
+  "sessions": {
+    "s_59896eec6221ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c2d9c709-3b89-4a97-9c6d-1b70e2199b54",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
