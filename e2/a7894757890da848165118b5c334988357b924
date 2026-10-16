@@ -1,0 +1,21 @@
+scripts/plot_weight_dynamics.py
+  s_59896eec6221ef::t_6ba9dca8fdb868 89-90,93-96,131
+tests/test_plot_weight_dynamics.py
+  s_59896eec6221ef::t_d8fbc7b81a6bdb 60-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e2a7894757890da848165118b5c334988357b924",
+  "prompts": {},
+  "sessions": {
+    "s_59896eec6221ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c2d9c709-3b89-4a97-9c6d-1b70e2199b54",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
