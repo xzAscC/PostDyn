@@ -86,10 +86,14 @@ def step_ticks(ax: object, x_final: float) -> None:
     ax.set_xticks([*ticks, x_final], [*(_short(int(t)) for t in ticks), "final"])
 
 
-def _band(mean: list[float], std: list[float], log: bool) -> tuple[list[float], list[float]]:
+def _band(mean: list[float], std: list[float], log: bool, top: float | None = None) -> tuple[list[float], list[float]]:
+    """mean -/+ std (x/÷ 10^std on log metrics); a linear band is clipped to [0, top] when top is given."""
     if log:
         return [m / 10**s for m, s in zip(mean, std)], [m * 10**s for m, s in zip(mean, std)]
-    return [m - s for m, s in zip(mean, std)], [m + s for m, s in zip(mean, std)]
+    lo, hi = [m - s for m, s in zip(mean, std)], [m + s for m, s in zip(mean, std)]
+    if top is not None:
+        lo, hi = [max(v, 0.0) for v in lo], [min(v, top) for v in hi]
+    return lo, hi
 
 
 def plot_metric(logs: Path, metric: str, out: Path) -> None:
@@ -124,7 +128,7 @@ def plot_metric(logs: Path, metric: str, out: Path) -> None:
                     xs = [x for x, _, _ in points]
                     mean = [scale * m for _, m, _ in points]
                     std = [s if log else scale * s for _, _, s in points]
-                    lo, hi = _band(mean, std, log)
+                    lo, hi = _band(mean, std, log, top=scale)  # linear metrics are fractions in [0, 1]
                     ax.plot(xs, mean, color=color, ls=ls, lw=0.9)
                     ax.fill_between(xs, lo, hi, color=color, alpha=0.10, lw=0)
                     seen[comp] = (name, color, ls)

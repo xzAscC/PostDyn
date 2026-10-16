@@ -57,6 +57,13 @@ def test_final_x_uses_known_step_else_median_gap() -> None:
     assert final_x("olmo3-7b_sft", [1000, 6000, 10000, 15000]) == 15000 + 5000  # median of 5000, 4000, 5000
 
 
+def test_linear_band_is_clipped_to_valid_range() -> None:
+    from scripts.plot_weight_dynamics import _band
+
+    assert _band([99.0, 1.0], [2.0, 2.0], log=False, top=100) == ([97.0, 0.0], [100.0, 3.0])
+    assert _band([99.0], [2.0], log=False) == ([97.0], [101.0])
+
+
 def test_short_step_labels() -> None:
     from scripts.plot_weight_dynamics import _short
 
