@@ -11,7 +11,7 @@ from safetensors.torch import save_file
 from postdyn.persistence import close_all_jsonl_handles
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.run_weight_diff import build_tasks, main  # noqa: E402
+from scripts.run_weight_diff import build_tasks, main, ready  # noqa: E402
 
 
 def _ckpt(root: Path, w: torch.Tensor) -> dict[str, str]:
@@ -113,6 +113,33 @@ def test_main_angles_mode_writes_separate_files(tmp_path: Path) -> None:
     assert row["theta_mean"] > 0 and "sparsity" not in row
     summary = json.loads((run / "final.angles.summary.json").read_text())
     assert summary["theta_mean"] == pytest.approx(row["theta_mean"])
+
+
+def test_ready_waits_for_index_of_sharded_checkpoint(tmp_path: Path) -> None:
+    ckpt = tmp_path / "ckpt"
+    ckpt.mkdir()
+    save_file({"a": torch.zeros(2)}, str(ckpt / "model-00001-of-00002.safetensors"))
+    assert ready({"path": str(ckpt)}) is None  # shards arrive before the index
+    save_file({"b": torch.zeros(2)}, str(ckpt / "model-00002-of-00002.safetensors"))
+    (ckpt / "model.safetensors.index.json").write_text(json.dumps({"weight_map": {
+        "a": "model-00001-of-00002.safetensors", "b": "model-00002-of-00002.safetensors"}}))
+    assert ready({"path": str(ckpt)}) == ckpt
+
+
+def test_failing_task_is_recorded_and_skipped(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    runs = json.loads(config.read_text())
+    bad = tmp_path / "bad"
+    bad.mkdir()
+    save_file({"other": torch.zeros(2)}, str(bad / "model.safetensors"))  # tensor names differ
+    runs["runs"][0]["intermediates"].insert(0, {"path": str(bad), "step": 1})
+    config.write_text(json.dumps(runs))
+    out = tmp_path / "logs" / "weights"
+    undone = main(["--config", str(config), "--output", str(out), "--device", "cpu", "--which", "intermediate"])
+    close_all_jsonl_handles()
+    assert "tensor names differ" in (out / "toy_sft" / "step000001.failed").read_text()
+    assert (out / "toy_sft" / "step000005.summary.json").is_file()  # the worker went on
+    assert undone == [("toy_sft", "step000001")]
 
 
 def test_main_rejects_unknown_run(tmp_path: Path) -> None:

@@ -15,7 +15,9 @@ from typing import Any
 
 from huggingface_hub import snapshot_download
 
-PATTERNS = ["*.safetensors", "*.json", "*.txt", "*.jinja", "*.model", "*.py"]
+# Metadata first: a checkpoint counts as complete only once its index and every shard exist,
+# so the index must not be the last file to arrive.
+META_PATTERNS = ["*.json", "*.txt", "*.jinja", "*.model", "*.py"]
 
 
 def checkpoint_list(runs: list[dict[str, Any]], which: str) -> list[tuple[str, str]]:
@@ -42,7 +44,8 @@ def main(argv: list[str] | None = None) -> None:
     for repo, revision in checkpoint_list(runs, args.which):
         t0 = time.time()
         try:
-            path = snapshot_download(repo, revision=revision, allow_patterns=PATTERNS, max_workers=1)
+            snapshot_download(repo, revision=revision, allow_patterns=META_PATTERNS, max_workers=1)
+            path = snapshot_download(repo, revision=revision, allow_patterns=["*.safetensors"], max_workers=1)
             print(f"OK {repo}@{revision} {time.time() - t0:.0f}s {path}", flush=True)
         except Exception as exc:
             print(f"FAIL {repo}@{revision}: {exc}", flush=True)

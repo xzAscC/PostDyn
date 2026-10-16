@@ -34,3 +34,20 @@ def test_checkpoint_list_puts_starts_before_ends_without_duplicates() -> None:
              "intermediates": []}]
     assert checkpoint_list(runs, "intermediate") == [("a", "main"), ("b", "s1")]
     assert checkpoint_list(runs, "final") == [("a", "main"), ("b", "main"), ("c", "main")]
+
+
+def test_download_fetches_index_before_shards(monkeypatch, tmp_path) -> None:
+    import json as _json
+
+    import scripts.download_checkpoints as dl
+
+    calls = []
+    monkeypatch.setattr(dl, "snapshot_download", lambda repo, revision, allow_patterns, max_workers: calls.append(
+        allow_patterns) or str(tmp_path))
+    monkeypatch.setattr(dl.time, "sleep", lambda s: None)
+    config = tmp_path / "runs.json"
+    config.write_text(_json.dumps({"runs": [{"start": {"repo": "a", "revision": "main"},
+                                             "final": {"repo": "b", "revision": "main"}, "intermediates": []}]}))
+    dl.main(["--config", str(config), "--which", "final"])
+    assert calls[0] == dl.META_PATTERNS and calls[1] == ["*.safetensors"]
+    assert len(calls) == 4
