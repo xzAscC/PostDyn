@@ -6,15 +6,12 @@ Three figures, rows SFT / RL and columns model families, one shared log y axis p
   weights_angle_steps.pdf           matrices over training: geometric mean over layers per
                                     checkpoint, band = x/÷ 10^std(log10) over layers; the final
                                     checkpoint continues the line (plot_weight_dynamics.final_x)
-Each panel has a dashed gray line at the bf16 floor: the median over tensors of the angle a row
-turns if every entry moves by one bfloat16 step.
 """
 
 from __future__ import annotations
 
 import argparse
 import re
-import statistics
 import sys
 from pathlib import Path
 from typing import Any
@@ -49,10 +46,6 @@ def layer_curves(rows: list[dict[str, Any]], matrices: bool) -> dict[str, tuple[
             for c, p in points.items()}
 
 
-def bf16_floor(rows: list[dict[str, Any]], matrices: bool) -> float:
-    return statistics.median(r["theta_ulp"] for r in rows if r.get("layer") is not None and _is_matrix(r) == matrices)
-
-
 def _grid(plt: Any) -> tuple[Any, Any]:
     fig, axes = plt.subplots(2, len(FAMILIES), figsize=(5.65, 3.9), layout="constrained", squeeze=False,
                              sharey=True)
@@ -75,8 +68,7 @@ def _finish(fig: Any, seen: dict[str, tuple[str, str, str]], xlabel: str, out: P
     fig.supylabel("Row Rotation Angle (°)", fontsize=8, color=INK)
     order = [c for c in STYLE if c in seen]
     handles = [Line2D([], [], color=seen[c][1], ls=seen[c][2], lw=0.9) for c in order]
-    handles.append(Line2D([], [], color=MUTED, ls=(0, (4, 2)), lw=0.8))
-    fig.legend(handles, [seen[c][0] for c in order] + ["bf16 floor"], loc="outside upper center",
+    fig.legend(handles, [seen[c][0] for c in order], loc="outside upper center",
                ncol=8, frameon=False, fontsize=6.5, handlelength=2.2, columnspacing=1.0)
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out)
@@ -105,7 +97,6 @@ def plot_final(logs: Path, out: Path, matrices: bool) -> None:
                 mean = [m if m > 0 else float("nan") for m in mean]  # unchanged tensors: no point on a log axis
                 ax.plot(layers, mean, color=color, ls=ls, lw=0.9)
                 seen[comp] = (name, color, ls)
-            ax.axhline(bf16_floor(rows, matrices), color=MUTED, ls=(0, (4, 2)), lw=0.8)
     _finish(fig, seen, "Layer", out)
     plt.close(fig)
 
@@ -142,8 +133,6 @@ def plot_steps(logs: Path, out: Path) -> None:
                 ax.plot(xs, mean, color=color, ls=ls, lw=0.9)
                 ax.fill_between(xs, lo, hi, color=color, alpha=0.10, lw=0)
                 seen[comp] = (name, color, ls)
-            ref_rows = final or load_rows(run_dir / f"{labels[-1]}.angles.jsonl")
-            ax.axhline(bf16_floor(ref_rows, True), color=MUTED, ls=(0, (4, 2)), lw=0.8)
             step_ticks(ax, x_final)
     _finish(fig, seen, "Training Step", out)
     plt.close(fig)

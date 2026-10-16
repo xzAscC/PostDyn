@@ -4,10 +4,9 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.plot_weight_angles import angle_rows, bf16_floor, layer_curves, main  # noqa: E402
+from scripts.plot_weight_angles import angle_rows, layer_curves, main  # noqa: E402
 
 
 def _write(run_dir: Path, label: str, rows: list[dict], done: bool = True) -> None:
@@ -39,11 +38,6 @@ def test_layer_curves_split_matrices_and_vectors() -> None:
     assert mats == {"mlp.up_proj.weight": ([0, 1], [1.0, 2.0], [0.5, 0.5])}
     vecs = layer_curves(_rows(), matrices=False)
     assert vecs == {"input_layernorm.weight": ([0, 1], [0.01, 0.01], [0.0, 0.0])}
-
-
-def test_bf16_floor_is_median_over_matrices() -> None:
-    assert bf16_floor(_rows(), matrices=True) == pytest.approx(0.8)  # median of 0.3, 1.3
-    assert bf16_floor(_rows(), matrices=False) == pytest.approx(0.2)
 
 
 def test_main_writes_three_figures(tmp_path: Path) -> None:
