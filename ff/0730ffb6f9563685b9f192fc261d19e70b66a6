@@ -1,0 +1,39 @@
+tests/test_plot_weight_diff.py
+  s_40f801b9b5bed6::t_0e2ae584c5b66e 38-43
+scripts/plot_weight_diff.py
+  s_40f801b9b5bed6::t_13b399d8c4accc 77,81
+  s_40f801b9b5bed6::t_cd55a749eeee5b 32
+  s_40f801b9b5bed6::t_d884dd8f70a5fb 55-60
+scripts/plot_weight_dynamics.py
+  s_40f801b9b5bed6::t_6c32066f40a21c 30-31
+  s_40f801b9b5bed6::t_3b2d300b2c1bfe 32
+  s_40f801b9b5bed6::t_bf42fc44b38630 136-137
+tests/test_plot_weight_dynamics.py
+  s_40f801b9b5bed6::t_7539b0259a5919 63-64,67,70
+  s_40f801b9b5bed6::t_b8896cacdfd737 73-86
+  s_ed0215ace0ce7f::t_0512c0dad6f645 71-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ff0730ffb6f9563685b9f192fc261d19e70b66a6",
+  "prompts": {},
+  "sessions": {
+    "s_40f801b9b5bed6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e4bc5f64-f568-473b-8216-ee1aa3f1f04a",
+        "model": "unknown"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    },
+    "s_ed0215ace0ce7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a54e04ef-aead-4064-a906-a41a21891698",
+        "model": "unknown"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
