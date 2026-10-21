@@ -1,0 +1,29 @@
+tests/test_train_evaluate.py
+  s_c7d63f603cc3fb::t_c3f7da8fa90d8d 1-18,27-32
+  s_c7d63f603cc3fb::t_afb820f460890d 19-26
+  s_c7d63f603cc3fb::t_6ed4cf646e873f 33-40
+train/sft/evaluate.py
+  s_c7d63f603cc3fb::t_0dc2fd1d35f43e 41,43-46
+  s_c7d63f603cc3fb::t_514ea72aea27cc 27-31
+  s_c7d63f603cc3fb::t_426acfc7396d4c 1-5,9-26,32-40,42,47-82,85-92,94,96,98-106,108-109,163-166
+  s_c7d63f603cc3fb::t_7f36fab427393c 6-8,83-84,93,95,97,107,110-162,167-180
+train/sft/eval_osc.sh
+  s_c7d63f603cc3fb::t_1d86c24557b992 1-16,19-27
+  s_c7d63f603cc3fb::t_d529e0fbfc308c 17-18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1358be17f3733553869fb34037c7f2aa3b5c046d",
+  "prompts": {},
+  "sessions": {
+    "s_c7d63f603cc3fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2168bc-c818-45ec-bfae-b5057d9326dd",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
