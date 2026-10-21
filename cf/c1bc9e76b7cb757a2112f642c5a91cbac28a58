@@ -1,0 +1,23 @@
+src/postdyn/sft_data.py
+  s_c7d63f603cc3fb::t_a30ef0e6fac84e 12
+  s_c7d63f603cc3fb::t_d0862f92ef572b 76-77,79,82
+tests/test_sft_data.py
+  s_c7d63f603cc3fb::t_481db97be7b334 97,99-104
+  s_c7d63f603cc3fb::t_a608ec72d64a82 98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cfc1bc9e76b7cb757a2112f642c5a91cbac28a58",
+  "prompts": {},
+  "sessions": {
+    "s_c7d63f603cc3fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2168bc-c818-45ec-bfae-b5057d9326dd",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
