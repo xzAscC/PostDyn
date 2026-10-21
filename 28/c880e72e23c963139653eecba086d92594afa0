@@ -1,0 +1,27 @@
+tests/test_train_upload.py
+  s_c7d63f603cc3fb::t_ba059220b4f4f8 28-36
+train/sft/common_osc.sh
+  s_c7d63f603cc3fb::t_4c3eeba91bfc3e 24-25,43-45,58
+train/sft/soff_osc.sh
+  s_c7d63f603cc3fb::t_9cb51fc6a2dd2e 11-12,31,47
+train/sft/son_osc.sh
+  s_c7d63f603cc3fb::t_cab344e48b322e 11-12,45,60,70
+train/sft/upload.py
+  s_c7d63f603cc3fb::t_c87071a3e7fab4 14-25,52,54,57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28c880e72e23c963139653eecba086d92594afa0",
+  "prompts": {},
+  "sessions": {
+    "s_c7d63f603cc3fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2168bc-c818-45ec-bfae-b5057d9326dd",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
