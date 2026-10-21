@@ -1,0 +1,96 @@
+train/sft/reward.py
+  s_c7d63f603cc3fb::t_ad28b1a8977992 14-17
+  s_c7d63f603cc3fb::t_5280bb1285b46e 7-12,22
+  s_c7d63f603cc3fb::t_2251fb18b26c25 4-6
+  s_c7d63f603cc3fb::t_4da5085b136e85 13
+  s_c7d63f603cc3fb::t_f5ba73584ba0a4 18-21
+  s_c7d63f603cc3fb::t_77584099947311 1-3
+train/sft/common_osc.sh
+  s_c7d63f603cc3fb::t_e32fe9a761c71c 38-40
+  s_c7d63f603cc3fb::t_44098a1d224729 36-37
+  s_c7d63f603cc3fb::t_ee855087d725b7 16-19
+  s_c7d63f603cc3fb::t_542148fbfbff65 34-35
+  s_c7d63f603cc3fb::t_470cefcc590959 48-49
+  s_c7d63f603cc3fb::t_e0dc60fe05b737 13-15
+  s_c7d63f603cc3fb::t_f71fd2127d65dd 20-22,31-33
+  s_c7d63f603cc3fb::t_6d7cea1f77870d 41-43,45-47
+  s_c7d63f603cc3fb::t_67bc0c23aabbaf 50-52
+  s_c7d63f603cc3fb::t_2e03e742503dda 1-12,23-30,44,53-67
+train/sft/model.py
+  s_c7d63f603cc3fb::t_78f038d7ce544b 1-60
+  s_c7d63f603cc3fb::t_5e5b5a213dab07 61-63
+  s_c7d63f603cc3fb::t_723228e196791a 64-66
+tests/test_train_model.py
+  s_c7d63f603cc3fb::t_4f849c4a523710 3-43
+  s_c7d63f603cc3fb::t_581a3157b647d8 1-2
+tests/test_train_schedule.py
+  s_c7d63f603cc3fb::t_68a9354b32b685 15-23
+  s_c7d63f603cc3fb::t_098357f8c06a7a 1-14
+tests/test_train_reward.py
+  s_c7d63f603cc3fb::t_2503465d4653e9 4
+  s_c7d63f603cc3fb::t_e44bdb2464c5de 1-3
+  s_c7d63f603cc3fb::t_66d54cc412c8c0 5-7
+  s_c7d63f603cc3fb::t_aa646b7ad07a36 8-19
+train/sft/plugin.py
+  s_c7d63f603cc3fb::t_f5708990b5a495 124-129
+  s_c7d63f603cc3fb::t_6e45cddd1f5e3b 107
+  s_c7d63f603cc3fb::t_b9eafbd48ac493 27
+  s_c7d63f603cc3fb::t_b079cc68d795b7 9-24,30-32
+  s_c7d63f603cc3fb::t_eb80e4db45c559 84-90
+  s_c7d63f603cc3fb::t_13b3a14be1cf85 134
+  s_c7d63f603cc3fb::t_488a86d5622ff6 91-92
+  s_c7d63f603cc3fb::t_a3652470fcbdab 1-8,25-26,28-29,33-83,93-106,108-123,130-133,135-150
+tests/test_train_deferred_log.py
+  s_c7d63f603cc3fb::t_633af89708ab76 5-7,9,15,17-21,23-24,26-28,30-33,51-56
+  s_c7d63f603cc3fb::t_4dba2f04ad28b1 1-4,8,10-14,16,22,25,29,34-50
+train/sft/upload.py
+  s_c7d63f603cc3fb::t_5cdbbc4bd200b7 1-40
+  s_c7d63f603cc3fb::t_47cb3a157b60a7 41-43
+  s_c7d63f603cc3fb::t_db3478b4736021 44-48
+train/sft/upload_osc.sh
+  s_c7d63f603cc3fb::t_6666001179c200 1-23
+train/sft/schedule.py
+  s_c7d63f603cc3fb::t_f10f4c5977e057 1,3-5,7-15,19-31
+  s_c7d63f603cc3fb::t_57fb7d0bb96184 2,6,16-18
+train/sft/deferred_log.py
+  s_c7d63f603cc3fb::t_9d8a6c8ad7f937 1-5,8-11,13-24,29,36-37,39,47-48,53-61
+  s_c7d63f603cc3fb::t_b8ec99e84875d9 6-7,12,25-28,30-35,38,40-46,49-52
+pyproject.toml
+  s_c7d63f603cc3fb::t_1fa179ff613a96 29
+scripts/prepare_sft_data_osc.sh
+  s_c7d63f603cc3fb::t_1224b36b0162d8 1-23
+tests/test_train_data.py
+  s_c7d63f603cc3fb::t_8b582b8b05e27d 1-50
+tests/test_train_raft.py
+  s_c7d63f603cc3fb::t_97494f84897788 1-45
+tests/test_train_upload.py
+  s_c7d63f603cc3fb::t_99f16116e93b13 1-27
+train/sft/__init__.py
+  s_c7d63f603cc3fb::t_86d54d7721d7d0 1
+train/sft/data.py
+  s_c7d63f603cc3fb::t_3371498fd335e3 1-93
+train/sft/raft.py
+  s_c7d63f603cc3fb::t_c35a4c0313100f 1-45
+train/sft/sft_main.py
+  s_c7d63f603cc3fb::t_2fee2ee6b3f40a 1-20
+train/sft/soff_osc.sh
+  s_c7d63f603cc3fb::t_a561ad6746d924 1-51
+train/sft/son_osc.sh
+  s_c7d63f603cc3fb::t_a856866127f7ee 1-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b20c66843b550b06401b09c501fc63ac58a12592",
+  "prompts": {},
+  "sessions": {
+    "s_c7d63f603cc3fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2168bc-c818-45ec-bfae-b5057d9326dd",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
