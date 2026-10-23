@@ -1,0 +1,21 @@
+tests/test_train_evaluate.py
+  s_9cc36e62530e6f::t_954b60c601648c 41-50
+train/sft/evaluate.py
+  s_9cc36e62530e6f::t_89fbb227bb97b0 28,90-104,120-137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ae386b3b6dc403a2dfe7a9ceabc8bc97ff5247b7",
+  "prompts": {},
+  "sessions": {
+    "s_9cc36e62530e6f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b4130e92-f70f-47e8-af1e-3a9046c0d1d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
