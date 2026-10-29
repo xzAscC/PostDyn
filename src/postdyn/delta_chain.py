@@ -150,6 +150,25 @@ def _read_delta(path: Path) -> Bits:
             for k in planes if k.endswith(".hi")}
 
 
+def _replace_final(out: Path, tmp: Path) -> None:
+    """Swap tmp in as final/ with two renames, so a kill leaves a complete final/ or final.old/."""
+    final, old = out / "final", out / "final.old"
+    if final.is_dir():
+        final.rename(old)
+    tmp.rename(final)
+    shutil.rmtree(old, ignore_errors=True)
+
+
+def _repair_final(out: Path) -> None:
+    """Finish or undo a swap of final/ that a kill interrupted."""
+    final, old = out / "final", out / "final.old"
+    if old.is_dir():
+        if final.is_dir():
+            shutil.rmtree(old)  # the swap was done; only the old copy was left, maybe half deleted
+        else:
+            old.rename(final)  # killed between the renames: the old final/ is complete
+
+
 def build(
     exports: list[tuple[int, Path]],
     base_dir: str | Path,
@@ -173,6 +192,7 @@ def build(
     out = Path(out)
     (out / "deltas").mkdir(parents=True, exist_ok=True)
     shutil.copy(__file__, out / "delta_chain.py")
+    _repair_final(out)
     mpath = out / "manifest.json"
     base = {"repo": base_repo, "revision": base_revision, "files": _base_files(base_dir)}
     m = json.loads(mpath.read_text()) if mpath.exists() else {"format": FORMAT, "base": base, "steps": []}
@@ -215,9 +235,9 @@ def build(
     tmp = out / "final.tmp"
     shutil.rmtree(tmp, ignore_errors=True)
     write_checkpoint(prev, tmp, config_dir)
-    shutil.rmtree(out / "final", ignore_errors=True)
-    tmp.rename(out / "final")
-    m["final"] = {"step": done, "dir": "final", "bf16_sha256": model_sha(prev)}
+    files = sorted(f.name for f in tmp.iterdir())
+    _replace_final(out, tmp)
+    m["final"] = {"step": done, "dir": "final", "bf16_sha256": model_sha(prev), "files": files}
     atomic_write_json(mpath, m)
 
 
@@ -229,7 +249,8 @@ def upload(chain: str | Path, repo_id: str, private: bool = True, api: Any = Non
     if not m["steps"] or not final or final["step"] != m["steps"][-1]["step"]:
         raise ValueError(f"{chain}: final/ does not hold the last step; rerun build to finish the chain")
     parts = [p["file"] for e in m["steps"] for p in e["parts"]]
-    missing = [f for f in ["delta_chain.py", f"{final['dir']}/config.json", *parts] if not (chain / f).is_file()]
+    named = ["delta_chain.py", *(f"{final['dir']}/{n}" for n in final["files"]), *parts]
+    missing = [f for f in named if not (chain / f).is_file()]
     if missing:
         raise ValueError(f"{chain} is missing {len(missing)} files, e.g. {missing[0]}")
     if api is None:
@@ -312,7 +333,7 @@ def restore(a: argparse.Namespace) -> None:
             raise ValueError("final/ does not hold the last step of the chain; rerun build to finish it")
         print(f"all {len(m['steps'])} steps and final/ match", flush=True)
     if a.out:
-        if not final:
+        if not final or not (chain / final["dir"]).is_dir():
             raise ValueError("the chain has no final/ to take the config and tokenizer from; rerun build")
         write_checkpoint(bits, a.out, chain / final["dir"])
         print(f"wrote step {step} to {a.out}", flush=True)

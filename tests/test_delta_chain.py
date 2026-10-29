@@ -327,3 +327,47 @@ def test_rebuild_downloads_the_pinned_base_revision(run: dict, monkeypatch) -> N
     steps = [s for s, _ in dc.rebuild(run["out"], verify=True)]
     assert steps == STEPS
     assert calls == [("org/base", REV, ["model.safetensors"])]
+
+
+def test_a_kill_between_the_final_swaps_is_repaired(run: dict, monkeypatch) -> None:
+    import shutil
+
+    _build(run, max_steps=2)
+    renames = []
+    real_rename = Path.rename
+
+    def killed_on_second_rename(self, target):
+        renames.append(self.name)
+        if len(renames) == 2:  # final -> final.old done, final.tmp -> final not yet
+            raise RuntimeError("job killed")
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", killed_on_second_rename)
+    with pytest.raises(RuntimeError):
+        _build(run)
+    monkeypatch.undo()
+    assert not (run["out"] / "final").exists() and (run["out"] / "final.old").is_dir()
+    for step in STEPS:
+        shutil.rmtree(run["exports"] / f"step_{step}")
+    _build(run)  # puts the old final/ back, then rewrites it from the chain
+    m = json.loads((run["out"] / "manifest.json").read_text())
+    assert m["final"]["step"] == 5 and not (run["out"] / "final.old").exists()
+    assert (run["out"] / "final" / "tokenizer.json").exists()
+    dc.upload(run["out"], "user/run-bf16delta", api=FakeApi(_base_sha(run)))
+
+
+def test_a_half_deleted_old_final_is_dropped(run: dict) -> None:
+    _build(run)
+    old = run["out"] / "final.old"  # killed while deleting the replaced final/
+    old.mkdir()
+    (old / "config.json").write_text("{}")
+    _build(run)
+    assert not old.exists()
+    assert (run["out"] / "final" / "tokenizer.json").exists()
+
+
+def test_upload_refuses_a_final_with_missing_files(run: dict) -> None:
+    _build(run)
+    (run["out"] / "final" / "tokenizer.json").unlink()
+    with pytest.raises(ValueError, match="missing"):
+        dc.upload(run["out"], "user/run-bf16delta", api=FakeApi(_base_sha(run)))
