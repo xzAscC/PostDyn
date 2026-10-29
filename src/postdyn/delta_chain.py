@@ -163,8 +163,8 @@ def build(
 
     base_dir must hold the files of base_repo at base_revision, a commit SHA: restoring
     downloads those and checks them against the SHA-256s recorded here. Resuming rebuilds the
-    last step from the chain itself, so exports already in the chain may be deleted. final/ is
-    the last step; while it is rewritten the manifest has no "final" entry and upload refuses.
+    last step from the chain itself, so exports already in the chain may be deleted. final/
+    holds the last step once the build finishes; upload refuses a chain whose final/ lags.
     """
     from postdyn.persistence import atomic_write_json  # only building needs the package
 
@@ -172,18 +172,20 @@ def build(
         raise ValueError(f"base revision must be a commit SHA, not {base_revision!r}: a branch moves")
     out = Path(out)
     (out / "deltas").mkdir(parents=True, exist_ok=True)
+    shutil.copy(__file__, out / "delta_chain.py")
     mpath = out / "manifest.json"
     base = {"repo": base_repo, "revision": base_revision, "files": _base_files(base_dir)}
     m = json.loads(mpath.read_text()) if mpath.exists() else {"format": FORMAT, "base": base, "steps": []}
     if m["base"] != base:
         raise ValueError(f"{out} was built from another base")
     done = m["steps"][-1]["step"] if m["steps"] else 0
+    folders = dict(exports)
+    if done in folders and model_sha(read_bits(folders[done])) != m["steps"][-1]["bf16_sha256"]:
+        raise ValueError(f"the export of step {done} differs from the chain: exports of another run?")
     new = [(s, f) for s, f in exports[:max_steps] if s > done]
-    if not new and "final" in m:
+    if not new and m.get("final", {}).get("step") == done:
         print(f"nothing to add after step {done}", flush=True)
         return
-    m.pop("final", None)
-    atomic_write_json(mpath, m)
     if done:
         for _, prev in rebuild(out, base_dir, stop=done):  # checks the rebuilt step's SHA-256
             pass
@@ -206,9 +208,10 @@ def build(
         prev, done = cur, step
     if not m["steps"]:
         raise ValueError("no finished exports to build from")
-    config_dir = new[-1][1] if new else dict(exports).get(done)
-    if config_dir is None:
-        raise ValueError(f"writing final/ needs the config of step {done}, but its export is gone")
+    # config and tokenizer: from the newest export, else from the old final/ (same run)
+    config_dir = new[-1][1] if new else folders.get(done, out / "final")
+    if not Path(config_dir).is_dir():
+        raise ValueError(f"writing final/ needs the config of step {done}, but neither its export nor final/ exists")
     tmp = out / "final.tmp"
     shutil.rmtree(tmp, ignore_errors=True)
     write_checkpoint(prev, tmp, config_dir)
@@ -216,15 +219,19 @@ def build(
     tmp.rename(out / "final")
     m["final"] = {"step": done, "dir": "final", "bf16_sha256": model_sha(prev)}
     atomic_write_json(mpath, m)
-    shutil.copy(__file__, out / "delta_chain.py")
 
 
 def upload(chain: str | Path, repo_id: str, private: bool = True, api: Any = None) -> None:
     """Upload the files the manifest names, after checking that the Hub still serves the base."""
     chain = Path(chain)
     m = json.loads((chain / "manifest.json").read_text())
-    if "final" not in m:
-        raise ValueError(f"{chain} has no final/ yet; rerun build to finish it")
+    final = m.get("final")
+    if not m["steps"] or not final or final["step"] != m["steps"][-1]["step"]:
+        raise ValueError(f"{chain}: final/ does not hold the last step; rerun build to finish the chain")
+    parts = [p["file"] for e in m["steps"] for p in e["parts"]]
+    missing = [f for f in ["delta_chain.py", f"{final['dir']}/config.json", *parts] if not (chain / f).is_file()]
+    if missing:
+        raise ValueError(f"{chain} is missing {len(missing)} files, e.g. {missing[0]}")
     if api is None:
         from huggingface_hub import HfApi
 
@@ -237,8 +244,7 @@ def upload(chain: str | Path, repo_id: str, private: bool = True, api: Any = Non
     api.create_repo(repo_id, private=private, exist_ok=True)
     if private and not api.repo_info(repo_id).private:  # exist_ok keeps an existing repo's visibility
         raise ValueError(f"{repo_id} already exists and is public")
-    files = ["manifest.json", "delta_chain.py", f"{m['final']['dir']}/*"]
-    files += [p["file"] for e in m["steps"] for p in e["parts"]]
+    files = ["manifest.json", "delta_chain.py", f"{final['dir']}/*", *parts]
     api.upload_folder(repo_id=repo_id, folder_path=str(chain), allow_patterns=files,
                       commit_message="BF16 XOR delta chain")
 
@@ -300,13 +306,15 @@ def restore(a: argparse.Namespace) -> None:
         raise ValueError(f"step {a.step} is not in the chain")
     if missing := set(a.compare_steps) - compared:
         raise ValueError(f"steps {sorted(missing)} were not rebuilt, so not compared")
+    final = m.get("final")
     if a.verify and a.step is None:
-        final = m["final"]
-        if step != final["step"] or model_sha(read_bits(chain / final["dir"])) != final["bf16_sha256"]:
-            raise ValueError("final/ does not match the last step of the chain")
+        if not final or step != final["step"] or model_sha(read_bits(chain / final["dir"])) != final["bf16_sha256"]:
+            raise ValueError("final/ does not hold the last step of the chain; rerun build to finish it")
         print(f"all {len(m['steps'])} steps and final/ match", flush=True)
     if a.out:
-        write_checkpoint(bits, a.out, chain / m["final"]["dir"])
+        if not final:
+            raise ValueError("the chain has no final/ to take the config and tokenizer from; rerun build")
+        write_checkpoint(bits, a.out, chain / final["dir"])
         print(f"wrote step {step} to {a.out}", flush=True)
 
 

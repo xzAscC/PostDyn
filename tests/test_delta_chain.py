@@ -207,12 +207,58 @@ def test_upload_refuses_an_unfinished_chain(run: dict, monkeypatch) -> None:
 
     monkeypatch.setattr(dc, "write_checkpoint", killed)
     with pytest.raises(RuntimeError):
-        _build(run)
+        _build(run)  # steps 3 and 5 are in the chain, final/ still holds step 2
     with pytest.raises(ValueError, match="final"):
         dc.upload(run["out"], "user/run-bf16delta", api=FakeApi(_base_sha(run)))
     monkeypatch.undo()
-    _build(run)  # a rerun finishes the chain
+    for step in STEPS:  # a rerun finishes the chain even after every export is gone
+        import shutil
+
+        shutil.rmtree(run["exports"] / f"step_{step}")
+    _build(run)
     assert json.loads((run["out"] / "manifest.json").read_text())["final"]["step"] == 5
+    dc.upload(run["out"], "user/run-bf16delta", api=FakeApi(_base_sha(run)))
+
+
+def test_a_failed_resume_keeps_the_chain_restorable(run: dict, tmp_path: Path) -> None:
+    _build(run, max_steps=2)
+    folder = run["exports"] / "step_3" / "huggingface"
+    tensors = load_file(folder / "model.safetensors")
+    tensors["norm.weight"] = tensors["norm.weight"][None, :].repeat(3, 1)
+    save_file(tensors, folder / "model.safetensors")
+    with pytest.raises(ValueError, match="shape"):
+        _build(run)
+    out = tmp_path / "step1"
+    dc.main(["restore", str(run["out"]), "--base-dir", str(run["base"]), "--step", "1", "--out", str(out)])
+    dc.main(["restore", str(run["out"]), "--base-dir", str(run["base"]), "--verify"])
+    assert all(torch.equal(t.view(torch.int16), run["expected"][1][k])
+               for k, t in load_file(out / "model.safetensors").items())
+
+
+def test_build_restores_a_missing_restore_script(run: dict) -> None:
+    _build(run)
+    (run["out"] / "delta_chain.py").unlink()  # e.g. killed right after the manifest was written
+    _build(run)
+    assert (run["out"] / "delta_chain.py").exists()
+
+
+def test_upload_refuses_a_chain_with_missing_files(run: dict) -> None:
+    _build(run)
+    sorted((run["out"] / "deltas").iterdir())[0].unlink()
+    api = FakeApi(_base_sha(run))
+    with pytest.raises(ValueError, match="missing"):
+        dc.upload(run["out"], "user/run-bf16delta", api=api)
+    assert api.calls == []
+
+
+def test_resume_rejects_the_exports_of_another_run(run: dict) -> None:
+    _build(run, max_steps=2)
+    folder = run["exports"] / "step_2" / "huggingface"  # now a different run's step 2
+    tensors = load_file(folder / "model.safetensors")
+    tensors["norm.weight"] = tensors["norm.weight"] + 1
+    save_file(tensors, folder / "model.safetensors")
+    with pytest.raises(ValueError, match="another run"):
+        _build(run)
 
 
 def test_build_rejects_a_branch_name_as_base_revision(run: dict) -> None:
