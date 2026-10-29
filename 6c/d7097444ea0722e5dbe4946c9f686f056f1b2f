@@ -1,0 +1,34 @@
+src/postdyn/delta_chain.py
+  s_b49e74a8d23117::t_6bf74e55edf776 291,297,301-302
+  s_b49e74a8d23117::t_a8e223249a8dc6 253-254,260
+  s_b49e74a8d23117::t_03d6f65acde6e0 6-7
+  s_b49e74a8d23117::t_747a171eb74a08 30
+  s_b49e74a8d23117::t_b1adcab3692a2d 277
+  s_b49e74a8d23117::t_e0a95000ef30e7 190-191
+  s_b49e74a8d23117::t_c363fdb871979c 87
+  s_b49e74a8d23117::t_b53c3faec6e1fb 46
+  s_b49e74a8d23117::t_4c3bd0b1e873a2 54-55
+  s_b49e74a8d23117::t_77dbaf6a1eed7a 209-214,216,223-227,232-236,238-243
+  s_b49e74a8d23117::t_3281710b8f1992 164-167,171-172,181-189,192,194-195
+tests/test_delta_chain.py
+  s_b49e74a8d23117::t_97d36b3afe80ac 223
+  s_b49e74a8d23117::t_738858146275a2 220-222
+  s_b49e74a8d23117::t_7577a7d4cd0147 224-226
+  s_b49e74a8d23117::t_fe21c7fea8640d 7,16,56,124,152,154-161,170-174,176-177,182-219,227-269,283
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6cd7097444ea0722e5dbe4946c9f686f056f1b2f",
+  "prompts": {},
+  "sessions": {
+    "s_b49e74a8d23117": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2c1a5e3d-5460-451f-9a7a-264afc8e1630",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
