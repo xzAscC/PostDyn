@@ -3,7 +3,8 @@
 A chain stores the BF16 weights of each saved step as the XOR of their raw bits with the
 previous step's bits, starting from the public base model. XOR on bit patterns, unlike float
 subtraction, gives every step back bit for bit: a ^ (a ^ b) == b. FP32 exports are rounded to
-BF16 (round to nearest even, the cast of the training forward pass). Adjacent steps differ in a
+BF16 (round to nearest even, the cast of the training forward pass): the chain is lossless for
+the BF16 weights only, so keep FP32 copies elsewhere if their low bits matter. Adjacent steps differ in a
 few percent of their BF16 values, so the zstd-compressed deltas are small: 2.4-4.1 bytes per
 parameter for the 75 saved steps of a 1.7B SFT run, against 150 for full BF16 copies.
 
@@ -26,6 +27,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 from collections.abc import Iterable, Iterator
@@ -41,7 +43,7 @@ from safetensors.numpy import save_file as save_planes
 
 FORMAT = "postdyn-bf16-xor-chain/1"
 EXPORT_DONE = "DONE"  # marker the trainer writes into step_<k>/ once an export is complete
-PART_BYTES = 4 << 30  # BF16 bytes per delta part file; bounds memory while restoring
+PART_BYTES = 4 << 30  # BF16 bytes per delta part file; restoring holds about 3 parts at once
 
 Bits = dict[str, np.ndarray]  # tensor name -> raw BF16 bits as uint16
 
@@ -49,7 +51,8 @@ Bits = dict[str, np.ndarray]  # tensor name -> raw BF16 bits as uint16
 def find_exports(export_dirs: Iterable[str | Path]) -> list[tuple[int, Path]]:
     """Finished exports ``step_<k>/huggingface`` of one run, in step order.
 
-    A step found in several directories is taken from the first one.
+    A step found in several directories is taken from the first one. This is the layout that
+    train/sft/schedule.py writes; it is repeated here so that restoring needs no training code.
     """
     found: dict[int, Path] = {}
     for root in map(Path, export_dirs):
@@ -81,7 +84,7 @@ def model_sha(bits: Bits) -> str:
     h = hashlib.sha256()
     for k in sorted(bits):
         h.update(k.encode())
-        h.update(np.ascontiguousarray(bits[k]).tobytes())
+        h.update(np.ascontiguousarray(bits[k]))  # the buffer itself, no copy
     return h.hexdigest()
 
 
@@ -158,11 +161,15 @@ def build(
 ) -> None:
     """Write the chain of exports into out; resume after the last step already in its manifest.
 
-    base_dir must hold the files of base_repo at base_revision: restoring downloads those and
-    checks them against the SHA-256s recorded here. final/ is the last step built.
+    base_dir must hold the files of base_repo at base_revision, a commit SHA: restoring
+    downloads those and checks them against the SHA-256s recorded here. Resuming rebuilds the
+    last step from the chain itself, so exports already in the chain may be deleted. final/ is
+    the last step; while it is rewritten the manifest has no "final" entry and upload refuses.
     """
     from postdyn.persistence import atomic_write_json  # only building needs the package
 
+    if not re.fullmatch(r"[0-9a-f]{40}", base_revision):
+        raise ValueError(f"base revision must be a commit SHA, not {base_revision!r}: a branch moves")
     out = Path(out)
     (out / "deltas").mkdir(parents=True, exist_ok=True)
     mpath = out / "manifest.json"
@@ -170,18 +177,22 @@ def build(
     m = json.loads(mpath.read_text()) if mpath.exists() else {"format": FORMAT, "base": base, "steps": []}
     if m["base"] != base:
         raise ValueError(f"{out} was built from another base")
-    exports = exports[:max_steps]
-    folders = dict(exports)
     done = m["steps"][-1]["step"] if m["steps"] else 0
-    prev = read_bits(folders[done]) if done else read_bits(base_dir)
-    if done and model_sha(prev) != m["steps"][-1]["bf16_sha256"]:
-        raise ValueError(f"the export of step {done} changed since it was added to the chain")
-    for step, folder in exports:
-        if step <= done:
-            continue
+    new = [(s, f) for s, f in exports[:max_steps] if s > done]
+    if not new and "final" in m:
+        print(f"nothing to add after step {done}", flush=True)
+        return
+    m.pop("final", None)
+    atomic_write_json(mpath, m)
+    if done:
+        for _, prev in rebuild(out, base_dir, stop=done):  # checks the rebuilt step's SHA-256
+            pass
+    else:
+        prev = read_bits(base_dir)
+    for step, folder in new:
         cur = read_bits(folder)
-        if cur.keys() != prev.keys():
-            raise ValueError(f"step {step}: tensor names differ from the previous step")
+        if cur.keys() != prev.keys() or any(cur[k].shape != prev[k].shape for k in cur):
+            raise ValueError(f"step {step}: tensor names or shapes differ from the previous step")
         parts, changed = [], 0
         for j, names in enumerate(_parts(cur, part_bytes)):
             path = out / "deltas" / f"step_{step:05d}-part{j:02d}.safetensors.zst"
@@ -195,20 +206,41 @@ def build(
         prev, done = cur, step
     if not m["steps"]:
         raise ValueError("no finished exports to build from")
+    config_dir = new[-1][1] if new else dict(exports).get(done)
+    if config_dir is None:
+        raise ValueError(f"writing final/ needs the config of step {done}, but its export is gone")
+    tmp = out / "final.tmp"
+    shutil.rmtree(tmp, ignore_errors=True)
+    write_checkpoint(prev, tmp, config_dir)
     shutil.rmtree(out / "final", ignore_errors=True)
-    write_checkpoint(prev, out / "final", folders[done])
+    tmp.rename(out / "final")
     m["final"] = {"step": done, "dir": "final", "bf16_sha256": model_sha(prev)}
     atomic_write_json(mpath, m)
     shutil.copy(__file__, out / "delta_chain.py")
 
 
 def upload(chain: str | Path, repo_id: str, private: bool = True, api: Any = None) -> None:
+    """Upload the files the manifest names, after checking that the Hub still serves the base."""
+    chain = Path(chain)
+    m = json.loads((chain / "manifest.json").read_text())
+    if "final" not in m:
+        raise ValueError(f"{chain} has no final/ yet; rerun build to finish it")
     if api is None:
         from huggingface_hub import HfApi
 
         api = HfApi()
+    b = m["base"]
+    info = api.model_info(b["repo"], revision=b["revision"], files_metadata=True)
+    hub = {s.rfilename: s.lfs.sha256 for s in info.siblings if s.lfs is not None}
+    if info.sha != b["revision"] or any(hub.get(name) != sha for name, sha in b["files"].items()):
+        raise ValueError(f"the base differs from {b['repo']}@{b['revision']} on the Hub, so the chain could not be restored")
     api.create_repo(repo_id, private=private, exist_ok=True)
-    api.upload_folder(repo_id=repo_id, folder_path=str(chain), commit_message="BF16 XOR delta chain")
+    if private and not api.repo_info(repo_id).private:  # exist_ok keeps an existing repo's visibility
+        raise ValueError(f"{repo_id} already exists and is public")
+    files = ["manifest.json", "delta_chain.py", f"{m['final']['dir']}/*"]
+    files += [p["file"] for e in m["steps"] for p in e["parts"]]
+    api.upload_folder(repo_id=repo_id, folder_path=str(chain), allow_patterns=files,
+                      commit_message="BF16 XOR delta chain")
 
 
 def rebuild(
@@ -218,12 +250,14 @@ def rebuild(
 
     bits is updated in place, so copy it to keep a step. The base comes from base_dir or, by
     default, from the Hub at the pinned revision; its files must match the manifest. Every delta
-    file is checked against its SHA-256, and the rebuilt weights too with verify (always at stop).
+    file is checked against its SHA-256; the rebuilt weights are checked at every step with
+    verify, and always at the last step yielded.
     """
     chain = Path(chain)
     m = json.loads((chain / "manifest.json").read_text())
     if m.get("format") != FORMAT:
         raise ValueError(f"unknown chain format {m.get('format')!r}")
+    last = stop if stop is not None else (m["steps"][-1]["step"] if m["steps"] else None)
     b = m["base"]
     if base_dir is None:
         base_dir = snapshot_download(repo_id=b["repo"], revision=b["revision"], allow_patterns=list(b["files"]))
@@ -240,7 +274,7 @@ def rebuild(
                 raise ValueError(f"corrupt delta file {path}")
             for k, x in _read_delta(path).items():
                 bits[k] ^= x
-        if (verify or e["step"] == stop) and model_sha(bits) != e["bf16_sha256"]:
+        if (verify or e["step"] == last) and model_sha(bits) != e["bf16_sha256"]:
             raise ValueError(f"step {e['step']}: rebuilt weights do not match the manifest")
         yield e["step"], bits
         if e["step"] == stop:
@@ -254,15 +288,18 @@ def restore(a: argparse.Namespace) -> None:
     exports = dict(find_exports(a.export_dir))
     if missing := set(a.compare_steps) - exports.keys():
         raise ValueError(f"no finished export for steps {sorted(missing)}")
-    step, bits = None, {}
+    step, bits, compared = None, {}, set()
     for step, bits in rebuild(chain, a.base_dir, stop=a.step, verify=a.verify):
         if step in a.compare_steps:  # independent of the recorded hashes
             ref = read_bits(exports[step])
             if ref.keys() != bits.keys() or not all(np.array_equal(ref[k], bits[k]) for k in ref):
                 raise ValueError(f"step {step}: rebuilt weights differ from the export")
+            compared.add(step)
             print(f"step {step}: identical to its export", flush=True)
     if a.step is not None and step != a.step:
         raise ValueError(f"step {a.step} is not in the chain")
+    if missing := set(a.compare_steps) - compared:
+        raise ValueError(f"steps {sorted(missing)} were not rebuilt, so not compared")
     if a.verify and a.step is None:
         final = m["final"]
         if step != final["step"] or model_sha(read_bits(chain / final["dir"])) != final["bf16_sha256"]:
