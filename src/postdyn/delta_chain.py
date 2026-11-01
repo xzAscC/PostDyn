@@ -106,7 +106,7 @@ def write_checkpoint(bits: Bits, out: str | Path, config_dir: str | Path) -> Non
     out.mkdir(parents=True, exist_ok=True)
     for f in Path(config_dir).iterdir():
         if f.is_file() and f.suffix != ".safetensors" and not f.name.endswith(".index.json"):
-            shutil.copy(f, out / f.name)
+            shutil.copyfile(f, out / f.name)  # content only: a Hub cache may hold read-only files
     config = out / "config.json"
     if config.exists():  # an FP32 export's config says float32
         cfg = json.loads(config.read_text())
@@ -193,7 +193,7 @@ def build(
         raise ValueError(f"base revision must be a commit SHA, not {base_revision!r}: a branch moves")
     out = Path(out)
     (out / "deltas").mkdir(parents=True, exist_ok=True)
-    shutil.copy(__file__, out / "delta_chain.py")
+    shutil.copyfile(__file__, out / "delta_chain.py")
     _repair_final(out)
     mpath = out / "manifest.json"
     base = {"repo": base_repo, "revision": base_revision, "files": _base_files(base_dir)}

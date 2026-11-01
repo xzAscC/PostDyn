@@ -356,6 +356,19 @@ def test_restore_reads_a_chain_downloaded_from_the_hub(run: dict, tmp_path: Path
     assert all(torch.equal(tensors[k].view(torch.int16), v) for k, v in run["expected"][2].items())
 
 
+def test_restore_writes_from_a_read_only_snapshot(run: dict, tmp_path: Path) -> None:
+    _build(run)
+    snapshot = _as_hub_snapshot(run["out"], tmp_path / "hub")
+    for blob in (tmp_path / "hub" / "blobs").iterdir():
+        blob.chmod(0o444)  # shared Hub caches are often read-only
+    out = tmp_path / "step2"
+    args = ["restore", str(snapshot), "--base-dir", str(run["base"]), "--step", "2", "--out", str(out)]
+    dc.main(args)
+    dc.main(args)  # a second restore overwrites the first
+    assert json.loads((out / "config.json").read_text())["dtype"] == "bfloat16"
+    assert (out / "tokenizer.json").stat().st_mode & 0o200
+
+
 def test_a_kill_between_the_final_swaps_is_repaired(run: dict, monkeypatch) -> None:
     import shutil
 
