@@ -1,0 +1,21 @@
+src/postdyn/delta_chain.py
+  s_b49e74a8d23117::t_bd11f208063f31 147-149
+tests/test_delta_chain.py
+  s_b49e74a8d23117::t_4dd381bd871b83 332-358
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "83abc94a41f5b4c1944385c9ffbdb6d38b4a60f1",
+  "prompts": {},
+  "sessions": {
+    "s_b49e74a8d23117": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2c1a5e3d-5460-451f-9a7a-264afc8e1630",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
