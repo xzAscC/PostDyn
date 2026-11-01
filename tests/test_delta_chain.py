@@ -329,6 +329,33 @@ def test_rebuild_downloads_the_pinned_base_revision(run: dict, monkeypatch) -> N
     assert calls == [("org/base", REV, ["model.safetensors"])]
 
 
+def _as_hub_snapshot(chain: Path, root: Path) -> Path:
+    """Lay out a copy of chain like the Hub cache: every file is a symlink into blobs/."""
+    import shutil
+
+    blobs, snapshot = root / "blobs", root / "snapshots" / REV
+    blobs.mkdir(parents=True)
+    for i, f in enumerate(p for p in sorted(chain.rglob("*")) if p.is_file()):
+        link = snapshot / f.relative_to(chain)
+        link.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(f, blobs / str(i))
+        link.symlink_to(blobs / str(i))
+    return snapshot
+
+
+def test_restore_reads_a_chain_downloaded_from_the_hub(run: dict, tmp_path: Path) -> None:
+    _build(run)
+    snapshot = _as_hub_snapshot(run["out"], tmp_path / "hub")
+    assert all(p.is_symlink() for p in (snapshot / "deltas").iterdir())
+    assert all(_equal(bits, run["expected"][s]) for s, bits in dc.rebuild(snapshot, base_dir=run["base"], verify=True))
+    out = tmp_path / "step2"
+    dc.main(["restore", str(snapshot), "--base-dir", str(run["base"]), "--verify"])
+    dc.main(["restore", str(snapshot), "--base-dir", str(run["base"]), "--step", "2", "--out", str(out)])
+    assert not (out / "config.json").is_symlink() and not (out / "tokenizer.json").is_symlink()
+    tensors = load_file(out / "model.safetensors")
+    assert all(torch.equal(tensors[k].view(torch.int16), v) for k, v in run["expected"][2].items())
+
+
 def test_a_kill_between_the_final_swaps_is_repaired(run: dict, monkeypatch) -> None:
     import shutil
 

@@ -144,7 +144,9 @@ def _write_delta(prev: Bits, cur: Bits, names: list[str], path: Path) -> int:
 
 
 def _read_delta(path: Path) -> Bits:
-    raw = subprocess.run(["zstd", "-d", "-q", "-c", str(path)], stdout=subprocess.PIPE, check=True).stdout
+    # through stdin: zstd skips symbolic links, and every file of a Hub download is one
+    with open(path, "rb") as f:
+        raw = subprocess.run(["zstd", "-d", "-q", "-c"], stdin=f, stdout=subprocess.PIPE, check=True).stdout
     planes = load_planes(raw)
     return {k[:-3]: (planes[k].astype(np.uint16) << 8) | planes[k[:-3] + ".lo"]
             for k in planes if k.endswith(".hi")}
