@@ -54,6 +54,7 @@ class PassBlock:
 
 def test_steered_rows_start_at_the_last_prompt_token():
     positions = torch.tensor([0, 1, 2, 3, 4, 5])
+    # The last prompt row picks the first new token, so it is steered too.
     assert vllm_steering.steered_rows(positions, 3, 2).tolist() == [
         False, False, True, True, False, False,
     ]
@@ -69,6 +70,9 @@ def test_prefix_maps_move_only_rows_in_the_prefix_and_detach():
     prefix.set({0: gap, 1: gap}, {0: torch.zeros(2), 1: torch.zeros(2)}, 2, 2)
     # A prefill row and decode rows of two samples at different steps.
     out = blocks[0].forward(torch.tensor([1, 2, 3]), torch.zeros(3, 2, dtype=torch.bfloat16))
+    assert out[:, 0].tolist() == [1.0, 1.0, 0.0]
+    # Later layers of the same step reuse the rows found at the first layer.
+    out = blocks[1].forward(torch.tensor([1, 2, 3]), torch.zeros(3, 2, dtype=torch.bfloat16))
     assert out[:, 0].tolist() == [1.0, 1.0, 0.0]
     prefix.detach()
     assert blocks[0].forward == original

@@ -80,7 +80,7 @@ def test_reorder_map_moves_variance_to_the_matched_rank_only():
     c_post = torch.diag(torch.tensor([1.0, 9.0, 4.0], dtype=torch.float64))
     shift = spectrum.build_map("reorder", stats_of(c_base), stats_of(c_post), k=3)
     moved = spectrum.apply_map(torch.eye(3, dtype=torch.float64), shift, torch.zeros(3, dtype=torch.float64))
-    # The direction that has variance 1 in base has variance 9 afterwards: base's own values, moved.
+    # The direction that has variance 1 in base has variance 4 afterwards: base's own values, moved.
     assert moved.diagonal().square().numpy() == pytest.approx([1 / 9, 9 / 4, 4.0], abs=1e-9)
 
 

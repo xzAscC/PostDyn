@@ -116,7 +116,8 @@ def steered_rows(positions: torch.Tensor, prompt_tokens: int, steps: int) -> tor
     """Rows that make one of the first ``steps`` new tokens, for prefill and decode alike.
 
     A row's output at position p picks token p + 1, so the first new token comes from the last
-    prompt position. Positions are absolute: one prompt per generate call fixes ``prompt_tokens``.
+    prompt position (the user's choice: steer from the first generated token on). Positions are
+    absolute: one prompt per generate call fixes ``prompt_tokens``.
     """
     return (positions >= prompt_tokens - 1) & (positions < prompt_tokens - 1 + steps)
 
@@ -135,6 +136,9 @@ class PrefixMaps:
         self._means: dict[int, torch.Tensor] = {}
         self._prompt_tokens = 0
         self._steps = 0
+        self._first = min(layers)
+        self._rows = torch.zeros(0, dtype=torch.bool)
+        self._any = False
         for layer in layers:
             self._wrap(blocks[layer], layer)
 
@@ -143,8 +147,12 @@ class PrefixMaps:
 
         def forward(positions: torch.Tensor, hidden_states: torch.Tensor) -> torch.Tensor:
             out = original(positions, hidden_states)
-            rows = steered_rows(positions, self._prompt_tokens, self._steps)
-            if bool(rows.any()):
+            # Each step reaches the first layer first: one GPU sync per step, not per layer.
+            if layer == self._first:
+                self._rows = steered_rows(positions, self._prompt_tokens, self._steps)
+                self._any = bool(self._rows.any())
+            if self._any:
+                rows = self._rows
                 out[rows] = apply_map(out[rows], self._maps[layer], self._means[layer]).to(out.dtype)
             return out
 
@@ -158,7 +166,9 @@ class PrefixMaps:
         prompt_tokens: int,
         steps: int,
     ) -> None:
-        self._maps, self._means = maps, means
+        self._maps = maps
+        # Once per problem, onto the device of the maps.
+        self._means = {layer: means[layer].to(state.shift.device) for layer, state in maps.items()}
         self._prompt_tokens, self._steps = prompt_tokens, steps
 
     def detach(self) -> None:

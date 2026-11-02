@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from postdyn import spectrum
@@ -24,14 +25,16 @@ def test_common_ids_keep_the_fixed_order_and_need_every_run():
     assert run_spectrum.common_ids(["c", "b", "a"], rows, 1) == ["c"]
 
 
-def test_prefix_batches_weigh_each_answer_equally_and_skip_the_prompt():
+def test_prefix_batches_weigh_the_rows_that_pick_each_prefix_token():
     answers = [list(range(10, 30)), list(range(40, 50))]
     (ids, mask, weights), = run_spectrum.prefix_batches([1, 2], answers, 0.2, 8, 0)
     assert ids.shape == (2, 6)
     assert ids[0].tolist() == [1, 2, 10, 11, 12, 13]
     assert ids[1].tolist() == [1, 2, 40, 41, 0, 0]
     assert mask[1].tolist() == [1, 1, 1, 1, 0, 0]
-    assert weights[:, :2].sum().item() == 0.0
+    # Rows 1..4 pick tokens 10..13: the last prompt row is in, the last prefix row is out.
+    assert (weights[0] > 0).tolist() == [False, True, True, True, True, False]
+    assert (weights[1] > 0).tolist() == [False, True, True, False, False, False]
     assert weights.sum(1).tolist() == [1.0, 1.0]
 
 
@@ -43,7 +46,16 @@ def test_prefix_batches_split_and_skip_empty_answers():
 def test_select_ids_use_the_rate_over_all_samples():
     base = {"a": ["wrong"] * 3 + ["correct"], "b": ["correct"] * 4, "c": ["wrong"] * 4}
     post = {"a": ["correct"] * 4, "b": ["correct"] * 4, "c": ["wrong"] * 4, "d": ["correct"] * 4}
-    assert run_spectrum.select_ids(base, post, 0.25, 0.75) == ["a"]
+    assert run_spectrum.select_ids(base, post, 0.25, 0.75, {"a", "b", "c", "d"}) == ["a"]
+    # A problem without moments cannot be ablated, so it is never selected.
+    assert run_spectrum.select_ids(base, post, 0.25, 0.75, {"b", "c"}) == []
+
+
+def test_keep_knobs_refuses_to_resume_under_other_knobs(tmp_path):
+    run_spectrum.keep_knobs(tmp_path, {"k": {0: 32}, "fraction": 0.1})
+    run_spectrum.keep_knobs(tmp_path, {"k": {0: 32}, "fraction": 0.1})
+    with pytest.raises(ValueError, match="other knobs"):
+        run_spectrum.keep_knobs(tmp_path, {"k": {0: 128}, "fraction": 0.1})
 
 
 def test_steps_are_the_median_prefix_of_the_donor():
