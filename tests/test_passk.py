@@ -75,6 +75,20 @@ def test_extract_answer_ignores_answers_in_running_text():
         ("Answer: 3\nchecking\n\\boxed{5}", "5"),
         ("Answer: \\boxed{5}", "5"),
         ("put it in \\boxed{}\nAnswer: 5", "5"),
+        ("Answer:\n5", "5"),
+        ("Answer:\n$5$\n", "5"),
+        ("**Answer**: 5", "5"),
+        ("### Answer: 5", "5"),
+        ("answer: 5", "5"),
+        ("Answers: 2", "2"),
+        ("**Final answer: 2.", "2"),
+        ("Answer: 5 people", "5"),
+        ("Answer: 18.90 dollars", "18.90"),
+        ("Answer: 90°", "90^\\circ"),
+        ("Answer: $\\$36$", "\\$36"),
+        ("Answer: $-2$, $1$", "-2, 1"),
+        ("\\boxed{5}\n\nAnswer: The final answer is 5.", "5"),
+        ("\\boxed{5}\nAnswer: see the box above", "5"),
     ],
 )
 def test_extract_answer_handles_common_forms(text, expected):
@@ -82,7 +96,16 @@ def test_extract_answer_handles_common_forms(text, expected):
 
 
 @pytest.mark.parametrize(
-    "text", ["Answer:\n\n[", "Answer:\n\nLet me think again", "\\boxed{}", "\\boxed{  }"]
+    "text",
+    [
+        "Answer:\n\n[",
+        "Answer:\n\nLet me think again",
+        "Answer:\n3\nand then some more\n",
+        "\\boxed{}",
+        "\\boxed{  }",
+        "\\boxed{3}\nredo\n\\boxed{5",
+        "So,answer: 5",
+    ],
 )
 def test_extract_answer_finds_nothing_in_empty_forms(text):
     assert passk.extract_answer(text) is None
@@ -91,6 +114,24 @@ def test_extract_answer_finds_nothing_in_empty_forms(text):
 @pytest.mark.parametrize("prediction", ["5} but really 6", "3}", "{5"])
 def test_unbalanced_answers_never_verify(prediction):
     assert not passk._math_correct(prediction, prediction.strip("{}").split("}")[0])
+
+
+@pytest.mark.parametrize(
+    ("text", "gold", "outcome"),
+    [
+        ("Answer: $3$ or $5$", "3", "wrong"),
+        ("Answer: $x=3$ or $x=5$", "3", "wrong"),
+        ("Answer: 5 or 6", "5", "wrong"),
+        ("Answer: $-2$, $1$", "-2,1", "correct"),
+        ("Answer: $\\$36$", "\\$36", "correct"),
+        ("Answer: 5 people", "5", "correct"),
+        ("Answer: 18.90 dollars", "\\$18.90", "correct"),
+        ("Answer: 90°", "90^\\circ", "correct"),
+    ],
+)
+def test_answer_lines_score_like_boxes(text, gold, outcome):
+    sample = {"text": text, "finish_reason": "stop"}
+    assert passk.classify("math", sample, {"answer": gold}, "simple") == outcome
 
 
 def test_last_code_block_takes_the_final_block():
@@ -378,6 +419,15 @@ def test_compare_refuses_different_sampling(tmp_path, monkeypatch, fake_vllm):
     _scored_run(tmp_path / "a", monkeypatch)
     _scored_run(tmp_path / "b", monkeypatch, temperature=0.6)
     with pytest.raises(ValueError, match="temperature"):
+        run_passk.compare_runs(
+            Namespace(a=str(tmp_path / "a"), b=str(tmp_path / "b"), ks=[1], out=str(tmp_path / "c"))
+        )
+
+
+def test_compare_refuses_different_test_cases(tmp_path, monkeypatch, fake_vllm):
+    _scored_run(tmp_path / "a", monkeypatch, lcb_source="v5")
+    _scored_run(tmp_path / "b", monkeypatch, lcb_source="v6")
+    with pytest.raises(ValueError, match="lcb_source"):
         run_passk.compare_runs(
             Namespace(a=str(tmp_path / "a"), b=str(tmp_path / "b"), ks=[1], out=str(tmp_path / "c"))
         )

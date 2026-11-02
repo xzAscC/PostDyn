@@ -34,18 +34,9 @@ from postdyn.persistence import atomic_write_json  # noqa: E402
 KINDS = {"math500": "math", "livecodebench": "code"}
 STOP_TOKENS = ("<|endoftext|>", "<|im_end|>")
 # What must match to compare two runs; the model and the prompt may differ, that is the question.
-SAMPLING_KEYS = ("samples", "temperature", "top_p", "max_tokens", "limit")
+COMPARE_KEYS = ("samples", "temperature", "top_p", "max_tokens", "limit", "lcb_source")
 # chunk_problems is here because a finished chunk is found by its offset.
-RUN_KEYS = (
-    *SAMPLING_KEYS,
-    "model",
-    "tokenizer",
-    "prompt_format",
-    "tasks",
-    "chunk_problems",
-    "seed",
-    "lcb_source",
-)
+RUN_KEYS = (*COMPARE_KEYS, "model", "tokenizer", "prompt_format", "tasks", "chunk_problems", "seed")
 
 
 def log(out_dir: Path, message: str) -> None:
@@ -196,7 +187,7 @@ def score(args: argparse.Namespace) -> None:
 
 def compare_runs(args: argparse.Namespace) -> None:
     settings = [json.loads((Path(run) / "settings.json").read_text()) for run in (args.a, args.b)]
-    different = [key for key in SAMPLING_KEYS if settings[0][key] != settings[1][key]]
+    different = [key for key in COMPARE_KEYS if settings[0][key] != settings[1][key]]
     if different:
         raise ValueError(f"the runs differ in {different}, so they are not comparable")
     a, b = Path(args.a) / "scores", Path(args.b) / "scores"

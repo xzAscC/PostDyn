@@ -120,14 +120,9 @@ def _run_functional_case(
         "module = importlib.util.module_from_spec(spec)\n"
         "spec.loader.exec_module(module)\n"
         "name = sys.argv[2]\n"
-        # Solution first: star imports can put a same-named function in the module.
-        "function = None\n"
-        "if hasattr(module, 'Solution'):\n"
-        "    function = getattr(module.Solution(), name, None)\n"
-        "if function is None:\n"
-        "    function = getattr(module, name, None)\n"
-        "if function is None:\n"
-        "    raise AttributeError(name)\n"
+        # As LiveCodeBench does: with a Solution class, star imports must not stand in for it.
+        "owner = module.Solution() if hasattr(module, 'Solution') else module\n"
+        "function = getattr(owner, name)\n"
         "lines = sys.stdin.read().splitlines()\n"
         "args = []\n"
         "for line in lines:\n"
@@ -136,23 +131,28 @@ def _run_functional_case(
         "    except json.JSONDecodeError:\n"
         "        args.append(line)\n"
         "result = function(*args)\n"
-        "sys.stdout.write(json.dumps(result))\n",
+        # The result goes to a file: solutions print examples and debug lines, and the harness
+        # compares only the return value. tolist() turns numpy values into plain ones.
+        "with open(sys.argv[3], 'w') as stream:\n"
+        "    json.dump(result, stream, default=lambda value: value.tolist())\n",
         encoding="utf-8",
     )
+    result_path = Path(directory) / "functional_result.json"
+    result_path.unlink(missing_ok=True)
     value = case.get("input", case.get("args", ""))
     if isinstance(value, list):
         input_text = "\n".join(json.dumps(item) for item in value)
     else:
         input_text = str(value)
     expected = case.get("output", case.get("expected_output", ""))
-    ok, captured = _run_sandboxed(
-        [sys.executable, "-I", str(driver), str(script), func_name],
+    ok, _ = _run_sandboxed(
+        [sys.executable, "-I", str(driver), str(script), func_name, str(result_path)],
         directory,
         input_text,
     )
-    if not ok:
+    if not ok or not result_path.exists():
         return False
-    return _functional_outputs_equal(str(expected), captured)
+    return _functional_outputs_equal(str(expected), result_path.read_text(encoding="utf-8"))
 
 
 def _functional_outputs_equal(expected: str, captured: str) -> bool:
@@ -196,7 +196,6 @@ def _run_sandboxed(command: list[str], directory: str, stdin: str) -> tuple[bool
     stderr_thread: threading.Thread | None = None
     try:
         popen_kwargs: dict[str, Any] = {
-            "stdin": subprocess.PIPE,
             "stdout": subprocess.PIPE,
             "stderr": subprocess.PIPE,
             "cwd": directory,
@@ -211,7 +210,12 @@ def _run_sandboxed(command: list[str], directory: str, stdin: str) -> tuple[bool
         preexec = _preexec_fn()
         if preexec is not None:
             popen_kwargs["preexec_fn"] = preexec
-        process = subprocess.Popen(command, **popen_kwargs)
+        # From a file, not a pipe: LiveCodeBench inputs reach 4 MB, and writing that to a pipe
+        # blocks forever on a solution that never reads it and fails on one that exits early.
+        stdin_path = Path(directory) / "stdin.txt"
+        stdin_path.write_text(stdin, encoding="utf-8")
+        with stdin_path.open("rb") as stdin_file:
+            process = subprocess.Popen(command, stdin=stdin_file, **popen_kwargs)
         stdout_chunks: list[bytes] = []
         stderr_chunks: list[bytes] = []
         stdout_thread = threading.Thread(
@@ -222,9 +226,6 @@ def _run_sandboxed(command: list[str], directory: str, stdin: str) -> tuple[bool
         )
         stdout_thread.start()
         stderr_thread.start()
-        if process.stdin is not None:
-            process.stdin.write(stdin.encode())
-            process.stdin.close()
         process.wait(timeout=SANDBOX_SECONDS)
         # A background child would hold the pipes open and stall the joins below.
         _kill_process_group(process.pid)
@@ -246,7 +247,7 @@ def _run_sandboxed(command: list[str], directory: str, stdin: str) -> tuple[bool
     return True, b"".join(stdout_chunks).decode(errors="replace")
 
 
-def _read_capped(stream: Any, chunks: list[bytes], cap: int = 1_048_576) -> None:
+def _read_capped(stream: Any, chunks: list[bytes], cap: int = 8 * 1_048_576) -> None:
     captured = 0
     while True:
         chunk = stream.read(65_536)

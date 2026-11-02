@@ -51,8 +51,15 @@ LCB_PREAMBLE = (
     "import operator\nimport io\nimport sys\nimport json\nsys.setrecursionlimit(50000)\n"
 )
 
-ANSWER_LINE = re.compile(r"^[ \t]*\**Answer:\**[ \t]*(\S.*?)[ \t]*$", re.M)
-MATH_SPAN = re.compile(r"\$([^$]+)\$")
+# "Answer: 5", "**Answer**: 5", "### Final answer: 5", "Answers: 5", as the base writes them.
+ANSWER_LINE = re.compile(
+    r"^[ \t#>*]*(?:final )?answers?\**[ \t]*:\**[ \t]*(.*)$", re.M | re.I
+)
+# $...$ that leaves an escaped dollar sign inside alone: $\$36$ is 36 dollars.
+MATH_SPAN = re.compile(r"(?<!\\)\$((?:\\.|[^$\\])+)\$")
+# "5 people" as \boxed{5 \text{ people}} passes; "5 or 6" must stay as it is and fail.
+TRAILING_WORDS = re.compile(r"(?<=[\d}])\s+(?!(?:or|and)\b)[A-Za-z][A-Za-z ]*$")
+WORD = re.compile(r"(?<![\\A-Za-z])[A-Za-z]{2,}")
 CODE_BLOCK = re.compile(r"```[\w+-]*[ \t]*\n(.*?)```", re.S)
 
 
@@ -73,7 +80,10 @@ def final_response(text: str) -> str:
 
 
 def _last_boxed(text: str) -> tuple[int, str] | None:
-    """Where the last non-empty ``\\boxed{}`` starts, and what it holds."""
+    """Where the last non-empty ``\\boxed{}`` starts, and what it holds.
+
+    A box left open counts as the model's last word, so an earlier box does not stand in for it.
+    """
     end = len(text)
     while (start := text.rfind("\\boxed{", 0, end)) >= 0:
         begin = start + len("\\boxed{")
@@ -84,20 +94,41 @@ def _last_boxed(text: str) -> tuple[int, str] | None:
                 if content := text[begin:position].strip():
                     return start, content
                 break
+        else:
+            return None
         end = start
     return None
 
 
+def _clean_line(value: str) -> str:
+    """The value of an ``Answer:`` line, without Markdown, dollar signs or trailing units."""
+    spans = MATH_SPAN.findall(value)
+    if spans:
+        # "$-2$, $1$" is a list of values; "$3$ or $5$" becomes one too, and then fails.
+        value = ", ".join(spans)
+    value = value.replace("°", "^\\circ").strip("* ").rstrip(" .").strip("*$ ")
+    return TRAILING_WORDS.sub("", value)
+
+
 def _last_answer_line(text: str) -> tuple[int, str] | None:
-    """Where the last ``Answer:`` line starts, and its value without Markdown or trailing words."""
+    """Where the last usable ``Answer:`` line starts, and its value.
+
+    The prompt asks for the answer "on its own line after Answer:", so the value may sit on the
+    next line if that ends the response. A sentence is not a value.
+    """
     match = None
     for match in ANSWER_LINE.finditer(text):
         pass
     if match is None:
         return None
-    span = MATH_SPAN.search(match.group(1))
-    value = (span.group(1) if span else match.group(1)).strip("* ").rstrip(" .").strip("*$ ")
-    return (match.start(), value) if value else None
+    value = match.group(1)
+    if not value.strip("* \t"):
+        following = text[match.end() :].strip().splitlines()
+        value = following[0] if len(following) == 1 else ""
+    value = _clean_line(value)
+    if not re.search(r"\w", value) or len(WORD.findall(value)) >= 3:
+        return None
+    return match.start(), value
 
 
 def extract_answer(text: str) -> str | None:
