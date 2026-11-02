@@ -16,6 +16,7 @@
 # no template; the base has no chat template and writes noise under the Think one), and six
 # replacement models on the SFT prompt: {attn,mlp}-{front,middle,back} put that component of that
 # third of the layers back at the base weights (src/postdyn/hybrid.py).
+# CONDITION=auto picks when the job starts, for jobs that queue for hours.
 # Usage: CONDITION=sft-chat RUN=passk64 SCORE=1 sbatch scripts/run_passk_osc.sh --limit 4 --samples 16
 set -euo pipefail
 
@@ -25,7 +26,26 @@ REPO="${REPO:-$ROOT/code}"
 HUB=/fs/scratch/PAS2324/zhu.3944/hf/hub
 snapshot() { echo "$HUB/models--allenai--$1/snapshots/$(cat "$HUB/models--allenai--$1/refs/main")"; }
 
+# The condition furthest behind: a claim is a job at work, worth about 20 problems of its run.
+pick_condition() {
+    local best="" best_score=-1 condition done_count score
+    for condition in sft-chat base-plain attn-front attn-middle attn-back mlp-front mlp-middle mlp-back; do
+        case "$condition" in sft-chat | base-plain) ;; *) [ -d "$ROOT/hybrids/$condition" ] || continue ;; esac
+        done_count=$(ls "$ROOT/$RUN/$condition/$AUTO_TASK" 2>/dev/null | grep -c 'gz$' || true)
+        [ "$done_count" -lt "$AUTO_TARGET" ] || continue
+        score=$((done_count + 20 * $(ls "$ROOT/$RUN/$condition/$AUTO_TASK" 2>/dev/null | grep -c 'claim$' || true)))
+        if [ "$best_score" -lt 0 ] || [ "$score" -lt "$best_score" ]; then
+            best=$condition best_score=$score
+        fi
+    done
+    echo "$best"
+}
+
 TOKENIZER="$(snapshot Olmo-3-7B-Think-SFT)"
+if [ "$CONDITION" = auto ]; then
+    CONDITION=$(pick_condition)
+    [ -n "$CONDITION" ] || { echo "nothing left to do"; exit 0; }
+fi
 case "$CONDITION" in
     sft-chat) MODEL="$TOKENIZER" FORMAT=chat ;;
     base-plain) MODEL="$(snapshot Olmo-3-1025-7B)" FORMAT=plain ;;
