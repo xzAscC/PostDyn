@@ -54,8 +54,8 @@ def load_items(task: str, limit: int, source: str | None) -> list[BenchItem]:
 
 
 def render(tokenizer: Any, kind: str, question: str, prompt_format: str) -> str:
-    text = passk.user_text(kind, question, prompt_format)
-    return text if prompt_format == "simple" else apply_chat_template(tokenizer, text)
+    text = passk.user_text(kind, question)
+    return text if prompt_format == "plain" else apply_chat_template(tokenizer, text)
 
 
 def check_settings(out_dir: Path, args: argparse.Namespace) -> None:
@@ -208,7 +208,7 @@ def main() -> None:
     run = commands.add_parser("generate")
     run.add_argument("--model", required=True)
     run.add_argument("--tokenizer", required=True, help="the base has no chat template")
-    run.add_argument("--prompt-format", choices=("chat", "simple"), required=True)
+    run.add_argument("--prompt-format", choices=("chat", "plain"), required=True)
     run.add_argument("--tasks", nargs="+", choices=tuple(KINDS), default=list(KINDS))
     run.add_argument("--samples", type=int, default=64)
     run.add_argument("--temperature", type=float, default=1.0)

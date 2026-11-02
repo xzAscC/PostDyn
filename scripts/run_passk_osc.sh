@@ -12,8 +12,8 @@
 
 # Sample one condition of the Olmo 3 7B pass@k comparison; a job cut off by its limit resumes
 # when submitted again with the same settings.
-# Conditions: sft-chat (Think-SFT on its chat template), base-simple (base on the RL-Zero prompt).
-# The base has no chat template and writes noise under the Think one, so it never gets it.
+# Conditions: sft-chat (Think-SFT on its chat template), base-plain (base on the same user text,
+# no template). The base has no chat template and writes noise under the Think one.
 # Usage: CONDITION=sft-chat RUN=passk64 SCORE=1 sbatch scripts/run_passk_osc.sh --limit 4 --samples 16
 set -euo pipefail
 
@@ -26,7 +26,7 @@ snapshot() { echo "$HUB/models--allenai--$1/snapshots/$(cat "$HUB/models--allena
 TOKENIZER="$(snapshot Olmo-3-7B-Think-SFT)"
 case "$CONDITION" in
     sft-chat) MODEL="$TOKENIZER" FORMAT=chat ;;
-    base-simple) MODEL="$(snapshot Olmo-3-1025-7B)" FORMAT=simple ;;
+    base-plain) MODEL="$(snapshot Olmo-3-1025-7B)" FORMAT=plain ;;
     *) echo "unknown CONDITION: $CONDITION" >&2; exit 2 ;;
 esac
 LCB="$(echo /fs/scratch/PAS2324/zhu.3944/hf/hub/datasets--livecodebench--code_generation_lite/snapshots/*)"

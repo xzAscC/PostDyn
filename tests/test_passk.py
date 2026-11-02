@@ -48,90 +48,29 @@ def test_chat_response_without_closed_thinking_has_no_answer():
     # The chat prompt ends in <think>, so an unclosed response never left the thinking.
     sample = {"text": "maybe \\boxed{5}", "finish_reason": "stop"}
     assert passk.classify("math", sample, {"answer": "5"}, "chat") == "no_answer"
-    assert passk.classify("math", sample, {"answer": "5"}, "simple") == "correct"
-
-
-def test_extract_answer_takes_the_last_boxed_with_nested_braces():
-    assert passk.extract_answer("\\boxed{1} then \\boxed{\\frac{1}{2}}.") == "\\frac{1}{2}"
-
-
-def test_extract_answer_reads_the_answer_line():
-    assert passk.extract_answer("Steps\nAnswer: $42$\n") == "42"
-
-
-def test_extract_answer_ignores_answers_in_running_text():
-    # The old verifier fell back on any "answer = x" in the text, a false positive source
-    # that pass@64 multiplies.
-    assert passk.extract_answer("so the answer = 7 might work, or not") is None
-
-
-@pytest.mark.parametrize(
-    ("text", "expected"),
-    [
-        ("**Answer: 5**", "5"),
-        ("Answer: **10**", "10"),
-        ("Answer: $5$ dollars", "5"),
-        ("\\boxed{3}\nmore work\nAnswer: 5", "5"),
-        ("Answer: 3\nchecking\n\\boxed{5}", "5"),
-        ("Answer: \\boxed{5}", "5"),
-        ("put it in \\boxed{}\nAnswer: 5", "5"),
-        ("Answer:\n5", "5"),
-        ("Answer:\n$5$\n", "5"),
-        ("**Answer**: 5", "5"),
-        ("### Answer: 5", "5"),
-        ("answer: 5", "5"),
-        ("Answers: 2", "2"),
-        ("**Final answer: 2.", "2"),
-        ("Answer: 5 people", "5"),
-        ("Answer: 18.90 dollars", "18.90"),
-        ("Answer: 90°", "90^\\circ"),
-        ("Answer: $\\$36$", "\\$36"),
-        ("Answer: $-2$, $1$", "-2, 1"),
-        ("\\boxed{5}\n\nAnswer: The final answer is 5.", "5"),
-        ("\\boxed{5}\nAnswer: see the box above", "5"),
-    ],
-)
-def test_extract_answer_handles_common_forms(text, expected):
-    assert passk.extract_answer(text) == expected
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "Answer:\n\n[",
-        "Answer:\n\nLet me think again",
-        "Answer:\n3\nand then some more\n",
-        "\\boxed{}",
-        "\\boxed{  }",
-        "\\boxed{3}\nredo\n\\boxed{5",
-        "So,answer: 5",
-    ],
-)
-def test_extract_answer_finds_nothing_in_empty_forms(text):
-    assert passk.extract_answer(text) is None
-
-
-@pytest.mark.parametrize("prediction", ["5} but really 6", "3}", "{5"])
-def test_unbalanced_answers_never_verify(prediction):
-    assert not passk._math_correct(prediction, prediction.strip("{}").split("}")[0])
+    assert passk.classify("math", sample, {"answer": "5"}, "plain") == "correct"
 
 
 @pytest.mark.parametrize(
     ("text", "gold", "outcome"),
     [
-        ("Answer: $3$ or $5$", "3", "wrong"),
-        ("Answer: $x=3$ or $x=5$", "3", "wrong"),
-        ("Answer: 5 or 6", "5", "wrong"),
-        ("Answer: $-2$, $1$", "-2,1", "correct"),
-        ("Answer: $\\$36$", "\\$36", "correct"),
-        ("Answer: 5 people", "5", "correct"),
-        ("Answer: 18.90 dollars", "\\$18.90", "correct"),
-        ("Answer: 90°", "90^\\circ", "correct"),
+        ("Thus \\boxed{5}.", "5", "correct"),
+        ("\\boxed{\\frac{1}{2}}", "0.5", "correct"),
+        ("\\boxed{3}\nredo\n\\boxed{5}", "5", "correct"),
+        ("\\boxed{3}\nredo\n\\boxed{5}", "3", "wrong"),
+        ("\\boxed{5 \\text{ people}}", "5", "correct"),
+        ("\\boxed{\\$18.90}", "\\$18.90", "correct"),
+        ("\\boxed{90^\\circ}", "90^\\circ", "correct"),
+        ("\\boxed{-2,1}", "-2,1", "correct"),
+        ("so the answer = 7 might work", "7", "no_answer"),
+        ("Answer: 7", "7", "no_answer"),
+        ("\\boxed{}", "7", "no_answer"),
+        ("\\boxed{7}\nredo\n\\boxed{5", "7", "no_answer"),
     ],
 )
-def test_answer_lines_score_like_boxes(text, gold, outcome):
+def test_only_the_last_closed_box_counts(text, gold, outcome):
     sample = {"text": text, "finish_reason": "stop"}
-    assert passk.classify("math", sample, {"answer": gold}, "simple") == outcome
+    assert passk.classify("math", sample, {"answer": gold}, "plain") == outcome
 
 
 def test_last_code_block_takes_the_final_block():
@@ -142,32 +81,32 @@ def test_last_code_block_takes_the_final_block():
 
 def test_classify_math_counts_a_truncated_answer_as_truncated():
     sample = {"text": "\\boxed{5}", "finish_reason": "length"}
-    assert passk.classify("math", sample, {"answer": "5"}, "simple") == "truncated"
+    assert passk.classify("math", sample, {"answer": "5"}, "plain") == "truncated"
 
 
 def test_classify_math_reads_only_the_final_response():
     sample = {"text": "\\boxed{5}</think>So \\boxed{6}", "finish_reason": "stop"}
-    assert passk.classify("math", sample, {"answer": "5"}, "simple") == "wrong"
-    assert passk.classify("math", sample, {"answer": "6"}, "simple") == "correct"
+    assert passk.classify("math", sample, {"answer": "5"}, "plain") == "wrong"
+    assert passk.classify("math", sample, {"answer": "6"}, "plain") == "correct"
 
 
 def test_classify_math_without_a_final_answer():
     sample = {"text": "I give up.", "finish_reason": "stop"}
-    assert passk.classify("math", sample, {"answer": "5"}, "simple") == "no_answer"
+    assert passk.classify("math", sample, {"answer": "5"}, "plain") == "no_answer"
 
 
 def test_classify_math_accepts_equal_forms():
     sample = {"text": "\\boxed{0.5}", "finish_reason": "stop"}
-    assert passk.classify("math", sample, {"answer": "\\frac{1}{2}"}, "simple") == "correct"
+    assert passk.classify("math", sample, {"answer": "\\frac{1}{2}"}, "plain") == "correct"
 
 
 def test_classify_code_runs_the_last_block(tmp_path):
     reference = {"cases": [{"input": "", "output": "2\n"}], "func_name": None}
     good = {"text": "```python\nprint(1)\n```\n```python\nprint(2)\n```", "finish_reason": "stop"}
     bad = {"text": "```python\nprint(2)\n```\n```python\nprint(1)\n```", "finish_reason": "stop"}
-    assert passk.classify("code", good, reference, "simple") == "correct"
-    assert passk.classify("code", bad, reference, "simple") == "wrong"
-    assert passk.classify("code", {"text": "none", "finish_reason": "stop"}, reference, "simple") == "no_answer"
+    assert passk.classify("code", good, reference, "plain") == "correct"
+    assert passk.classify("code", bad, reference, "plain") == "wrong"
+    assert passk.classify("code", {"text": "none", "finish_reason": "stop"}, reference, "plain") == "no_answer"
 
 
 def test_classify_code_gets_the_official_imports():
@@ -180,7 +119,7 @@ def test_classify_code_gets_the_official_imports():
         "    def add(self, nums: List[int]) -> int:\n        return sum(nums)\n```"
     )
     sample = {"text": text, "finish_reason": "stop"}
-    assert passk.classify("code", sample, reference, "simple") == "correct"
+    assert passk.classify("code", sample, reference, "plain") == "correct"
 
 
 def test_sandbox_runs_threads_and_numpy():
@@ -192,7 +131,7 @@ def test_sandbox_runs_threads_and_numpy():
         "thread.start()\nthread.join()\n"
     )
     sample = {"text": f"```python\n{code}```", "finish_reason": "stop"}
-    assert passk.classify("code", sample, reference, "simple") == "correct"
+    assert passk.classify("code", sample, reference, "plain") == "correct"
 
 
 def _rows(counts, n=4):
@@ -246,14 +185,10 @@ def test_bootstrap_interval_is_reproducible():
     assert passk.bootstrap_interval(values) == passk.bootstrap_interval(values)
 
 
-def test_prompts_keep_their_format_rules():
-    assert passk.user_text("math", "1+1?", "chat").endswith("\\boxed{}.")
-    simple = passk.user_text("math", "1+1?", "simple")
-    assert simple.startswith("Solve the following math problem step by step.")
-    assert "1+1?" in simple and simple.endswith('after "Answer:"')
-    assert "```python" in passk.user_text("code", "Add.", "chat")
-    with pytest.raises(ValueError):
-        passk.user_text("math", "1+1?", "other")
+def test_every_model_gets_the_same_user_text():
+    assert passk.user_text("math", "1+1?").endswith("\\boxed{}.")
+    assert passk.user_text("math", "1+1?").startswith("1+1?")
+    assert "```python" in passk.user_text("code", "Add.")
 
 
 class _FakeOutput:
@@ -390,8 +325,8 @@ def test_generate_uses_the_prompt_format(tmp_path, monkeypatch, fake_vllm):
     run_passk.generate(_args(tmp_path))
     assert seen[0].startswith("<chat>q0")
     seen.clear()
-    run_passk.generate(_args(tmp_path / "simple", prompt_format="simple"))
-    assert seen[0].startswith("Solve the following math problem")
+    run_passk.generate(_args(tmp_path / "plain", prompt_format="plain"))
+    assert seen[0] == "q0\n\n" + passk.BOXED_INSTRUCTION
 
 
 def test_score_and_compare_end_to_end(tmp_path, monkeypatch, fake_vllm):
@@ -435,7 +370,7 @@ def test_compare_refuses_different_test_cases(tmp_path, monkeypatch, fake_vllm):
 
 def test_compare_allows_different_models_and_prompts(tmp_path, monkeypatch, fake_vllm):
     _scored_run(tmp_path / "a", monkeypatch)
-    _scored_run(tmp_path / "b", monkeypatch, model="other", prompt_format="simple")
+    _scored_run(tmp_path / "b", monkeypatch, model="other", prompt_format="plain")
     run_passk.compare_runs(
         Namespace(a=str(tmp_path / "a"), b=str(tmp_path / "b"), ks=[1], out=str(tmp_path / "c"))
     )
@@ -453,11 +388,6 @@ def test_compare_refuses_different_tasks(tmp_path, monkeypatch, fake_vllm):
 
 def test_job_script_has_valid_syntax():
     subprocess.run(["bash", "-n", "scripts/run_passk_osc.sh"], check=True)
-
-
-def test_extract_answer_keeps_a_trailing_period_out_of_the_comparison():
-    sample = {"text": "Steps\nAnswer: 12.\n", "finish_reason": "stop"}
-    assert passk.classify("math", sample, {"answer": "12"}, "simple") == "correct"
 
 
 def test_binomial_helper_stays_exact_for_64_samples():
