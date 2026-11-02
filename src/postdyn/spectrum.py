@@ -21,7 +21,7 @@ import torch
 from scipy.optimize import linear_sum_assignment  # pyright: ignore[reportMissingTypeStubs]
 from torch import Tensor
 
-from .intervention import _block_output_tensor, _layer, _wrap_block_output
+from .intervention import _block_output_tensor, _layer
 from .spectra import eigensystem, subsim
 
 KINDS = ("identity", "random", "mean", "spectrum", "reorder", "full")
@@ -227,48 +227,6 @@ def residual_capture(model: Any) -> Iterator[dict[int, Tensor]]:
             handle.remove()
 
 
-@contextmanager
-def prefix_steering(
-    model: Any,
-    maps: Mapping[int, StateMap],
-    means: Mapping[int, Tensor],
-    steps: int,
-) -> Iterator[None]:
-    """Rewrite the newest position of each listed layer during the first ``steps`` forwards.
-
-    Under cached generation every forward makes one new token, for all sequences of the batch at
-    once, so one counter serves the whole batch. The last layer advances it.
-    """
-    state = {"step": 0}
-    last = max(maps)
-    handles = []
-
-    for layer, state_map in maps.items():
-
-        def hook(
-            _module: Any,
-            _inputs: Any,
-            output: Any,
-            layer: int = layer,
-            state_map: StateMap = state_map,
-        ) -> Any:
-            active = state["step"] < steps
-            if layer == last:
-                state["step"] += 1
-            if not active:
-                return None
-            tensor = _block_output_tensor(output)
-            newest = apply_map(tensor[:, -1:, :], state_map, means[layer])
-            return _wrap_block_output(output, torch.cat([tensor[:, :-1, :], newest], dim=1))
-
-        handles.append(_layer(model, layer).register_forward_hook(hook))
-    try:
-        yield
-    finally:
-        for handle in handles:
-            handle.remove()
-
-
 def spectrum_summary(c_base: Tensor, c_post: Tensor, k: int) -> dict[str, float]:
     """How the two top-k subspaces and scales compare, without touching the model."""
     base_values, base_vectors = eigensystem(c_base)
@@ -298,7 +256,6 @@ __all__ = [
     "fold_of",
     "off_diagonal_share",
     "prefix_length",
-    "prefix_steering",
     "residual_capture",
     "spectrum_summary",
     "stable_k",

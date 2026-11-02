@@ -24,6 +24,7 @@ os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
 import torch
 
 from .intervention import project_out, replace_basis
+from .spectrum import StateMap, apply_map
 
 Detacher = Callable[[], None]
 
@@ -111,6 +112,61 @@ def attach_replacement(
     return _attach(llm, layer, rewrite)
 
 
+def steered_rows(positions: torch.Tensor, prompt_tokens: int, steps: int) -> torch.Tensor:
+    """Rows that make one of the first ``steps`` new tokens, for prefill and decode alike.
+
+    A row's output at position p picks token p + 1, so the first new token comes from the last
+    prompt position. Positions are absolute: one prompt per generate call fixes ``prompt_tokens``.
+    """
+    return (positions >= prompt_tokens - 1) & (positions < prompt_tokens - 1 + steps)
+
+
+class PrefixMaps:
+    """Rewrite every listed layer during the first new tokens of one prompt's samples.
+
+    Needs the LLM configuration in this module's docstring. Set a problem with ``set`` before each
+    generate call and give each call one prompt only.
+    """
+
+    def __init__(self, llm: Any, layers: list[int]) -> None:
+        blocks = _engine_model(llm).model.layers
+        self._detach = []
+        self._maps: dict[int, StateMap] = {}
+        self._means: dict[int, torch.Tensor] = {}
+        self._prompt_tokens = 0
+        self._steps = 0
+        for layer in layers:
+            self._wrap(blocks[layer], layer)
+
+    def _wrap(self, block: Any, layer: int) -> None:
+        original = block.forward
+
+        def forward(positions: torch.Tensor, hidden_states: torch.Tensor) -> torch.Tensor:
+            out = original(positions, hidden_states)
+            rows = steered_rows(positions, self._prompt_tokens, self._steps)
+            if bool(rows.any()):
+                out[rows] = apply_map(out[rows], self._maps[layer], self._means[layer]).to(out.dtype)
+            return out
+
+        block.forward = forward
+        self._detach.append(lambda: setattr(block, "forward", original))
+
+    def set(
+        self,
+        maps: dict[int, StateMap],
+        means: dict[int, torch.Tensor],
+        prompt_tokens: int,
+        steps: int,
+    ) -> None:
+        self._maps, self._means = maps, means
+        self._prompt_tokens, self._steps = prompt_tokens, steps
+
+    def detach(self) -> None:
+        for undo in self._detach:
+            undo()
+        self._detach.clear()
+
+
 def generate(
     llm: Any,
     prompts: list[str],
@@ -153,8 +209,10 @@ def generate_with_ids(
 
 
 __all__ = [
+    "PrefixMaps",
     "attach_ablation",
     "attach_replacement",
     "generate",
     "generate_with_ids",
+    "steered_rows",
 ]

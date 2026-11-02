@@ -66,8 +66,3 @@ def test_a_map_is_fit_without_the_fold_it_is_used_on():
     assert maps[0].shift.item() == 0.0
     assert folds[0].stats(0, leave_out=1).sigma.item() == 1.0
     assert folds[0].stats(0, only=(1,)).sigma.item() == 9.0
-
-
-def test_sampling_plan_keeps_each_lead_apart_and_batches_the_rest():
-    assert run_spectrum.sampling_plan("full", [], 5, 2) == [([], 2), ([], 2), ([], 1)]
-    assert run_spectrum.sampling_plan("continue", [[1], [2, 3]], 1, 8) == [([1], 1)]

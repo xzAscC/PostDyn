@@ -170,30 +170,3 @@ def test_residual_capture_returns_each_block_output():
         model(torch.ones(1, 3, 2))
     assert sorted(captured) == [0, 1]
     assert captured[1].shape == (1, 3, 2)
-
-
-def step_map(d: int, gap: float) -> spectrum.StateMap:
-    zero = torch.zeros(d, 0, dtype=torch.float64)
-    return spectrum.StateMap(zero, zero, torch.full((d,), gap, dtype=torch.float64))
-
-
-def test_prefix_steering_changes_the_last_position_for_the_first_steps_only():
-    model = Toy(2)
-    maps = {layer: step_map(2, 1.0) for layer in range(2)}
-    means = {layer: torch.zeros(2, dtype=torch.float64) for layer in range(2)}
-    with spectrum.prefix_steering(model, maps, means, steps=2):
-        prompt = model(torch.zeros(1, 3, 2, dtype=torch.bfloat16))
-        second = model(torch.zeros(1, 1, 2, dtype=torch.bfloat16))
-        third = model(torch.zeros(1, 1, 2, dtype=torch.bfloat16))
-    # Both layers shift; earlier prompt positions stay as they were.
-    assert prompt[0, :, 0].tolist() == [0.0, 0.0, 2.0]
-    assert second[0, 0, 0].item() == 2.0
-    assert third[0, 0, 0].item() == 0.0
-    assert not model.model.layers[0]._forward_hooks
-
-
-def test_prefix_steering_with_no_steps_is_the_plain_model():
-    model = Toy(1)
-    with spectrum.prefix_steering(model, {0: step_map(2, 1.0)}, {0: torch.zeros(2)}, steps=0):
-        out = model(torch.zeros(1, 2, 2))
-    assert out.abs().sum().item() == 0.0

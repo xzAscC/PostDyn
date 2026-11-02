@@ -58,6 +58,7 @@ RUNS = {"base": ("base-plain", "plain"), "post": ("sft-chat", "chat")}
 K_GRID = (8, 16, 32, 64, 128, 256, 512, 1024, 2048)
 K_AGREEMENT = 0.9  # squared subspace overlap two halves must reach
 ABLATIONS = (*spectrum.KINDS, "continue")
+MAX_PROMPT_TOKENS = 2048
 
 
 def complete_texts(row: dict[str, Any], samples: int) -> list[str]:
@@ -185,8 +186,9 @@ def read_moments(out: Path, model: str, text: str) -> spectrum.FoldMoments:
     held = spectrum.FoldMoments({}, FOLDS)
     for fold in range(FOLDS):
         state = torch.load(moment_path(out, model, text, fold), weights_only=True)
-        held.scatter[fold] = state["scatter"]
-        held.weight[fold] = state["weight"]
+        if state["scatter"]:  # a small run can leave a fold empty
+            held.scatter[fold] = state["scatter"]
+            held.weight[fold] = state["weight"]
         held.problem_means.update(state["problem_means"])
         held.problem_fold.update(state["problem_fold"])
     return held
@@ -196,7 +198,8 @@ def report(args: argparse.Namespace) -> None:
     out = Path(args.out)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     sets = {(m, t): read_moments(out, m, t) for m in RUNS for t in RUNS}
-    layers = sorted(sets["base", "post"].scatter[0])
+    folds = sorted(sets["base", "post"].scatter)
+    layers = sorted(sets["base", "post"].scatter[folds[0]])
     table = []
     for layer in layers:
         row: dict[str, Any] = {"layer": layer}
@@ -204,7 +207,7 @@ def report(args: argparse.Namespace) -> None:
         for model in RUNS:
             halves = [
                 eigensystem(sets[model, "post"].stats(layer, only=part).sigma.to(device))[1]
-                for part in ((0, 1), (2, 3, 4))
+                for part in (folds[: len(folds) // 2], folds[len(folds) // 2 :])
             ]
             ks[model] = spectrum.stable_k(*halves, K_GRID, K_AGREEMENT)
         row["stable_k"] = ks
@@ -280,18 +283,13 @@ def maps_for(
     return maps
 
 
-def sampling_plan(
-    kind: str, leads: Sequence[list[int]], samples: int, batch: int
-) -> list[tuple[list[int], int]]:
-    """(text the model starts from, sequences) per generate call; a lead's length is its own."""
-    if kind == "continue":
-        return [(lead, 1) for lead in leads[:samples]]
-    return [([], min(batch, samples - begin)) for begin in range(0, samples, batch)]
-
-
 def ablate(args: argparse.Namespace) -> None:
     check_transformers(__import__("transformers").__version__)
     from transformers import AutoTokenizer
+
+    from postdyn.vllm_steering import PrefixMaps  # sets vLLM's environment before it loads
+
+    from vllm import LLM, SamplingParams  # noqa: I001
 
     out = Path(args.out)
     root = Path(args.pass_root)
@@ -310,14 +308,36 @@ def ablate(args: argparse.Namespace) -> None:
     ids = json.loads((out / "selected.json").read_text())
     donors = rows_of(root, RUNS[donor][0])
     outcomes = read_scores(root, RUNS[donor][0])
-    table = {row["layer"]: row["k"] for row in json.loads((out / "report.json").read_text())}
-    model = load(args.post_model if source == "post" else args.base_model)
-    device = next(model.parameters()).device
-    stop = [tokenizer.convert_tokens_to_ids(token) for token in STOP_TOKENS]
+    table = {
+        row["layer"]: args.k if args.k is not None else row["k"]
+        for row in json.loads((out / "report.json").read_text())
+    }
     means = read_moments(out, source, source).problem_means
-    fit = None
+    llm = LLM(
+        model=args.post_model if source == "post" else args.base_model,
+        tokenizer=args.post_model,
+        dtype="bfloat16",
+        seed=args.seed,
+        gpu_memory_utilization=args.gpu_memory_utilization,
+        max_num_seqs=args.max_num_seqs,
+        max_model_len=args.max_new_tokens + MAX_PROMPT_TOKENS,  # the default fills an A100
+        # What the rewrite needs: see postdyn/vllm_steering.py.
+        enforce_eager=True,
+        enable_chunked_prefill=False,
+        enable_prefix_caching=False,
+    )
+    stop = [tokenizer.convert_tokens_to_ids(token) for token in STOP_TOKENS]
+
+    def params(samples: int) -> Any:
+        return SamplingParams(
+            n=samples, temperature=args.temperature, top_p=args.top_p,
+            max_tokens=args.max_new_tokens, stop_token_ids=stop, skip_special_tokens=False,
+        )
+
+    fit, steering = None, None
     if args.kind != "continue":
         fit = (read_moments(out, source, "post"), read_moments(out, donor, "post"))
+        steering = PrefixMaps(llm, sorted(table))
     held_fold, maps = None, {}
 
     # By fold, so only one fold's maps sit in GPU memory.
@@ -335,40 +355,39 @@ def ablate(args: argparse.Namespace) -> None:
         steps = steps_of(correct, tokenizer, args.fraction)
         rendered = render(tokenizer, KINDS[TASK], items[problem].prompt, prompt_format)
         prompt = tokenizer(rendered)["input_ids"]
-        leads = []
-        for text in (correct * args.samples)[: args.samples] if args.kind == "continue" else []:
-            answer = tokenizer(text, add_special_tokens=False)["input_ids"]
-            leads.append(answer[: spectrum.prefix_length(len(answer), args.fraction)])
-        samples = []
-        torch.manual_seed(args.seed + index)
         try:
-            if fit is not None and held_fold != spectrum.fold_of(problem, FOLDS):
-                held_fold = spectrum.fold_of(problem, FOLDS)
-                maps = maps_for(args.kind, fit, held_fold, table, args.seed, "cuda")
-            for lead, count in sampling_plan(args.kind, leads, args.samples, args.batch):
-                input_ids = torch.tensor([prompt + lead] * count, device=device)
-                settings = dict(
-                    do_sample=True, temperature=args.temperature, top_p=args.top_p,
-                    max_new_tokens=args.max_new_tokens, eos_token_id=stop, pad_token_id=stop[0],
-                    attention_mask=torch.ones_like(input_ids),
+            if steering is None:
+                leads = [
+                    tokenizer(text, add_special_tokens=False)["input_ids"]
+                    for text in (correct * args.samples)[: args.samples]
+                ]
+                leads = [a[: spectrum.prefix_length(len(a), args.fraction)] for a in leads]
+                requests = llm.generate(
+                    [{"prompt_token_ids": prompt + lead} for lead in leads], params(1)
                 )
-                if fit is None:
-                    made = model.generate(input_ids, **settings)
-                else:
-                    with spectrum.prefix_steering(model, maps, means[problem], steps):
-                        made = model.generate(input_ids, **settings)
-                lead_text = tokenizer.decode(lead, skip_special_tokens=False)
-                for sequence in made[:, input_ids.shape[1] :].tolist():
-                    ended = next((i for i, token in enumerate(sequence) if token in stop), None)
-                    kept = sequence if ended is None else sequence[:ended]
-                    samples.append({
-                        "text": lead_text + tokenizer.decode(kept, skip_special_tokens=False),
-                        "finish_reason": "length" if ended is None else "stop",
-                        "tokens": len(lead) + len(kept),
-                    })
+                made = [
+                    (tokenizer.decode(lead, skip_special_tokens=False), len(lead), output)
+                    for lead, request in zip(leads, requests, strict=True)
+                    for output in request.outputs
+                ]
+            else:
+                if held_fold != spectrum.fold_of(problem, FOLDS):
+                    held_fold = spectrum.fold_of(problem, FOLDS)
+                    maps = maps_for(args.kind, fit, held_fold, table, args.seed, "cuda")
+                steering.set(maps, means[problem], len(prompt), steps)
+                requests = llm.generate([{"prompt_token_ids": prompt}], params(args.samples))
+                made = [("", 0, output) for output in requests[0].outputs]
         except BaseException:
             path.with_suffix(".claim").unlink(missing_ok=True)
             raise
+        samples = [
+            {
+                "text": lead + output.text,
+                "finish_reason": output.finish_reason,
+                "tokens": lead_tokens + len(output.token_ids),
+            }
+            for lead, lead_tokens, output in made
+        ]
         write_chunk(path, [{"id": problem, "samples": samples, "steered_tokens": steps}])
         path.with_suffix(".claim").unlink(missing_ok=True)
         log(run_dir, f"{problem}: {steps} steered, {time.time() - started:.0f} s")
@@ -408,7 +427,9 @@ def main() -> None:
     sampling.add_argument("--reverse", action="store_true", help="post with base's statistics")
     sampling.add_argument("--samples", type=int, default=64)
     sampling.add_argument("--fraction", type=float, default=0.1)
-    sampling.add_argument("--batch", type=int, default=16)
+    sampling.add_argument("--k", type=int, help="the same k in every layer, not report.json's")
+    sampling.add_argument("--max-num-seqs", type=int, default=12)
+    sampling.add_argument("--gpu-memory-utilization", type=float, default=0.92)
     sampling.add_argument("--temperature", type=float, default=0.6)
     sampling.add_argument("--top-p", type=float, default=0.95)
     sampling.add_argument("--max-new-tokens", type=int, default=32768)
