@@ -332,6 +332,9 @@ def ablate(args: argparse.Namespace) -> None:
         row["layer"]: args.k if args.k is not None else row["k"]
         for row in json.loads((out / "report.json").read_text())
     }
+    fit_fraction = json.loads((out / "knobs.json").read_text())["fraction"]
+    if args.fraction != fit_fraction:  # the steered window must be the fitted one
+        raise ValueError(f"moments used --fraction {fit_fraction}, not {args.fraction}")
     ids = json.loads((out / "selected.json").read_text())
     # Chunks are named by index in selected.json, so the list is part of the run.
     keep_knobs(run_dir, {"k": table, "fraction": args.fraction, "selected": ids})
