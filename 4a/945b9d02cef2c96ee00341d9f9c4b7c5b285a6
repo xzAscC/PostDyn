@@ -1,0 +1,19 @@
+scripts/run_spectrum.py
+  s_33571d7c42a4f6::t_938a1911ba23da 335-337
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4a945b9d02cef2c96ee00341d9f9c4b7c5b285a6",
+  "prompts": {},
+  "sessions": {
+    "s_33571d7c42a4f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06c25a58-b0bd-44e4-871d-28f0fe6042eb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
