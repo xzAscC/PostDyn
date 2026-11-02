@@ -62,18 +62,39 @@ def last_code_block(text: str) -> str | None:
     return blocks[-1] if blocks else None
 
 
+def _last_box(text: str) -> str | None:
+    """What the last non-empty ``\\boxed{}`` holds; None if that box was never closed.
+
+    An empty box is skipped because a model may repeat the instruction after answering.
+    """
+    end = len(text)
+    while (start := text.rfind("\\boxed{", 0, end)) >= 0:
+        begin = start + len("\\boxed{")
+        depth = 1
+        for position in range(begin, len(text)):
+            depth += {"{": 1, "}": -1}.get(text[position], 0)
+            if depth == 0:
+                if content := text[begin:position].strip():
+                    return content
+                break
+        else:
+            return None
+        end = start
+    return None
+
+
 def _math_outcome(response: str, answer: str) -> str:
-    """Judge the last box only: math-verify merges all boxes, which fails a corrected answer."""
+    """Parse the last box alone: math-verify would read text after it, or merge all boxes."""
     from math_verify import LatexExtractionConfig, parse, verify
 
-    start = response.rfind("\\boxed{")
-    if start < 0:
+    content = _last_box(response)
+    if content is None:
         return "no_answer"
-    config = [LatexExtractionConfig(try_extract_without_anchor=False, boxed_match_priority=0)]
-    target = parse(response[start:], extraction_config=config)
+    config = [LatexExtractionConfig()]
+    target = parse(f"\\boxed{{{content}}}", extraction_config=config)
     if not target:
-        return "no_answer"  # empty or never closed
-    gold = parse(f"\\boxed{{{answer}}}", extraction_config=[LatexExtractionConfig()])
+        return "no_answer"
+    gold = parse(f"\\boxed{{{answer}}}", extraction_config=config)
     return "correct" if verify(gold, target) else "wrong"
 
 

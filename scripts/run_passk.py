@@ -35,8 +35,9 @@ from postdyn.persistence import atomic_write_json  # noqa: E402
 
 KINDS = {"math500": "math", "livecodebench": "code"}
 STOP_TOKENS = ("<|endoftext|>", "<|im_end|>")
-# A chunk takes under an hour on either GPU, so an older claim belongs to a killed job.
-CLAIM_HOURS = 1.5
+# One problem takes minutes, but 64 samples at the token limit would take hours on an A100, so
+# only a claim older than that belongs to a killed job. A wrong guess repeats a problem, no more.
+CLAIM_HOURS = 3.0
 # What must match to compare two runs; the model and the prompt may differ, that is the question.
 COMPARE_KEYS = ("samples", "temperature", "top_p", "max_tokens", "limit", "lcb_source")
 # chunk_problems is here because a finished chunk is found by its offset.
@@ -252,10 +253,10 @@ def main() -> None:
     run.add_argument("--prompt-format", choices=("chat", "plain"), required=True)
     run.add_argument("--tasks", nargs="+", choices=tuple(KINDS), default=list(KINDS))
     run.add_argument("--samples", type=int, default=64)
-    run.add_argument("--temperature", type=float, default=1.0)
-    run.add_argument("--top-p", type=float, default=1.0)
-    run.add_argument("--max-tokens", type=int, default=16384)
-    run.add_argument("--chunk-problems", type=int, default=4)
+    run.add_argument("--temperature", type=float, default=0.6)
+    run.add_argument("--top-p", type=float, default=0.95)
+    run.add_argument("--max-tokens", type=int, default=32768)
+    run.add_argument("--chunk-problems", type=int, default=1)
     run.add_argument("--limit", type=int, default=0, help="a fixed random subset of N problems")
     run.add_argument("--seed", type=int, default=0)
     run.add_argument("--lcb-source", help="LiveCodeBench test6.jsonl (or its directory)")
