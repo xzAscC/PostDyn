@@ -1,0 +1,23 @@
+scripts/run_passk.py
+  s_d6c524389bcd9e::t_c5d20682ce4770 20,43-53,99
+scripts/run_passk_osc.sh
+  s_d6c524389bcd9e::t_8f3dc36d9b021f 40-41,43
+tests/test_passk.py
+  s_d6c524389bcd9e::t_dce12ed9bd845b 226-231,234
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "63d459ec04c3eef054fb8236c26384cd0697fe29",
+  "prompts": {},
+  "sessions": {
+    "s_d6c524389bcd9e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eb96a202-55bb-436e-9f9f-1e652f848997",
+        "model": "unknown"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
