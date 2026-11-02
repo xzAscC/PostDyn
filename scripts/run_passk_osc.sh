@@ -13,7 +13,9 @@
 # Sample one condition of the Olmo 3 7B pass@k comparison; a job cut off by its limit resumes
 # when submitted again with the same settings.
 # Conditions: sft-chat (Think-SFT on its chat template), base-plain (base on the same user text,
-# no template). The base has no chat template and writes noise under the Think one.
+# no template; the base has no chat template and writes noise under the Think one), and six
+# replacement models on the SFT prompt: {attn,mlp}-{front,middle,back} put that component of that
+# third of the layers back at the base weights (src/postdyn/hybrid.py).
 # Usage: CONDITION=sft-chat RUN=passk64 SCORE=1 sbatch scripts/run_passk_osc.sh --limit 4 --samples 16
 set -euo pipefail
 
@@ -27,6 +29,8 @@ TOKENIZER="$(snapshot Olmo-3-7B-Think-SFT)"
 case "$CONDITION" in
     sft-chat) MODEL="$TOKENIZER" FORMAT=chat ;;
     base-plain) MODEL="$(snapshot Olmo-3-1025-7B)" FORMAT=plain ;;
+    attn-front|attn-middle|attn-back|mlp-front|mlp-middle|mlp-back)
+        MODEL="$ROOT/hybrids/$CONDITION" FORMAT=chat ;;
     *) echo "unknown CONDITION: $CONDITION" >&2; exit 2 ;;
 esac
 LCB="$(echo /fs/scratch/PAS2324/zhu.3944/hf/hub/datasets--livecodebench--code_generation_lite/snapshots/*)"
@@ -44,6 +48,11 @@ source "$ROOT/venv-vllm/bin/activate"
 set -u
 
 echo "job ${SLURM_JOB_ID:-local} on $(hostname): $CONDITION -> $OUT"
+case "$CONDITION" in
+    sft-chat | base-plain) ;;
+    *) [ -d "$MODEL" ] || python "$REPO/scripts/make_passk_hybrid.py" "$TOKENIZER" \
+        "$(snapshot Olmo-3-1025-7B)" "$MODEL" "$CONDITION" ;;
+esac
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 python "$REPO/scripts/run_passk.py" generate --model "$MODEL" --tokenizer "$TOKENIZER" \
     --prompt-format "$FORMAT" --lcb-source "$LCB" --out-dir "$OUT" "$@"
