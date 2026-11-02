@@ -37,8 +37,10 @@ export HF_HOME=/fs/scratch/PAS2324/zhu.3944/hf HF_HUB_OFFLINE=1 HF_DATASETS_OFFL
 export VLLM_USE_FLASHINFER_SAMPLER=0 CC=gcc CXX=g++
 unset ROCR_VISIBLE_DEVICES
 set +u  # the venv activate script reads unset variables
+# vllm==0.11.2 with transformers==4.57.1: later vLLM runs Olmo 3 through transformers 5, which
+# breaks it (see check_transformers in run_passk.py).
 # shellcheck disable=SC1091
-source "$STORE/verl/.venv/bin/activate"
+source "$ROOT/venv-vllm/bin/activate"
 set -u
 
 echo "job ${SLURM_JOB_ID:-local} on $(hostname): $CONDITION -> $OUT"

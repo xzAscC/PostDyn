@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import importlib.metadata
 import json
 import multiprocessing
 import os
@@ -37,6 +38,17 @@ STOP_TOKENS = ("<|endoftext|>", "<|im_end|>")
 COMPARE_KEYS = ("samples", "temperature", "top_p", "max_tokens", "limit", "lcb_source")
 # chunk_problems is here because a finished chunk is found by its offset.
 RUN_KEYS = (*COMPARE_KEYS, "model", "tokenizer", "prompt_format", "tasks", "chunk_problems", "seed")
+
+
+def check_transformers(version: str) -> None:
+    """Refuse transformers 5: Olmo 3 then loops within a few thousand tokens and never stops.
+
+    Measured on the final Think model with one prompt: 4.57.1 closed its thinking in 5 of 6
+    samples and boxed an answer in all 6; 5.12.1 did neither in any. vLLM after 0.11 runs Olmo 3
+    through transformers, so it fails the same way, without an error.
+    """
+    if int(version.split(".")[0]) >= 5:
+        raise RuntimeError(f"transformers {version} breaks Olmo 3: use the 4.57 environment")
 
 
 def log(out_dir: Path, message: str) -> None:
@@ -84,6 +96,7 @@ def read_chunks(directory: Path) -> list[dict[str, Any]]:
 
 
 def generate(args: argparse.Namespace) -> None:
+    check_transformers(importlib.metadata.version("transformers"))
     from vllm import LLM, SamplingParams
 
     out_dir = Path(args.out_dir)

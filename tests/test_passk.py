@@ -223,8 +223,15 @@ class _FakeLLM:
         return [_FakeRequest(params.n) for _ in prompts]
 
 
+def test_transformers_5_is_refused():
+    run_passk.check_transformers("4.57.1")
+    with pytest.raises(RuntimeError, match="breaks Olmo 3"):
+        run_passk.check_transformers("5.12.1")
+
+
 @pytest.fixture
 def fake_vllm(monkeypatch):
+    monkeypatch.setattr(run_passk, "check_transformers", lambda version: None)
     module = types.SimpleNamespace(LLM=_FakeLLM, SamplingParams=lambda **kwargs: Namespace(**kwargs))
     monkeypatch.setitem(sys.modules, "vllm", module)
     _FakeLLM.calls = []
