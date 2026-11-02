@@ -12,8 +12,8 @@
 
 # Sample one condition of the Olmo 3 7B pass@k comparison; a job cut off by its limit resumes
 # when submitted again with the same settings.
-# Conditions: sft-chat (Think-SFT), base-chat (base on the same input text), base-simple (base on
-# the RL-Zero prompt).
+# Conditions: sft-chat (Think-SFT on its chat template), base-simple (base on the RL-Zero prompt).
+# The base has no chat template and writes noise under the Think one, so it never gets it.
 # Usage: CONDITION=sft-chat RUN=passk64 SCORE=1 sbatch scripts/run_passk_osc.sh --limit 4 --samples 16
 set -euo pipefail
 
@@ -26,7 +26,6 @@ snapshot() { echo "$HUB/models--allenai--$1/snapshots/$(cat "$HUB/models--allena
 TOKENIZER="$(snapshot Olmo-3-7B-Think-SFT)"
 case "$CONDITION" in
     sft-chat) MODEL="$TOKENIZER" FORMAT=chat ;;
-    base-chat) MODEL="$(snapshot Olmo-3-1025-7B)" FORMAT=chat ;;
     base-simple) MODEL="$(snapshot Olmo-3-1025-7B)" FORMAT=simple ;;
     *) echo "unknown CONDITION: $CONDITION" >&2; exit 2 ;;
 esac
@@ -47,6 +46,6 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 python "$REPO/scripts/run_passk.py" generate --model "$MODEL" --tokenizer "$TOKENIZER" \
     --prompt-format "$FORMAT" --lcb-source "$LCB" --out-dir "$OUT" "$@"
 if [ "${SCORE:-0}" = 1 ]; then
-    python "$REPO/scripts/run_passk.py" score --out-dir "$OUT" --lcb-source "$LCB" --workers "${SLURM_CPUS_PER_TASK:-8}"
+    python "$REPO/scripts/run_passk.py" score --out-dir "$OUT" --workers "${SLURM_CPUS_PER_TASK:-8}"
 fi
 echo "=== passk done $(date -Is) ==="

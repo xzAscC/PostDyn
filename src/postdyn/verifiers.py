@@ -22,6 +22,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 _punkt_provision_attempted = False
+# Per test, as in LiveCodeBench's harness.
+SANDBOX_SECONDS = 6
 
 
 def split_sentences(text: str) -> list[str]:
@@ -118,9 +120,12 @@ def _run_functional_case(
         "module = importlib.util.module_from_spec(spec)\n"
         "spec.loader.exec_module(module)\n"
         "name = sys.argv[2]\n"
-        "function = getattr(module, name, None)\n"
-        "if function is None and hasattr(module, 'Solution'):\n"
+        # Solution first: star imports can put a same-named function in the module.
+        "function = None\n"
+        "if hasattr(module, 'Solution'):\n"
         "    function = getattr(module.Solution(), name, None)\n"
+        "if function is None:\n"
+        "    function = getattr(module, name, None)\n"
         "if function is None:\n"
         "    raise AttributeError(name)\n"
         "lines = sys.stdin.read().splitlines()\n"
@@ -196,7 +201,12 @@ def _run_sandboxed(command: list[str], directory: str, stdin: str) -> tuple[bool
             "stderr": subprocess.PIPE,
             "cwd": directory,
             "start_new_session": True,
-            "env": {"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+            # One BLAS thread: on a many-core node numpy otherwise fails RLIMIT_AS at import.
+            "env": {
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                "OPENBLAS_NUM_THREADS": "1",
+                "OMP_NUM_THREADS": "1",
+            },
         }
         preexec = _preexec_fn()
         if preexec is not None:
@@ -215,7 +225,9 @@ def _run_sandboxed(command: list[str], directory: str, stdin: str) -> tuple[bool
         if process.stdin is not None:
             process.stdin.write(stdin.encode())
             process.stdin.close()
-        process.wait(timeout=5)
+        process.wait(timeout=SANDBOX_SECONDS)
+        # A background child would hold the pipes open and stall the joins below.
+        _kill_process_group(process.pid)
         stdout_thread.join()
         stderr_thread.join()
     except subprocess.TimeoutExpired:
@@ -250,9 +262,10 @@ def _resource_limits() -> None:
     if resource is None:
         return
     limits = (
-        (resource.RLIMIT_CPU, (5, 5)),
-        (resource.RLIMIT_AS, (1 * 1024**3, 1 * 1024**3)),
-        (resource.RLIMIT_NPROC, (64, 64)),
+        (resource.RLIMIT_CPU, (SANDBOX_SECONDS, SANDBOX_SECONDS)),
+        (resource.RLIMIT_AS, (4 * 1024**3, 4 * 1024**3)),
+        # Counts every thread of this user on the node, so it must leave room for the scorers.
+        (resource.RLIMIT_NPROC, (4096, 4096)),
         (resource.RLIMIT_FSIZE, (8 * 1024**2, 8 * 1024**2)),
     )
     for kind, value in limits:

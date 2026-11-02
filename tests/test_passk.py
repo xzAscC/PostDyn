@@ -44,6 +44,13 @@ def test_final_response_drops_the_thinking():
     assert passk.final_response("no thinking \\boxed{2}") == "no thinking \\boxed{2}"
 
 
+def test_chat_response_without_closed_thinking_has_no_answer():
+    # The chat prompt ends in <think>, so an unclosed response never left the thinking.
+    sample = {"text": "maybe \\boxed{5}", "finish_reason": "stop"}
+    assert passk.classify("math", sample, {"answer": "5"}, "chat") == "no_answer"
+    assert passk.classify("math", sample, {"answer": "5"}, "simple") == "correct"
+
+
 def test_extract_answer_takes_the_last_boxed_with_nested_braces():
     assert passk.extract_answer("\\boxed{1} then \\boxed{\\frac{1}{2}}.") == "\\frac{1}{2}"
 
@@ -58,6 +65,34 @@ def test_extract_answer_ignores_answers_in_running_text():
     assert passk.extract_answer("so the answer = 7 might work, or not") is None
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("**Answer: 5**", "5"),
+        ("Answer: **10**", "10"),
+        ("Answer: $5$ dollars", "5"),
+        ("\\boxed{3}\nmore work\nAnswer: 5", "5"),
+        ("Answer: 3\nchecking\n\\boxed{5}", "5"),
+        ("Answer: \\boxed{5}", "5"),
+        ("put it in \\boxed{}\nAnswer: 5", "5"),
+    ],
+)
+def test_extract_answer_handles_common_forms(text, expected):
+    assert passk.extract_answer(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text", ["Answer:\n\n[", "Answer:\n\nLet me think again", "\\boxed{}", "\\boxed{  }"]
+)
+def test_extract_answer_finds_nothing_in_empty_forms(text):
+    assert passk.extract_answer(text) is None
+
+
+@pytest.mark.parametrize("prediction", ["5} but really 6", "3}", "{5"])
+def test_unbalanced_answers_never_verify(prediction):
+    assert not passk._math_correct(prediction, prediction.strip("{}").split("}")[0])
+
+
 def test_last_code_block_takes_the_final_block():
     text = "```python\nprint(1)\n```\nthen\n```python\nprint(2)\n```"
     assert passk.last_code_block(text) == "print(2)\n"
@@ -66,32 +101,57 @@ def test_last_code_block_takes_the_final_block():
 
 def test_classify_math_counts_a_truncated_answer_as_truncated():
     sample = {"text": "\\boxed{5}", "finish_reason": "length"}
-    assert passk.classify("math", sample, {"answer": "5"}) == "truncated"
+    assert passk.classify("math", sample, {"answer": "5"}, "simple") == "truncated"
 
 
 def test_classify_math_reads_only_the_final_response():
     sample = {"text": "\\boxed{5}</think>So \\boxed{6}", "finish_reason": "stop"}
-    assert passk.classify("math", sample, {"answer": "5"}) == "wrong"
-    assert passk.classify("math", sample, {"answer": "6"}) == "correct"
+    assert passk.classify("math", sample, {"answer": "5"}, "simple") == "wrong"
+    assert passk.classify("math", sample, {"answer": "6"}, "simple") == "correct"
 
 
 def test_classify_math_without_a_final_answer():
     sample = {"text": "I give up.", "finish_reason": "stop"}
-    assert passk.classify("math", sample, {"answer": "5"}) == "no_answer"
+    assert passk.classify("math", sample, {"answer": "5"}, "simple") == "no_answer"
 
 
 def test_classify_math_accepts_equal_forms():
     sample = {"text": "\\boxed{0.5}", "finish_reason": "stop"}
-    assert passk.classify("math", sample, {"answer": "\\frac{1}{2}"}) == "correct"
+    assert passk.classify("math", sample, {"answer": "\\frac{1}{2}"}, "simple") == "correct"
 
 
 def test_classify_code_runs_the_last_block(tmp_path):
     reference = {"cases": [{"input": "", "output": "2\n"}], "func_name": None}
     good = {"text": "```python\nprint(1)\n```\n```python\nprint(2)\n```", "finish_reason": "stop"}
     bad = {"text": "```python\nprint(2)\n```\n```python\nprint(1)\n```", "finish_reason": "stop"}
-    assert passk.classify("code", good, reference) == "correct"
-    assert passk.classify("code", bad, reference) == "wrong"
-    assert passk.classify("code", {"text": "none", "finish_reason": "stop"}, reference) == "no_answer"
+    assert passk.classify("code", good, reference, "simple") == "correct"
+    assert passk.classify("code", bad, reference, "simple") == "wrong"
+    assert passk.classify("code", {"text": "none", "finish_reason": "stop"}, reference, "simple") == "no_answer"
+
+
+def test_classify_code_gets_the_official_imports():
+    reference = {
+        "cases": [{"testtype": "functional", "input": "[1, 2]", "output": "3"}],
+        "func_name": "add",
+    }
+    text = (
+        "```python\nclass Solution:\n"
+        "    def add(self, nums: List[int]) -> int:\n        return sum(nums)\n```"
+    )
+    sample = {"text": text, "finish_reason": "stop"}
+    assert passk.classify("code", sample, reference, "simple") == "correct"
+
+
+def test_sandbox_runs_threads_and_numpy():
+    reference = {"cases": [{"input": "", "output": "6\n"}], "func_name": None}
+    code = (
+        "import threading\nimport numpy as np\n"
+        "threading.stack_size(1 << 26)\n"
+        "thread = threading.Thread(target=lambda: print(int(np.arange(4).sum())))\n"
+        "thread.start()\nthread.join()\n"
+    )
+    sample = {"text": f"```python\n{code}```", "finish_reason": "stop"}
+    assert passk.classify("code", sample, reference, "simple") == "correct"
 
 
 def _rows(counts, n=4):
@@ -164,7 +224,7 @@ class _FakeOutput:
 
 class _FakeRequest:
     def __init__(self, n):
-        self.outputs = [_FakeOutput(f"sample {i} \\boxed{{5}}", "stop") for i in range(n)]
+        self.outputs = [_FakeOutput(f"sample {i}</think>\\boxed{{5}}", "stop") for i in range(n)]
 
 
 class _FakeLLM:
@@ -175,7 +235,10 @@ class _FakeLLM:
 
     def get_tokenizer(self):
         return types.SimpleNamespace(
-            apply_chat_template=lambda m, tokenize, add_generation_prompt: f"<chat>{m[0]['content']}",
+            chat_template="template",
+            apply_chat_template=lambda conversation, tokenize, add_generation_prompt: (
+                f"<chat>{conversation[0]['content']}"
+            ),
             convert_tokens_to_ids=lambda token: 7,
         )
 
@@ -226,7 +289,11 @@ def test_generate_writes_chunks_and_resumes(tmp_path, monkeypatch, fake_vllm):
     with gzip.open(chunks[0], "rt") as f:
         row = json.loads(f.readline())
     assert row["id"] == "0" and len(row["samples"]) == 2
-    assert row["samples"][0] == {"text": "sample 0 \\boxed{5}", "finish_reason": "stop", "tokens": 3}
+    assert row["samples"][0] == {
+        "text": "sample 0</think>\\boxed{5}",
+        "finish_reason": "stop",
+        "tokens": 3,
+    }
 
     chunks[1].unlink()
     _FakeLLM.calls = []
@@ -239,6 +306,36 @@ def test_generate_stops_when_settings_change(tmp_path, monkeypatch, fake_vllm):
     run_passk.generate(_args(tmp_path))
     with pytest.raises(ValueError):
         run_passk.generate(_args(tmp_path, temperature=0.6))
+
+
+@pytest.mark.parametrize(
+    "change", [{"chunk_problems": 3}, {"tokenizer": "other"}, {"lcb_source": "other"}]
+)
+def test_generate_stops_when_chunking_or_inputs_change(tmp_path, monkeypatch, fake_vllm, change):
+    _items(monkeypatch)
+    run_passk.generate(_args(tmp_path))
+    with pytest.raises(ValueError):
+        run_passk.generate(_args(tmp_path, **change))
+
+
+def test_score_refuses_an_unfinished_run(tmp_path, monkeypatch, fake_vllm):
+    _items(monkeypatch)
+    run_passk.generate(_args(tmp_path))
+    next(iter(sorted((tmp_path / "math500").glob("chunk_*.jsonl.gz")))).unlink()
+    with pytest.raises(ValueError, match="unfinished"):
+        run_passk.score(Namespace(out_dir=str(tmp_path), workers=1, ks=[1]))
+
+
+def test_score_reads_the_generate_time_source(tmp_path, monkeypatch, fake_vllm):
+    _items(monkeypatch)
+    run_passk.generate(_args(tmp_path, lcb_source="the-source"))
+    seen = []
+    items = run_passk.load_items("math500", 0, None)
+    monkeypatch.setattr(
+        run_passk, "load_items", lambda task, limit, source: seen.append(source) or items
+    )
+    run_passk.score(Namespace(out_dir=str(tmp_path), workers=1, ks=[1]))
+    assert seen == ["the-source"]
 
 
 def test_generate_uses_the_prompt_format(tmp_path, monkeypatch, fake_vllm):
@@ -261,8 +358,8 @@ def test_score_and_compare_end_to_end(tmp_path, monkeypatch, fake_vllm):
     a, b = tmp_path / "a", tmp_path / "b"
     run_passk.generate(_args(a))
     run_passk.generate(_args(b))
-    run_passk.score(Namespace(out_dir=str(a), workers=1, ks=[1, 2], lcb_source=None))
-    run_passk.score(Namespace(out_dir=str(b), workers=1, ks=[1, 2], lcb_source=None))
+    run_passk.score(Namespace(out_dir=str(a), workers=1, ks=[1, 2]))
+    run_passk.score(Namespace(out_dir=str(b), workers=1, ks=[1, 2]))
     summary = json.loads((a / "summary.json").read_text())
     assert summary["math500"]["pass@2"]["value"] == 1.0
 
@@ -271,13 +368,46 @@ def test_score_and_compare_end_to_end(tmp_path, monkeypatch, fake_vllm):
     assert json.loads(out.read_text())["math500"]["pass@1"]["difference"] == 0.0
 
 
+def _scored_run(path, monkeypatch, **settings):
+    _items(monkeypatch)
+    run_passk.generate(_args(path, **settings))
+    run_passk.score(Namespace(out_dir=str(path), workers=1, ks=[1]))
+
+
+def test_compare_refuses_different_sampling(tmp_path, monkeypatch, fake_vllm):
+    _scored_run(tmp_path / "a", monkeypatch)
+    _scored_run(tmp_path / "b", monkeypatch, temperature=0.6)
+    with pytest.raises(ValueError, match="temperature"):
+        run_passk.compare_runs(
+            Namespace(a=str(tmp_path / "a"), b=str(tmp_path / "b"), ks=[1], out=str(tmp_path / "c"))
+        )
+
+
+def test_compare_allows_different_models_and_prompts(tmp_path, monkeypatch, fake_vllm):
+    _scored_run(tmp_path / "a", monkeypatch)
+    _scored_run(tmp_path / "b", monkeypatch, model="other", prompt_format="simple")
+    run_passk.compare_runs(
+        Namespace(a=str(tmp_path / "a"), b=str(tmp_path / "b"), ks=[1], out=str(tmp_path / "c"))
+    )
+
+
+def test_compare_refuses_different_tasks(tmp_path, monkeypatch, fake_vllm):
+    _scored_run(tmp_path / "a", monkeypatch)
+    _scored_run(tmp_path / "b", monkeypatch)
+    (tmp_path / "b" / "scores" / "math500.jsonl").rename(tmp_path / "b" / "scores" / "other.jsonl")
+    with pytest.raises(ValueError, match="tasks"):
+        run_passk.compare_runs(
+            Namespace(a=str(tmp_path / "a"), b=str(tmp_path / "b"), ks=[1], out=str(tmp_path / "c"))
+        )
+
+
 def test_job_script_has_valid_syntax():
     subprocess.run(["bash", "-n", "scripts/run_passk_osc.sh"], check=True)
 
 
 def test_extract_answer_keeps_a_trailing_period_out_of_the_comparison():
     sample = {"text": "Steps\nAnswer: 12.\n", "finish_reason": "stop"}
-    assert passk.classify("math", sample, {"answer": "12"}) == "correct"
+    assert passk.classify("math", sample, {"answer": "12"}, "simple") == "correct"
 
 
 def test_binomial_helper_stays_exact_for_64_samples():

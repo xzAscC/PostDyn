@@ -28,11 +28,24 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from postdyn import passk  # noqa: E402
-from postdyn.bench import BenchItem, load_benchmark  # noqa: E402
+from postdyn.bench import BenchItem, apply_chat_template, load_benchmark  # noqa: E402
+from postdyn.persistence import atomic_write_json  # noqa: E402
 
 KINDS = {"math500": "math", "livecodebench": "code"}
 STOP_TOKENS = ("<|endoftext|>", "<|im_end|>")
-RUN_KEYS = ("model", "prompt_format", "samples", "temperature", "top_p", "max_tokens", "limit", "seed")
+# What must match to compare two runs; the model and the prompt may differ, that is the question.
+SAMPLING_KEYS = ("samples", "temperature", "top_p", "max_tokens", "limit")
+# chunk_problems is here because a finished chunk is found by its offset.
+RUN_KEYS = (
+    *SAMPLING_KEYS,
+    "model",
+    "tokenizer",
+    "prompt_format",
+    "tasks",
+    "chunk_problems",
+    "seed",
+    "lcb_source",
+)
 
 
 def log(out_dir: Path, message: str) -> None:
@@ -44,17 +57,14 @@ def log(out_dir: Path, message: str) -> None:
 
 def load_items(task: str, limit: int, source: str | None) -> list[BenchItem]:
     """All problems, or a fixed pseudo-random ``limit`` of them (load_benchmark's hash order)."""
-    held_back, rest = load_benchmark(task, n_val=limit, source=source if task != "math500" else None)
+    source = source if task != "math500" else None
+    held_back, rest = load_benchmark(task, n_val=limit, source=source)
     return held_back if limit else rest
 
 
 def render(tokenizer: Any, kind: str, question: str, prompt_format: str) -> str:
     text = passk.user_text(kind, question, prompt_format)
-    if prompt_format == "simple":
-        return text
-    return tokenizer.apply_chat_template(
-        [{"role": "user", "content": text}], tokenize=False, add_generation_prompt=True
-    )
+    return text if prompt_format == "simple" else apply_chat_template(tokenizer, text)
 
 
 def check_settings(out_dir: Path, args: argparse.Namespace) -> None:
@@ -63,7 +73,7 @@ def check_settings(out_dir: Path, args: argparse.Namespace) -> None:
     path = out_dir / "settings.json"
     if path.exists() and json.loads(path.read_text()) != settings:
         raise ValueError(f"{out_dir} was started with other settings: {path.read_text()}")
-    path.write_text(json.dumps(settings, indent=2))
+    atomic_write_json(path, settings)
 
 
 def write_chunk(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -144,11 +154,13 @@ def generate(args: argparse.Namespace) -> None:
             )
 
 
-def _score_row(job: tuple[str, dict[str, Any], dict[str, Any]]) -> dict[str, Any]:
-    kind, row, reference = job
+def _score_row(job: tuple[str, dict[str, Any], dict[str, Any], str]) -> dict[str, Any]:
+    kind, row, reference, prompt_format = job
     return {
         "id": row["id"],
-        "outcomes": [passk.classify(kind, sample, reference) for sample in row["samples"]],
+        "outcomes": [
+            passk.classify(kind, sample, reference, prompt_format) for sample in row["samples"]
+        ],
         "tokens": [sample["tokens"] for sample in row["samples"]],
     }
 
@@ -158,13 +170,18 @@ def score(args: argparse.Namespace) -> None:
     settings = json.loads((out_dir / "settings.json").read_text())
     (out_dir / "scores").mkdir(exist_ok=True)
     summary = {}
-    for directory in sorted(path for path in out_dir.iterdir() if path.name in KINDS):
-        task = directory.name
-        rows = read_chunks(directory)
+    for task in settings["tasks"]:
+        rows = read_chunks(out_dir / task)
         references = {
-            item.id: item.reference for item in load_items(task, settings["limit"], args.lcb_source)
+            item.id: item.reference
+            for item in load_items(task, settings["limit"], settings["lcb_source"])
         }
-        jobs = [(KINDS[task], row, references[row["id"]]) for row in rows]
+        missing = len(references) - len({row["id"] for row in rows})
+        if missing:
+            raise ValueError(f"{task} is unfinished: {missing} problems have no samples")
+        jobs = [
+            (KINDS[task], row, references[row["id"]], settings["prompt_format"]) for row in rows
+        ]
         if args.workers > 1:
             with multiprocessing.Pool(args.workers, maxtasksperchild=20) as pool:
                 scored = pool.map(_score_row, jobs, chunksize=1)
@@ -174,11 +191,17 @@ def score(args: argparse.Namespace) -> None:
             f.writelines(json.dumps(row) + "\n" for row in scored)
         summary[task] = passk.task_summary(scored, args.ks)
         log(out_dir, f"{task}: {summary[task]}")
-    (out_dir / "summary.json").write_text(json.dumps({**summary, "settings": settings}, indent=2))
+    atomic_write_json(out_dir / "summary.json", {**summary, "settings": settings})
 
 
 def compare_runs(args: argparse.Namespace) -> None:
+    settings = [json.loads((Path(run) / "settings.json").read_text()) for run in (args.a, args.b)]
+    different = [key for key in SAMPLING_KEYS if settings[0][key] != settings[1][key]]
+    if different:
+        raise ValueError(f"the runs differ in {different}, so they are not comparable")
     a, b = Path(args.a) / "scores", Path(args.b) / "scores"
+    if {path.name for path in a.glob("*.jsonl")} != {path.name for path in b.glob("*.jsonl")}:
+        raise ValueError("the runs hold different tasks")
     result = {}
     for path in sorted(a.glob("*.jsonl")):
         rows = [[json.loads(line) for line in open(run / path.name)] for run in (a, b)]
@@ -193,7 +216,7 @@ def main() -> None:
 
     run = commands.add_parser("generate")
     run.add_argument("--model", required=True)
-    run.add_argument("--tokenizer", required=True, help="holds the chat template; the base has none")
+    run.add_argument("--tokenizer", required=True, help="the base has no chat template")
     run.add_argument("--prompt-format", choices=("chat", "simple"), required=True)
     run.add_argument("--tasks", nargs="+", choices=tuple(KINDS), default=list(KINDS))
     run.add_argument("--samples", type=int, default=64)
@@ -213,7 +236,6 @@ def main() -> None:
     scoring.add_argument("--out-dir", required=True)
     scoring.add_argument("--workers", type=int, default=8)
     scoring.add_argument("--ks", type=int, nargs="+", default=list(passk.KS))
-    scoring.add_argument("--lcb-source")
     scoring.set_defaults(handler=score)
 
     comparison = commands.add_parser("compare")

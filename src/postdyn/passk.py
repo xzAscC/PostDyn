@@ -32,9 +32,27 @@ SIMPLE_MATH = (
     '{question}\n\nRemember to put your answer on its own line after "Answer:"'
 )
 # The report prints only the math prompt, so this one follows its pattern.
-SIMPLE_CODE = "Solve the following coding problem step by step.\n\n{question}\n\n" + CODE_INSTRUCTION
+SIMPLE_CODE = (
+    "Solve the following coding problem step by step.\n\n{question}\n\n"
+    "Enclose your final solution in a single ```python code block."
+)
 
-ANSWER_LINE = re.compile(r"^\s*\**Answer:\**\s*(.+?)\s*$", re.M)
+# LiveCodeBench's import_string (lcb_runner/evaluation/testing_util.py): the official harness puts
+# it before every solution, so a solution may use List or defaultdict without importing them.
+LCB_PREAMBLE = (
+    "from string import *\nfrom re import *\nfrom datetime import *\n"
+    "from collections import *\nfrom heapq import *\nfrom bisect import *\n"
+    "from copy import *\nfrom math import *\nfrom random import *\n"
+    "from statistics import *\nfrom itertools import *\nfrom functools import *\n"
+    "from operator import *\nfrom io import *\nfrom sys import *\nfrom json import *\n"
+    "from builtins import *\nfrom typing import *\nimport string\nimport re\n"
+    "import datetime\nimport collections\nimport heapq\nimport bisect\nimport copy\n"
+    "import math\nimport random\nimport statistics\nimport itertools\nimport functools\n"
+    "import operator\nimport io\nimport sys\nimport json\nsys.setrecursionlimit(50000)\n"
+)
+
+ANSWER_LINE = re.compile(r"^[ \t]*\**Answer:\**[ \t]*(\S.*?)[ \t]*$", re.M)
+MATH_SPAN = re.compile(r"\$([^$]+)\$")
 CODE_BLOCK = re.compile(r"```[\w+-]*[ \t]*\n(.*?)```", re.S)
 
 
@@ -54,26 +72,38 @@ def final_response(text: str) -> str:
     return text.rsplit("</think>", 1)[-1]
 
 
-def _last_boxed(text: str) -> str | None:
-    start = text.rfind("\\boxed{")
-    if start < 0:
-        return None
-    begin = start + len("\\boxed{")
-    depth = 1
-    for position in range(begin, len(text)):
-        depth += {"{": 1, "}": -1}.get(text[position], 0)
-        if depth == 0:
-            return text[begin:position]
+def _last_boxed(text: str) -> tuple[int, str] | None:
+    """Where the last non-empty ``\\boxed{}`` starts, and what it holds."""
+    end = len(text)
+    while (start := text.rfind("\\boxed{", 0, end)) >= 0:
+        begin = start + len("\\boxed{")
+        depth = 1
+        for position in range(begin, len(text)):
+            depth += {"{": 1, "}": -1}.get(text[position], 0)
+            if depth == 0:
+                if content := text[begin:position].strip():
+                    return start, content
+                break
+        end = start
     return None
 
 
+def _last_answer_line(text: str) -> tuple[int, str] | None:
+    """Where the last ``Answer:`` line starts, and its value without Markdown or trailing words."""
+    match = None
+    for match in ANSWER_LINE.finditer(text):
+        pass
+    if match is None:
+        return None
+    span = MATH_SPAN.search(match.group(1))
+    value = (span.group(1) if span else match.group(1)).strip("* ").rstrip(" .").strip("*$ ")
+    return (match.start(), value) if value else None
+
+
 def extract_answer(text: str) -> str | None:
-    """The last ``\\boxed{}``, else the last ``Answer:`` line; running text does not count."""
-    boxed = _last_boxed(text)
-    if boxed is not None:
-        return boxed
-    lines = ANSWER_LINE.findall(text)
-    return lines[-1].rstrip(" .").strip("$ ") if lines else None
+    """The later of the last ``\\boxed{}`` and the last ``Answer:`` line, never running text."""
+    found = [answer for answer in (_last_boxed(text), _last_answer_line(text)) if answer]
+    return max(found)[1] if found else None
 
 
 def last_code_block(text: str) -> str | None:
@@ -81,19 +111,36 @@ def last_code_block(text: str) -> str | None:
     return blocks[-1] if blocks else None
 
 
+def _balanced(text: str) -> bool:
+    depth = 0
+    for character in text:
+        depth += {"{": 1, "}": -1}.get(character, 0)
+        if depth < 0:
+            return False
+    return depth == 0
+
+
 def _math_correct(prediction: str, answer: str) -> bool:
     from math_verify import LatexExtractionConfig, parse, verify
 
+    # A stray } would close the box below and hide the rest of the prediction from the parser.
+    if not _balanced(prediction):
+        return False
     config = [LatexExtractionConfig()]
     gold = parse(f"\\boxed{{{answer}}}", extraction_config=config)
     target = parse(f"\\boxed{{{prediction}}}", extraction_config=config)
     return bool(verify(gold, target))
 
 
-def classify(kind: str, sample: dict[str, Any], reference: dict[str, Any]) -> str:
+def classify(
+    kind: str, sample: dict[str, Any], reference: dict[str, Any], prompt_format: str
+) -> str:
     """One of ``correct``, ``wrong``, ``no_answer`` (finished, no final answer), ``truncated``."""
     if sample["finish_reason"] != "stop":
         return "truncated"
+    # The chat prompt ends in <think>, so without </think> the model never left its thinking.
+    if prompt_format == "chat" and "</think>" not in sample["text"]:
+        return "no_answer"
     response = final_response(sample["text"])
     if kind == "math":
         prediction = extract_answer(response)
@@ -105,7 +152,7 @@ def classify(kind: str, sample: dict[str, Any], reference: dict[str, Any]) -> st
         if block is None:
             return "no_answer"
         # ``_code`` reads a fenced block, so hand it only the block chosen here.
-        return "correct" if _code(f"```python\n{block}```", reference) else "wrong"
+        return "correct" if _code(f"```python\n{LCB_PREAMBLE}{block}```", reference) else "wrong"
     raise ValueError(f"unknown kind: {kind}")
 
 

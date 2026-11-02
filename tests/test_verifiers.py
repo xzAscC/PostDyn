@@ -4,6 +4,7 @@ import inspect
 import io
 import os
 import sys
+import time
 import subprocess
 from typing import cast
 
@@ -99,14 +100,31 @@ def test_livecodebench_timeout_is_false(monkeypatch) -> None:
 
 def test_livecodebench_timeout_kills_process_group() -> None:
     code = (
-        "import subprocess; subprocess.Popen([%r, '-c', 'import time; time.sleep(30)'])"
-        % sys.executable
+        "import subprocess, time\n"
+        "subprocess.Popen([%r, '-c', 'import time; time.sleep(30)'])\n"
+        "time.sleep(30)\n" % sys.executable
     )
+    started = time.monotonic()
     assert not verifiers.verify(
         "livecodebench",
         code,
         {"cases": [{"input": "", "output": "", "testtype": "stdin"}]},
     )
+    assert time.monotonic() - started < 15
+
+
+def test_livecodebench_background_child_does_not_stall_scoring() -> None:
+    code = (
+        "import subprocess\n"
+        "subprocess.Popen([%r, '-c', 'import time; time.sleep(30)'])\n" % sys.executable
+    )
+    started = time.monotonic()
+    verifiers.verify(
+        "livecodebench",
+        code,
+        {"cases": [{"input": "", "output": "", "testtype": "stdin"}]},
+    )
+    assert time.monotonic() - started < 15
 
 
 def test_livecodebench_memory_limit_returns_false() -> None:
