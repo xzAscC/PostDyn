@@ -1,0 +1,27 @@
+scripts/run_passk.py
+  s_d6c524389bcd9e::t_231efd84671caa 37,39,190
+src/postdyn/passk.py
+  s_d6c524389bcd9e::t_2315b85a11d5e7 54-62,83-86,97-98,103-112,114-118,124-131
+src/postdyn/verifiers.py
+  s_d6c524389bcd9e::t_ba97ea7cc9de44 123-125,134-137,140-141,148-149,153,155,213-218,250
+tests/test_passk.py
+  s_d6c524389bcd9e::t_ff03cd81b86582 78-91,99-108,119-136,427-435
+tests/test_verifiers.py
+  s_d6c524389bcd9e::t_6783b49d7fd468 9,48,75,117-166,751,764-767
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1649e0037ddac057fa02ae712dff1dbd57a096f5",
+  "prompts": {},
+  "sessions": {
+    "s_d6c524389bcd9e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eb96a202-55bb-436e-9f9f-1e652f848997",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
