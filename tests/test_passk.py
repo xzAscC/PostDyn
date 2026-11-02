@@ -3,8 +3,10 @@ from __future__ import annotations
 import gzip
 import json
 import math
+import os
 import subprocess
 import sys
+import time
 import types
 from argparse import Namespace
 
@@ -306,7 +308,7 @@ def test_score_refuses_an_unfinished_run(tmp_path, monkeypatch, fake_vllm):
     run_passk.generate(_args(tmp_path))
     next(iter(sorted((tmp_path / "math500").glob("chunk_*.jsonl.gz")))).unlink()
     with pytest.raises(ValueError, match="unfinished"):
-        run_passk.score(Namespace(out_dir=str(tmp_path), workers=1, ks=[1]))
+        run_passk.score(Namespace(out_dir=str(tmp_path), workers=1, ks=[1], partial=False))
 
 
 def test_score_reads_the_generate_time_source(tmp_path, monkeypatch, fake_vllm):
@@ -317,8 +319,73 @@ def test_score_reads_the_generate_time_source(tmp_path, monkeypatch, fake_vllm):
     monkeypatch.setattr(
         run_passk, "load_items", lambda task, limit, source: seen.append(source) or items
     )
-    run_passk.score(Namespace(out_dir=str(tmp_path), workers=1, ks=[1]))
+    run_passk.score(Namespace(out_dir=str(tmp_path), workers=1, ks=[1], partial=False))
     assert seen == ["the-source"]
+
+
+def test_two_jobs_do_not_take_the_same_chunk(tmp_path):
+    chunk = tmp_path / "chunk_000000.jsonl.gz"
+    assert run_passk.claim(chunk)
+    assert not run_passk.claim(chunk)
+
+
+def test_a_dead_job_gives_its_chunk_back(tmp_path):
+    chunk = tmp_path / "chunk_000000.jsonl.gz"
+    assert run_passk.claim(chunk)
+    old = time.time() - (run_passk.CLAIM_HOURS + 1) * 3600
+    os.utime(chunk.with_suffix(".claim"), (old, old))
+    assert run_passk.claim(chunk)
+
+
+def test_generate_skips_chunks_another_job_holds(tmp_path, monkeypatch, fake_vllm):
+    _items(monkeypatch)
+    (tmp_path / "math500").mkdir(parents=True)
+    run_passk.claim(tmp_path / "math500" / "chunk_000002.jsonl.gz")
+    run_passk.generate(_args(tmp_path))
+    assert _FakeLLM.calls == [2, 1]
+    assert not (tmp_path / "math500" / "chunk_000002.jsonl.gz").exists()
+
+
+def test_generate_releases_its_claims(tmp_path, monkeypatch, fake_vllm):
+    _items(monkeypatch)
+    run_passk.generate(_args(tmp_path))
+    assert not list((tmp_path / "math500").glob("*.claim"))
+
+
+def test_a_failed_chunk_is_released(tmp_path, monkeypatch, fake_vllm):
+    _items(monkeypatch)
+
+    def fail(self, prompts, params):
+        raise RuntimeError("out of memory")
+
+    monkeypatch.setattr(_FakeLLM, "generate", fail)
+    with pytest.raises(RuntimeError):
+        run_passk.generate(_args(tmp_path))
+    assert not list((tmp_path / "math500").glob("*.claim"))
+
+
+def test_partial_score_marks_the_run_unfinished(tmp_path, monkeypatch, fake_vllm):
+    _items(monkeypatch)
+    run_passk.generate(_args(tmp_path))
+    next(iter(sorted((tmp_path / "math500").glob("chunk_*.jsonl.gz")))).unlink()
+    run_passk.score(Namespace(out_dir=str(tmp_path), workers=1, ks=[1], partial=True))
+    summary = json.loads((tmp_path / "summary.json").read_text())
+    assert summary["math500"]["n_problems"] == 3
+    assert summary["complete"] is False
+
+
+def test_compare_common_uses_the_problems_both_runs_finished(tmp_path, monkeypatch, fake_vllm):
+    _scored_run(tmp_path / "a", monkeypatch)
+    _items(monkeypatch)
+    run_passk.generate(_args(tmp_path / "b"))
+    next(iter(sorted((tmp_path / "b" / "math500").glob("chunk_*.jsonl.gz")))).unlink()
+    run_passk.score(Namespace(out_dir=str(tmp_path / "b"), workers=1, ks=[1], partial=True))
+    out = tmp_path / "c.json"
+    args = dict(a=str(tmp_path / "a"), b=str(tmp_path / "b"), ks=[1], out=str(out))
+    with pytest.raises(ValueError):
+        run_passk.compare_runs(Namespace(**args, common=False))
+    run_passk.compare_runs(Namespace(**args, common=True))
+    assert json.loads(out.read_text())["math500"]["n_common"] == 3
 
 
 def test_generate_uses_the_prompt_format(tmp_path, monkeypatch, fake_vllm):
@@ -341,20 +408,20 @@ def test_score_and_compare_end_to_end(tmp_path, monkeypatch, fake_vllm):
     a, b = tmp_path / "a", tmp_path / "b"
     run_passk.generate(_args(a))
     run_passk.generate(_args(b))
-    run_passk.score(Namespace(out_dir=str(a), workers=1, ks=[1, 2]))
-    run_passk.score(Namespace(out_dir=str(b), workers=1, ks=[1, 2]))
+    run_passk.score(Namespace(out_dir=str(a), workers=1, ks=[1, 2], partial=False))
+    run_passk.score(Namespace(out_dir=str(b), workers=1, ks=[1, 2], partial=False))
     summary = json.loads((a / "summary.json").read_text())
     assert summary["math500"]["pass@2"]["value"] == 1.0
 
     out = tmp_path / "compare.json"
-    run_passk.compare_runs(Namespace(a=str(a), b=str(b), ks=[1, 2], out=str(out)))
+    run_passk.compare_runs(Namespace(a=str(a), b=str(b), ks=[1, 2], out=str(out), common=False))
     assert json.loads(out.read_text())["math500"]["pass@1"]["difference"] == 0.0
 
 
 def _scored_run(path, monkeypatch, **settings):
     _items(monkeypatch)
     run_passk.generate(_args(path, **settings))
-    run_passk.score(Namespace(out_dir=str(path), workers=1, ks=[1]))
+    run_passk.score(Namespace(out_dir=str(path), workers=1, ks=[1], partial=False))
 
 
 def test_compare_refuses_different_sampling(tmp_path, monkeypatch, fake_vllm):
@@ -362,7 +429,7 @@ def test_compare_refuses_different_sampling(tmp_path, monkeypatch, fake_vllm):
     _scored_run(tmp_path / "b", monkeypatch, temperature=0.6)
     with pytest.raises(ValueError, match="temperature"):
         run_passk.compare_runs(
-            Namespace(a=str(tmp_path / "a"), b=str(tmp_path / "b"), ks=[1], out=str(tmp_path / "c"))
+            Namespace(a=str(tmp_path / "a"), b=str(tmp_path / "b"), ks=[1], out=str(tmp_path / "c"), common=False)
         )
 
 
@@ -371,7 +438,7 @@ def test_compare_refuses_different_test_cases(tmp_path, monkeypatch, fake_vllm):
     _scored_run(tmp_path / "b", monkeypatch, lcb_source="v6")
     with pytest.raises(ValueError, match="lcb_source"):
         run_passk.compare_runs(
-            Namespace(a=str(tmp_path / "a"), b=str(tmp_path / "b"), ks=[1], out=str(tmp_path / "c"))
+            Namespace(a=str(tmp_path / "a"), b=str(tmp_path / "b"), ks=[1], out=str(tmp_path / "c"), common=False)
         )
 
 
@@ -379,7 +446,7 @@ def test_compare_allows_different_models_and_prompts(tmp_path, monkeypatch, fake
     _scored_run(tmp_path / "a", monkeypatch)
     _scored_run(tmp_path / "b", monkeypatch, model="other", prompt_format="plain")
     run_passk.compare_runs(
-        Namespace(a=str(tmp_path / "a"), b=str(tmp_path / "b"), ks=[1], out=str(tmp_path / "c"))
+        Namespace(a=str(tmp_path / "a"), b=str(tmp_path / "b"), ks=[1], out=str(tmp_path / "c"), common=False)
     )
 
 
@@ -389,7 +456,7 @@ def test_compare_refuses_different_tasks(tmp_path, monkeypatch, fake_vllm):
     (tmp_path / "b" / "scores" / "math500.jsonl").rename(tmp_path / "b" / "scores" / "other.jsonl")
     with pytest.raises(ValueError, match="tasks"):
         run_passk.compare_runs(
-            Namespace(a=str(tmp_path / "a"), b=str(tmp_path / "b"), ks=[1], out=str(tmp_path / "c"))
+            Namespace(a=str(tmp_path / "a"), b=str(tmp_path / "b"), ks=[1], out=str(tmp_path / "c"), common=False)
         )
 
 

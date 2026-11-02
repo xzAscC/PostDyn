@@ -1,7 +1,8 @@
 """Sample every problem many times, then score the samples and report pass@k.
 
 generate (GPU): one gzip file per chunk of problems under <out-dir>/<task>/; a finished chunk is
-never redone, so a job cut off by its time limit resumes with the same command.
+never redone, so a job cut off by its time limit resumes with the same command, and several jobs
+can share a directory: each claims the chunk it works on.
 score (CPU): writes <out-dir>/scores/<task>.jsonl and <out-dir>/summary.json. Separate from
 generate because LiveCodeBench runs model code and must not hold a GPU meanwhile.
 compare: run b minus run a, paired by problem.
@@ -34,6 +35,8 @@ from postdyn.persistence import atomic_write_json  # noqa: E402
 
 KINDS = {"math500": "math", "livecodebench": "code"}
 STOP_TOKENS = ("<|endoftext|>", "<|im_end|>")
+# A chunk takes under an hour on either GPU, so an older claim belongs to a killed job.
+CLAIM_HOURS = 1.5
 # What must match to compare two runs; the model and the prompt may differ, that is the question.
 COMPARE_KEYS = ("samples", "temperature", "top_p", "max_tokens", "limit", "lcb_source")
 # chunk_problems is here because a finished chunk is found by its offset.
@@ -77,6 +80,18 @@ def check_settings(out_dir: Path, args: argparse.Namespace) -> None:
     if path.exists() and json.loads(path.read_text()) != settings:
         raise ValueError(f"{out_dir} was started with other settings: {path.read_text()}")
     atomic_write_json(path, settings)
+
+
+def claim(path: Path) -> bool:
+    """Take a chunk for this job, so several GPUs can share one condition without repeating work."""
+    lock = path.with_suffix(".claim")
+    if lock.exists() and time.time() - lock.stat().st_mtime > CLAIM_HOURS * 3600:
+        lock.unlink(missing_ok=True)
+    try:
+        os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    except FileExistsError:
+        return False
+    return True
 
 
 def write_chunk(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -127,13 +142,18 @@ def generate(args: argparse.Namespace) -> None:
         directory.mkdir(exist_ok=True)
         for begin in range(0, len(items), args.chunk_problems):
             path = directory / f"chunk_{begin:06d}.jsonl.gz"
-            if path.exists():
+            if path.exists() or not claim(path):
                 continue
             chunk = items[begin : begin + args.chunk_problems]
             started = time.time()
-            requests = llm.generate(
-                [render(tokenizer, kind, item.prompt, args.prompt_format) for item in chunk], params
-            )
+            try:
+                requests = llm.generate(
+                    [render(tokenizer, kind, item.prompt, args.prompt_format) for item in chunk],
+                    params,
+                )
+            except BaseException:
+                path.with_suffix(".claim").unlink(missing_ok=True)
+                raise
             rows = [
                 {
                     "id": item.id,
@@ -149,6 +169,7 @@ def generate(args: argparse.Namespace) -> None:
                 for item, request in zip(chunk, requests, strict=True)
             ]
             write_chunk(path, rows)
+            path.with_suffix(".claim").unlink(missing_ok=True)
             tokens = sum(sample["tokens"] for row in rows for sample in row["samples"])
             seconds = time.time() - started
             log(
@@ -174,6 +195,7 @@ def score(args: argparse.Namespace) -> None:
     settings = json.loads((out_dir / "settings.json").read_text())
     (out_dir / "scores").mkdir(exist_ok=True)
     summary = {}
+    complete = True
     for task in settings["tasks"]:
         rows = read_chunks(out_dir / task)
         references = {
@@ -181,8 +203,9 @@ def score(args: argparse.Namespace) -> None:
             for item in load_items(task, settings["limit"], settings["lcb_source"])
         }
         missing = len(references) - len({row["id"] for row in rows})
-        if missing:
+        if missing and not args.partial:
             raise ValueError(f"{task} is unfinished: {missing} problems have no samples")
+        complete = complete and not missing
         jobs = [
             (KINDS[task], row, references[row["id"]], settings["prompt_format"]) for row in rows
         ]
@@ -195,7 +218,9 @@ def score(args: argparse.Namespace) -> None:
             f.writelines(json.dumps(row) + "\n" for row in scored)
         summary[task] = passk.task_summary(scored, args.ks)
         log(out_dir, f"{task}: {summary[task]}")
-    atomic_write_json(out_dir / "summary.json", {**summary, "settings": settings})
+    atomic_write_json(
+        out_dir / "summary.json", {**summary, "complete": complete, "settings": settings}
+    )
 
 
 def compare_runs(args: argparse.Namespace) -> None:
@@ -209,7 +234,10 @@ def compare_runs(args: argparse.Namespace) -> None:
     result = {}
     for path in sorted(a.glob("*.jsonl")):
         rows = [[json.loads(line) for line in open(run / path.name)] for run in (a, b)]
-        result[path.stem] = passk.compare(rows[0], rows[1], args.ks)
+        if args.common:
+            shared = {row["id"] for row in rows[0]} & {row["id"] for row in rows[1]}
+            rows = [[row for row in run if row["id"] in shared] for run in rows]
+        result[path.stem] = {**passk.compare(rows[0], rows[1], args.ks), "n_common": len(rows[0])}
     Path(args.out).write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2))
 
@@ -240,6 +268,7 @@ def main() -> None:
     scoring.add_argument("--out-dir", required=True)
     scoring.add_argument("--workers", type=int, default=8)
     scoring.add_argument("--ks", type=int, nargs="+", default=list(passk.KS))
+    scoring.add_argument("--partial", action="store_true", help="score what exists so far")
     scoring.set_defaults(handler=score)
 
     comparison = commands.add_parser("compare")
@@ -247,6 +276,7 @@ def main() -> None:
     comparison.add_argument("--b", required=True)
     comparison.add_argument("--ks", type=int, nargs="+", default=list(passk.KS))
     comparison.add_argument("--out", required=True)
+    comparison.add_argument("--common", action="store_true", help="only problems both finished")
     comparison.set_defaults(handler=compare_runs)
 
     args = parser.parse_args()
