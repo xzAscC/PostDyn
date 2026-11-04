@@ -32,10 +32,6 @@ def fold_of(problem: str, folds: int) -> int:
     return int(hashlib.sha1(problem.encode()).hexdigest(), 16) % folds
 
 
-def prefix_length(tokens: int, fraction: float) -> int:
-    return max(1, int(tokens * fraction))
-
-
 class ProblemMoments:
     """Running first and second moments of one problem, one pair per layer."""
 
@@ -255,7 +251,6 @@ __all__ = [
     "build_map",
     "fold_of",
     "off_diagonal_share",
-    "prefix_length",
     "residual_capture",
     "spectrum_summary",
     "stable_k",

@@ -49,11 +49,6 @@ def test_fold_of_is_stable_and_in_range():
     assert {spectrum.fold_of(f"p{i}", 5) for i in range(200)} == set(range(5))
 
 
-def test_prefix_length_takes_the_share_and_at_least_one_token():
-    assert spectrum.prefix_length(3000, 0.1) == 300
-    assert spectrum.prefix_length(4, 0.1) == 1
-
-
 def test_full_map_gives_the_post_covariance_at_full_rank():
     samples, c_base = covariance(0)
     _, c_post = covariance(1)

@@ -4,12 +4,12 @@ Reads the answers of scripts/run_passk.py. Every model sees the exact answer tok
 prompt, so a gap between two models on one text is the models' gap, not a gap in the text.
 
 moments (GPU): for each model and answer text, the within-problem residual covariance of every
-layer over the rows that pick the first 10% of each answer (from the last prompt token on), one
-file per fold under <out>/moments/.
+layer over the rows that pick the first --prefix-tokens tokens of each answer (from the last
+prompt token on), one file per fold under <out>/moments/.
 report (CPU): per layer, how the covariances compare, and the k two halves of the data agree on.
 select (CPU): the problems base gets wrong and post gets right, from the pass@k scores.
-ablate (GPU): sample with a map from the other folds applied to every layer for the first tokens
-only, then let the model run free. Writes run_passk chunks for the selected problems only, so
+ablate (GPU): sample with a map from the other folds applied to the chosen layers for the first
+--prefix-tokens tokens only, then let the model run free. Writes run_passk chunks for the selected problems only, so
 score them with run_passk.py score --partial.
 
 Usage:
@@ -17,14 +17,13 @@ Usage:
   python scripts/run_spectrum.py report --out O
   python scripts/run_spectrum.py select --pass-root R --base-max 0.25 --post-min 0.75 --out O
   python scripts/run_spectrum.py ablate --pass-root R --base-model B --post-model P \\
-      --kind reorder --out O
+      --kind reorder --k 32 --layers 21-31 --out O
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import statistics
 import sys
 import time
 from collections.abc import Collection, Iterator, Sequence
@@ -76,7 +75,7 @@ def common_ids(order: Sequence[str], rows: dict[str, dict[str, Any]], problems: 
 
 
 def prefix_batches(
-    prompt: list[int], answers: Sequence[list[int]], fraction: float, batch: int, pad: int
+    prompt: list[int], answers: Sequence[list[int]], tokens: int, batch: int, pad: int
 ) -> Iterator[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
     """Prompt + prefix, padded on the right, and each token's weight (0 outside the prefix).
 
@@ -84,7 +83,7 @@ def prefix_batches(
     """
     for start in range(0, len(answers), batch):
         part = answers[start : start + batch]
-        prefixes = [a[: spectrum.prefix_length(len(a), fraction)] for a in part if a]
+        prefixes = [a[:tokens] for a in part if a]
         if not prefixes:
             continue
         width = len(prompt) + max(map(len, prefixes))
@@ -140,7 +139,7 @@ def moments(args: argparse.Namespace) -> None:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     root = Path(args.pass_root)
-    keep_knobs(out, {"samples": args.samples, "fraction": args.fraction})
+    keep_knobs(out, {"samples": args.samples, "prefix_tokens": args.prefix_tokens})
     rows = {name: rows_of(root, run) for name, (run, _) in RUNS.items()}
     ids = frozen_ids(args, rows)
     items = {item.id: item for item in load_items(TASK, LIMIT, None)}
@@ -171,7 +170,7 @@ def moments(args: argparse.Namespace) -> None:
                     for answer in complete_texts(rows[text][problem], args.samples)
                 ]
                 running = spectrum.ProblemMoments(widths, device)
-                batches = prefix_batches(prompt["input_ids"], answers, args.fraction, args.batch, pad)
+                batches = prefix_batches(prompt["input_ids"], answers, args.prefix_tokens, args.batch, pad)
                 for input_ids, mask, weights in batches:
                     use = weights.to(device) > 0
                     with torch.no_grad(), spectrum.residual_capture(model) as states:
@@ -282,10 +281,22 @@ def select(args: argparse.Namespace) -> None:
     log(out, f"selected {len(ids)} of {len(set(base) & set(post) & allowed)}")
 
 
-def steps_of(texts: Sequence[str], tokenizer: Any, fraction: float) -> int:
-    """How many tokens to steer: the median prefix of the donor's answers to this problem."""
-    lengths = [len(tokenizer(text, add_special_tokens=False)["input_ids"]) for text in texts]
-    return int(statistics.median(spectrum.prefix_length(n, fraction) for n in lengths))
+def layer_range(text: str) -> range:
+    """"21-31" -> layers 21 to 31, both included."""
+    first, last = map(int, text.split("-"))
+    return range(first, last + 1)
+
+
+def steered_layers(
+    report_rows: Sequence[dict[str, Any]], k: int | None, layers: Collection[int] | None
+) -> dict[int, int]:
+    """The k of each layer to rewrite. With one k for all, a layer whose stable k is smaller is
+    left alone: its top k directions are not reliable."""
+    return {
+        row["layer"]: row["k"] if k is None else k
+        for row in report_rows
+        if (layers is None or row["layer"] in layers) and (k is None or row["k"] >= k)
+    }
 
 
 def maps_for(
@@ -328,18 +339,19 @@ def ablate(args: argparse.Namespace) -> None:
     args.model, args.tokenizer, args.prompt_format = source, args.post_model, prompt_format
     args.max_tokens, args.chunk_problems = args.max_new_tokens, 1
     check_settings(run_dir, args)
-    table = {
-        row["layer"]: args.k if args.k is not None else row["k"]
-        for row in json.loads((out / "report.json").read_text())
-    }
-    fit_fraction = json.loads((out / "knobs.json").read_text())["fraction"]
-    if args.fraction != fit_fraction:  # the steered window must be the fitted one
-        raise ValueError(f"moments used --fraction {fit_fraction}, not {args.fraction}")
+    table = steered_layers(json.loads((out / "report.json").read_text()), args.k, args.layers)
+    fit_tokens = json.loads((out / "knobs.json").read_text())["prefix_tokens"]
+    if args.prefix_tokens != fit_tokens:  # the steered window must be the fitted one
+        raise ValueError(f"moments used --prefix-tokens {fit_tokens}, not {args.prefix_tokens}")
     ids = json.loads((out / "selected.json").read_text())
     # Chunks are named by index in selected.json, so the list is part of the run.
-    keep_knobs(run_dir, {"k": table, "fraction": args.fraction, "selected": ids})
-    if unsteered := [layer for layer, k in table.items() if k < 1 and args.kind in RANKED]:
-        log(run_dir, f"k is 0, so {args.kind} leaves layers {unsteered} unchanged")
+    keep_knobs(run_dir, {"k": table, "prefix_tokens": args.prefix_tokens, "selected": ids})
+    if args.kind != "continue":
+        if not table:
+            raise ValueError("no layer to rewrite")
+        log(run_dir, f"{args.kind} rewrites layers {sorted(table)}")
+        if unsteered := [layer for layer, k in table.items() if k < 1 and args.kind in RANKED]:
+            log(run_dir, f"k is 0, so {args.kind} leaves layers {unsteered} unchanged")
 
     tokenizer = AutoTokenizer.from_pretrained(args.post_model)
     items = {item.id: item for item in load_items(TASK, LIMIT, None)}
@@ -386,7 +398,7 @@ def ablate(args: argparse.Namespace) -> None:
                 for sample, outcome in zip(donors[problem]["samples"], outcomes[problem], strict=True)
                 if outcome == "correct"
             ] or complete_texts(donors[problem], args.samples)
-            steps = steps_of(correct, tokenizer, args.fraction)
+            steps = args.prefix_tokens
             rendered = render(tokenizer, KINDS[TASK], items[problem].prompt, prompt_format)
             prompt = tokenizer(rendered)["input_ids"]
             if steering is None:
@@ -394,7 +406,7 @@ def ablate(args: argparse.Namespace) -> None:
                     tokenizer(text, add_special_tokens=False)["input_ids"]
                     for text in (correct * args.samples)[: args.samples]
                 ]
-                leads = [a[: spectrum.prefix_length(len(a), args.fraction)] for a in leads]
+                leads = [a[:steps] for a in leads]
                 requests = llm.generate(
                     [{"prompt_token_ids": prompt + lead} for lead in leads], params(1)
                 )
@@ -436,7 +448,7 @@ def main() -> None:
     run.add_argument("--post-model", required=True)
     run.add_argument("--problems", type=int, default=200)
     run.add_argument("--samples", type=int, default=64)
-    run.add_argument("--fraction", type=float, default=0.1)
+    run.add_argument("--prefix-tokens", type=int, default=100)
     run.add_argument("--batch", type=int, default=16)
     run.add_argument("--out", required=True)
     run.set_defaults(handler=moments)
@@ -459,8 +471,11 @@ def main() -> None:
     sampling.add_argument("--kind", choices=ABLATIONS, required=True)
     sampling.add_argument("--reverse", action="store_true", help="post with base's statistics")
     sampling.add_argument("--samples", type=int, default=64)
-    sampling.add_argument("--fraction", type=float, default=0.1)
-    sampling.add_argument("--k", type=int, help="the same k in every layer, not report.json's")
+    sampling.add_argument("--prefix-tokens", type=int, default=100)
+    sampling.add_argument(
+        "--k", type=int, help="one k for all layers, not report.json's; skips layers with a smaller one"
+    )
+    sampling.add_argument("--layers", type=layer_range, help="only these layers, e.g. 21-31")
     sampling.add_argument("--max-num-seqs", type=int, default=12)
     sampling.add_argument("--gpu-memory-utilization", type=float, default=0.92)
     sampling.add_argument("--temperature", type=float, default=0.6)

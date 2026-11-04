@@ -26,8 +26,9 @@ def test_common_ids_keep_the_fixed_order_and_need_every_run():
 
 
 def test_prefix_batches_weigh_the_rows_that_pick_each_prefix_token():
-    answers = [list(range(10, 30)), list(range(40, 50))]
-    (ids, mask, weights), = run_spectrum.prefix_batches([1, 2], answers, 0.2, 8, 0)
+    # The second answer is shorter than the prefix, so all of it is used.
+    answers = [list(range(10, 30)), [40, 41]]
+    (ids, mask, weights), = run_spectrum.prefix_batches([1, 2], answers, 4, 8, 0)
     assert ids.shape == (2, 6)
     assert ids[0].tolist() == [1, 2, 10, 11, 12, 13]
     assert ids[1].tolist() == [1, 2, 40, 41, 0, 0]
@@ -39,7 +40,7 @@ def test_prefix_batches_weigh_the_rows_that_pick_each_prefix_token():
 
 
 def test_prefix_batches_split_and_skip_empty_answers():
-    batches = list(run_spectrum.prefix_batches([1], [[5], [], [6], [7]], 0.1, 2, 0))
+    batches = list(run_spectrum.prefix_batches([1], [[5], [], [6], [7]], 100, 2, 0))
     assert [len(ids) for ids, _, _ in batches] == [1, 2]
 
 
@@ -52,19 +53,17 @@ def test_select_ids_use_the_rate_over_all_samples():
 
 
 def test_keep_knobs_refuses_to_resume_under_other_knobs(tmp_path):
-    run_spectrum.keep_knobs(tmp_path, {"k": {0: 32}, "fraction": 0.1})
-    run_spectrum.keep_knobs(tmp_path, {"k": {0: 32}, "fraction": 0.1})
+    run_spectrum.keep_knobs(tmp_path, {"k": {0: 32}, "prefix_tokens": 100})
+    run_spectrum.keep_knobs(tmp_path, {"k": {0: 32}, "prefix_tokens": 100})
     with pytest.raises(ValueError, match="other knobs"):
-        run_spectrum.keep_knobs(tmp_path, {"k": {0: 128}, "fraction": 0.1})
+        run_spectrum.keep_knobs(tmp_path, {"k": {0: 128}, "prefix_tokens": 100})
 
 
-def test_steps_are_the_median_prefix_of_the_donor():
-    class Tokens:
-        def __call__(self, text, add_special_tokens=False):
-            return {"input_ids": text.split()}
-
-    texts = [" ".join("x" * 1 for _ in range(n)) for n in (10, 30, 100)]
-    assert run_spectrum.steps_of(texts, Tokens(), 0.1) == 3
+def test_one_k_skips_layers_with_a_smaller_stable_k_and_keeps_the_range():
+    rows = [{"layer": layer, "k": k} for layer, k in enumerate((64, 0, 32, 16, 32))]
+    assert run_spectrum.steered_layers(rows, None, None) == {0: 64, 1: 0, 2: 32, 3: 16, 4: 32}
+    assert run_spectrum.steered_layers(rows, 32, None) == {0: 32, 2: 32, 4: 32}
+    assert run_spectrum.steered_layers(rows, 32, run_spectrum.layer_range("1-3")) == {2: 32}
 
 
 def test_a_map_is_fit_without_the_fold_it_is_used_on():
