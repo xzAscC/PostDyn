@@ -4,7 +4,9 @@ import inspect
 import io
 import os
 import sys
+import time
 import subprocess
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -43,7 +45,7 @@ def test_livecodebench_runs_isolated_subprocess_with_timeout(monkeypatch) -> Non
     calls = []
 
     class FakeProcess:
-        pid = 123
+        pid = None
         returncode = 0
 
         def __init__(self):
@@ -70,7 +72,7 @@ def test_livecodebench_runs_isolated_subprocess_with_timeout(monkeypatch) -> Non
 
 def test_livecodebench_timeout_is_false(monkeypatch) -> None:
     class TimeoutProcess:
-        pid = 123
+        pid = None
         returncode = -9
         stdin = io.BytesIO()
         stdout = io.BytesIO()
@@ -99,14 +101,81 @@ def test_livecodebench_timeout_is_false(monkeypatch) -> None:
 
 def test_livecodebench_timeout_kills_process_group() -> None:
     code = (
-        "import subprocess; subprocess.Popen([%r, '-c', 'import time; time.sleep(30)'])"
-        % sys.executable
+        "import subprocess, time\n"
+        "subprocess.Popen([%r, '-c', 'import time; time.sleep(30)'])\n"
+        "time.sleep(30)\n" % sys.executable
     )
+    started = time.monotonic()
     assert not verifiers.verify(
         "livecodebench",
         code,
         {"cases": [{"input": "", "output": "", "testtype": "stdin"}]},
     )
+    assert time.monotonic() - started < 15
+
+
+def _functional(code: str, output: str, name: str = "add") -> bool:
+    reference = {
+        "cases": [{"testtype": "functional", "input": "[1, 2]", "output": output}],
+        "func_name": name,
+    }
+    return verifiers.verify("livecodebench", code, reference)
+
+
+SOLUTION = "class Solution:\n    def add(self, nums):\n        return sum(nums)\n"
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        SOLUTION + "print(Solution().add([1, 2]))\n",
+        SOLUTION.replace("return", "print('debug')\n        return"),
+        "import numpy as np\n" + SOLUTION.replace("sum(nums)", "np.int64(sum(nums))"),
+    ],
+)
+def test_functional_compares_only_the_return_value(code: str) -> None:
+    assert _functional(code, "3")
+
+
+def test_functional_uses_solution_over_a_module_function() -> None:
+    assert _functional("from operator import add\n" + SOLUTION, "3")
+
+
+def test_functional_does_not_fall_back_to_the_module() -> None:
+    assert not _functional("from math import gcd\nclass Solution:\n    pass\n", "1", "gcd")
+
+
+def _stdio(code: str, stdin: str, output: str) -> bool:
+    reference = {"cases": [{"input": stdin, "output": output, "testtype": "stdin"}]}
+    return verifiers.verify("livecodebench", code, reference)
+
+
+def test_stdin_larger_than_a_pipe_reaches_a_solution_that_exits_early() -> None:
+    assert _stdio("print(input())\n", "7\n" + "x" * 300_000, "7\n")
+
+
+def test_unread_stdin_does_not_block_scoring() -> None:
+    started = time.monotonic()
+    assert not _stdio("import time\ntime.sleep(30)\n", "x" * 300_000, "")
+    assert time.monotonic() - started < 15
+
+
+def test_stdout_above_the_old_cap_is_read_in_full() -> None:
+    assert _stdio("print('x' * 2_000_000)\n", "", "x" * 2_000_000 + "\n")
+
+
+def test_livecodebench_background_child_does_not_stall_scoring() -> None:
+    code = (
+        "import subprocess\n"
+        "subprocess.Popen([%r, '-c', 'import time; time.sleep(30)'])\n" % sys.executable
+    )
+    started = time.monotonic()
+    verifiers.verify(
+        "livecodebench",
+        code,
+        {"cases": [{"input": "", "output": "", "testtype": "stdin"}]},
+    )
+    assert time.monotonic() - started < 15
 
 
 def test_livecodebench_memory_limit_returns_false() -> None:
@@ -679,7 +748,7 @@ def test_livecodebench_stdin_and_functional_paths_share_sandbox(monkeypatch) -> 
     calls = []
 
     class FakeProcess:
-        pid = 123
+        pid = None
         returncode = 0
 
         def __init__(self, output: bytes):
@@ -692,8 +761,10 @@ def test_livecodebench_stdin_and_functional_paths_share_sandbox(monkeypatch) -> 
 
     def fake_popen(command, **kwargs):
         calls.append((command, kwargs))
-        output = b"5" if "functional_driver.py" in command[2] else b"3\n"
-        return FakeProcess(output)
+        if "functional_driver.py" in command[2]:
+            Path(command[-1]).write_text("5")
+            return FakeProcess(b"")
+        return FakeProcess(b"3\n")
 
     monkeypatch.setattr(verifiers.subprocess, "Popen", fake_popen)
     assert verifiers.verify(
