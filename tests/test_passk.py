@@ -332,6 +332,13 @@ def test_two_jobs_do_not_take_the_same_chunk(tmp_path):
     assert not run_passk.claim(chunk)
 
 
+def test_a_claim_names_its_job(tmp_path, monkeypatch):
+    monkeypatch.setenv("SLURM_JOB_ID", "8350514")
+    chunk = tmp_path / "chunk_000000.jsonl.gz"
+    assert run_passk.claim(chunk)
+    assert chunk.with_suffix(".claim").read_text() == "8350514"
+
+
 def test_a_dead_job_gives_its_chunk_back(tmp_path):
     chunk = tmp_path / "chunk_000000.jsonl.gz"
     assert run_passk.claim(chunk)

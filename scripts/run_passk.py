@@ -93,9 +93,12 @@ def claim(path: Path) -> bool:
     if lock.exists() and time.time() - lock.stat().st_mtime > CLAIM_HOURS * 3600:
         lock.unlink(missing_ok=True)
     try:
-        os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
         return False
+    # The job that holds it: a claim whose job is no longer in squeue was left by a killed job.
+    os.write(descriptor, os.environ.get("SLURM_JOB_ID", "").encode())
+    os.close(descriptor)
     return True
 
 
