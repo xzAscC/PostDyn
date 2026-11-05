@@ -100,12 +100,22 @@ def _answer_line(text: str) -> str | None:
     return content or None
 
 
+def _final_answer(text: str) -> str | None:
+    """Under RL-Zero's own template, whichever comes last: the last ``Answer:`` line or the last
+    box. The template asks for the line, but RL-Zero-Math boxed 56 of 64 smoke samples and wrote
+    the line once. Still one answer per sample, as with the box alone."""
+    lines = list(ANSWER_LINE.finditer(text))
+    if lines and lines[-1].start() > text.rfind("\\boxed{"):
+        return _answer_line(text)
+    return _last_box(text)
+
+
 def _math_outcome(response: str, answer: str, prompt_format: str = "chat") -> str:
     """Parse the last box alone: math-verify would read text after it, or merge all boxes.
-    Under the ``answer`` prompt the last ``Answer:`` line takes the box's place."""
+    Under the ``answer`` prompt an ``Answer:`` line after the last box takes its place."""
     from math_verify import LatexExtractionConfig, parse, verify
 
-    content = _answer_line(response) if prompt_format == "answer" else _last_box(response)
+    content = _final_answer(response) if prompt_format == "answer" else _last_box(response)
     if content is None:
         return "no_answer"
     config = [LatexExtractionConfig()]

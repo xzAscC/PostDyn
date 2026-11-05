@@ -87,11 +87,15 @@ def test_only_the_last_closed_box_counts(text, gold, outcome):
         ("**Answer:** $\\frac{1}{2}$", "0.5", "correct"),
         ("Final answer: 12.", "12", "correct"),
         ("answer: \\boxed{-2,1}", "-2,1", "correct"),
-        ("Thus \\boxed{5}.", "5", "no_answer"),
+        ("Thus \\boxed{5}.", "5", "correct"),
+        ("Answer: 3\nno, \\boxed{5}", "5", "correct"),
+        ("\\boxed{3}\nno.\nAnswer: 5", "5", "correct"),
+        ("\\boxed{3}\nno.\nAnswer: 5", "3", "wrong"),
         ("Answer:", "5", "no_answer"),
+        ("so x = 5", "5", "no_answer"),
     ],
 )
-def test_the_answer_prompt_reads_the_last_answer_line(text, gold, outcome):
+def test_the_answer_prompt_reads_the_last_final_answer(text, gold, outcome):
     sample = {"text": text, "finish_reason": "stop"}
     assert passk.classify("math", sample, {"answer": gold}, "answer") == outcome
 
