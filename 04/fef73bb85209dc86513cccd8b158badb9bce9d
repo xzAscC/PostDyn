@@ -1,0 +1,27 @@
+scripts/run_spectrum.py
+  s_33571d7c42a4f6::t_0c3da513d381b1 120-126,149,183,350-355,395,462,486
+src/postdyn/spectrum.py
+  s_33571d7c42a4f6::t_f619bbafffe780 28-36,218-220,228,264,266
+src/postdyn/vllm_steering.py
+  s_33571d7c42a4f6::t_fd93d72bfd4b9e 27,128-130,133,144,146-148,150-151,157-166,168-170
+tests/test_spectrum.py
+  s_33571d7c42a4f6::t_be821cd6bc1051 168-184
+tests/test_vllm_steering.py
+  s_33571d7c42a4f6::t_cb1d7c4241ebed 79-102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "04fef73bb85209dc86513cccd8b158badb9bce9d",
+  "prompts": {},
+  "sessions": {
+    "s_33571d7c42a4f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06c25a58-b0bd-44e4-871d-28f0fe6042eb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
