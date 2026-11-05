@@ -39,9 +39,13 @@ STOP_TOKENS = ("<|endoftext|>", "<|im_end|>")
 # only a claim older than that belongs to a killed job. A wrong guess repeats a problem, no more.
 CLAIM_HOURS = 3.0
 # What must match to compare two runs; the model and the prompt may differ, that is the question.
-COMPARE_KEYS = ("samples", "temperature", "top_p", "max_tokens", "limit", "lcb_source")
+# The sample count may differ too: pass@k is unbiased for any k up to it, and compare reports only
+# k up to the smaller count (a 4-sample run against the 64-sample base).
+COMPARE_KEYS = ("temperature", "top_p", "max_tokens", "limit", "lcb_source")
 # chunk_problems is here because a finished chunk is found by its offset.
-RUN_KEYS = (*COMPARE_KEYS, "model", "tokenizer", "prompt_format", "tasks", "chunk_problems", "seed")
+RUN_KEYS = (
+    *COMPARE_KEYS, "samples", "model", "tokenizer", "prompt_format", "tasks", "chunk_problems", "seed"
+)
 
 
 def check_transformers(version: str) -> None:

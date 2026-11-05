@@ -453,6 +453,16 @@ def test_compare_allows_different_models_and_prompts(tmp_path, monkeypatch, fake
     )
 
 
+def test_compare_allows_different_sample_counts_up_to_the_smaller(tmp_path, monkeypatch, fake_vllm):
+    _scored_run(tmp_path / "a", monkeypatch, samples=4)
+    _scored_run(tmp_path / "b", monkeypatch, samples=2)
+    out = tmp_path / "c"
+    run_passk.compare_runs(
+        Namespace(a=str(tmp_path / "a"), b=str(tmp_path / "b"), ks=[1, 2, 4], out=str(out), common=False)
+    )
+    assert set(json.loads(out.read_text())["math500"]) == {"pass@1", "pass@2", "n_common"}
+
+
 def test_compare_refuses_different_tasks(tmp_path, monkeypatch, fake_vllm):
     _scored_run(tmp_path / "a", monkeypatch)
     _scored_run(tmp_path / "b", monkeypatch)
