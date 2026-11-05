@@ -83,11 +83,29 @@ def _last_box(text: str) -> str | None:
     return None
 
 
-def _math_outcome(response: str, answer: str) -> str:
-    """Parse the last box alone: math-verify would read text after it, or merge all boxes."""
+ANSWER_LINE = re.compile(r"\banswer[ \t]*:[ \t]*(.*)$", re.I | re.M)
+
+
+def _answer_line(text: str) -> str | None:
+    """What the last ``Answer:`` line holds, for RL-Zero's own template, which asks for the
+    answer on the last line in the form ``Answer: $Answer``. Dollar signs, bold markers and a
+    final period around it are dropped; a box inside it counts as its content."""
+    lines = ANSWER_LINE.findall(text)
+    if not lines:
+        return None
+    content = lines[-1].strip().strip("*").strip()
+    if "\\boxed{" in content:
+        return _last_box(content)
+    content = content.rstrip(".").strip().strip("$").strip()
+    return content or None
+
+
+def _math_outcome(response: str, answer: str, prompt_format: str = "chat") -> str:
+    """Parse the last box alone: math-verify would read text after it, or merge all boxes.
+    Under the ``answer`` prompt the last ``Answer:`` line takes the box's place."""
     from math_verify import LatexExtractionConfig, parse, verify
 
-    content = _last_box(response)
+    content = _answer_line(response) if prompt_format == "answer" else _last_box(response)
     if content is None:
         return "no_answer"
     config = [LatexExtractionConfig()]
@@ -109,7 +127,7 @@ def classify(
         return "no_answer"
     response = final_response(sample["text"])
     if kind == "math":
-        return _math_outcome(response, reference["answer"])
+        return _math_outcome(response, reference["answer"], prompt_format)
     if kind == "code":
         block = last_code_block(response)
         if block is None:

@@ -74,6 +74,11 @@ def load_items(task: str, limit: int, source: str | None) -> list[BenchItem]:
 
 
 def render(tokenizer: Any, kind: str, question: str, prompt_format: str) -> str:
+    if prompt_format == "answer":
+        # RL-Zero's own template wraps the bare question in its instruction to end on "Answer:".
+        if kind != "math":
+            raise ValueError("the answer prompt is for math only")
+        return apply_chat_template(tokenizer, question)
     text = passk.user_text(kind, question)
     return text if prompt_format == "plain" else apply_chat_template(tokenizer, text)
 
@@ -257,7 +262,7 @@ def main() -> None:
     run = commands.add_parser("generate")
     run.add_argument("--model", required=True)
     run.add_argument("--tokenizer", required=True, help="the base has no chat template")
-    run.add_argument("--prompt-format", choices=("chat", "plain"), required=True)
+    run.add_argument("--prompt-format", choices=("chat", "plain", "answer"), required=True)
     run.add_argument("--tasks", nargs="+", choices=tuple(KINDS), default=list(KINDS))
     run.add_argument("--samples", type=int, default=64)
     run.add_argument("--temperature", type=float, default=0.6)

@@ -78,6 +78,24 @@ def test_only_the_last_closed_box_counts(text, gold, outcome):
     assert passk.classify("math", sample, {"answer": gold}, "plain") == outcome
 
 
+@pytest.mark.parametrize(
+    ("text", "gold", "outcome"),
+    [
+        ("so x = 7.\nAnswer: 7", "7", "correct"),
+        ("Answer: 3\nwait, redo.\nAnswer: 5", "5", "correct"),
+        ("Answer: 3\nwait, redo.\nAnswer: 5", "3", "wrong"),
+        ("**Answer:** $\\frac{1}{2}$", "0.5", "correct"),
+        ("Final answer: 12.", "12", "correct"),
+        ("answer: \\boxed{-2,1}", "-2,1", "correct"),
+        ("Thus \\boxed{5}.", "5", "no_answer"),
+        ("Answer:", "5", "no_answer"),
+    ],
+)
+def test_the_answer_prompt_reads_the_last_answer_line(text, gold, outcome):
+    sample = {"text": text, "finish_reason": "stop"}
+    assert passk.classify("math", sample, {"answer": gold}, "answer") == outcome
+
+
 def test_last_code_block_takes_the_final_block():
     text = "```python\nprint(1)\n```\nthen\n```python\nprint(2)\n```"
     assert passk.last_code_block(text) == "print(2)\n"
@@ -411,6 +429,10 @@ def test_generate_uses_the_prompt_format(tmp_path, monkeypatch, fake_vllm):
     seen.clear()
     run_passk.generate(_args(tmp_path / "plain", prompt_format="plain"))
     assert seen[0] == "q0\n\n" + passk.BOXED_INSTRUCTION
+    seen.clear()
+    # RL-Zero's template brings its own instruction, so it gets the bare question.
+    run_passk.generate(_args(tmp_path / "answer", prompt_format="answer"))
+    assert seen[0] == "<chat>q0"
 
 
 def test_score_and_compare_end_to_end(tmp_path, monkeypatch, fake_vllm):

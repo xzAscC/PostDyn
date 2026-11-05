@@ -18,7 +18,9 @@
 # third of the layers back at the base weights (src/postdyn/hybrid.py).
 # RL-Zero (Olmo-3-7B-RL-Zero-Math, RL straight from the base): rlzero-plain, and
 # rlzero-{attn,mlp}-{front,middle,back} with that part back at the base weights. All of them get
-# base-plain's prompt, so they differ from base-plain only in the weights.
+# base-plain's prompt, so they differ from base-plain only in the weights. rlzero-answer, and the
+# replacements with RLZERO_FORMAT=answer, use RL-Zero's own template instead: the bare question,
+# answered on a last line "Answer: ...".
 # CONDITION=auto picks when the job starts, for jobs that queue for hours, from AUTO_CONDITIONS
 # (default: the SFT conditions).
 # Usage: CONDITION=sft-chat RUN=passk64 SCORE=1 sbatch scripts/run_passk_osc.sh --limit 4 --samples 16
@@ -41,7 +43,7 @@ hybrid_dir() {
 pick_condition() {
     local best="" best_score=-1 condition done_count score
     for condition in ${AUTO_CONDITIONS:-sft-chat base-plain attn-front attn-middle attn-back mlp-front mlp-middle mlp-back}; do
-        case "$condition" in *-chat | *-plain) ;; *) [ -d "$(hybrid_dir "$condition")" ] || continue ;; esac
+        case "$condition" in *-chat | *-plain | *-answer) ;; *) [ -d "$(hybrid_dir "$condition")" ] || continue ;; esac
         done_count=$(ls "$ROOT/$RUN/$condition/$AUTO_TASK" 2>/dev/null | grep -c 'gz$' || true)
         [ "$done_count" -lt "$AUTO_TARGET" ] || continue
         score=$((done_count + 20 * $(ls "$ROOT/$RUN/$condition/$AUTO_TASK" 2>/dev/null | grep -c 'claim$' || true)))
@@ -64,12 +66,15 @@ case "$CONDITION" in
     sft-chat) MODEL="$TOKENIZER" FORMAT=chat ;;
     base-plain) MODEL="$BASE" FORMAT=plain ;;
     rlzero-plain) MODEL="$RLZERO" FORMAT=plain ;;
+    rlzero-answer) MODEL="$RLZERO" FORMAT=answer ;;
     attn-front|attn-middle|attn-back|mlp-front|mlp-middle|mlp-back)
         TRAINED="$TOKENIZER" MODEL="$(hybrid_dir "$CONDITION")" FORMAT=chat ;;
     rlzero-attn-front|rlzero-attn-middle|rlzero-attn-back|rlzero-mlp-front|rlzero-mlp-middle|rlzero-mlp-back)
-        TRAINED="$RLZERO" MODEL="$(hybrid_dir "$CONDITION")" FORMAT=plain ;;
+        TRAINED="$RLZERO" MODEL="$(hybrid_dir "$CONDITION")" FORMAT="${RLZERO_FORMAT:-plain}" ;;
     *) echo "unknown CONDITION: $CONDITION" >&2; exit 2 ;;
 esac
+# The answer template is RL-Zero's own, so it comes with RL-Zero's tokenizer.
+[ "$FORMAT" != answer ] || TOKENIZER="$RLZERO"
 LCB="$(echo /fs/scratch/PAS2324/zhu.3944/hf/hub/datasets--livecodebench--code_generation_lite/snapshots/*)"
 OUT="$ROOT/${RUN:?set RUN}/$CONDITION"
 
@@ -86,7 +91,7 @@ set -u
 
 echo "job ${SLURM_JOB_ID:-local} on $(hostname): $CONDITION -> $OUT"
 case "$CONDITION" in
-    *-chat | *-plain) ;;
+    *-chat | *-plain | *-answer) ;;
     *) [ -d "$MODEL" ] || python "$REPO/scripts/make_passk_hybrid.py" "$TRAINED" "$BASE" "$MODEL" \
         "${CONDITION#rlzero-}" ;;
 esac
