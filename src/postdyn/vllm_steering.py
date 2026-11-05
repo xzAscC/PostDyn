@@ -24,7 +24,7 @@ os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
 import torch
 
 from .intervention import project_out, replace_basis
-from .spectrum import StateMap, apply_map
+from .spectrum import StateMap, apply_map, site_module
 
 Detacher = Callable[[], None]
 
@@ -125,11 +125,12 @@ def steered_rows(positions: torch.Tensor, prompt_tokens: int, steps: int) -> tor
 class PrefixMaps:
     """Rewrite every listed layer during the first new tokens of one prompt's samples.
 
-    Needs the LLM configuration in this module's docstring. Set a problem with ``set`` before each
-    generate call and give each call one prompt only.
+    ``site`` "mlp" rewrites only the MLP's share of a block's output. Needs the LLM configuration
+    in this module's docstring. Set a problem with ``set`` before each generate call and give each
+    call one prompt only.
     """
 
-    def __init__(self, llm: Any, layers: list[int]) -> None:
+    def __init__(self, llm: Any, layers: list[int], site: str = "residual") -> None:
         blocks = _engine_model(llm).model.layers
         self._detach = []
         self._maps: dict[int, StateMap] = {}
@@ -140,24 +141,33 @@ class PrefixMaps:
         self._rows = torch.zeros(0, dtype=torch.bool)
         self._any = False
         for layer in layers:
-            self._wrap(blocks[layer], layer)
+            self._wrap(blocks[layer], layer, site)
 
-    def _wrap(self, block: Any, layer: int) -> None:
-        original = block.forward
+    def _wrap(self, block: Any, layer: int, site: str) -> None:
+        target = site_module(block, site)
+        original_block, original_target = block.forward, target.forward
 
-        def forward(positions: torch.Tensor, hidden_states: torch.Tensor) -> torch.Tensor:
-            out = original(positions, hidden_states)
-            # Each step reaches the first layer first: one GPU sync per step, not per layer.
-            if layer == self._first:
-                self._rows = steered_rows(positions, self._prompt_tokens, self._steps)
-                self._any = bool(self._rows.any())
+        def rewrite(*args: Any, **kw: Any) -> torch.Tensor:
+            out = original_target(*args, **kw)
             if self._any:
                 rows = self._rows
                 out[rows] = apply_map(out[rows], self._maps[layer], self._means[layer]).to(out.dtype)
             return out
 
+        def forward(positions: torch.Tensor, hidden_states: torch.Tensor) -> torch.Tensor:
+            # Each step reaches the first layer first: one GPU sync per step, not per layer. The
+            # rows are found before the block runs, as the MLP site is rewritten inside it.
+            if layer == self._first:
+                self._rows = steered_rows(positions, self._prompt_tokens, self._steps)
+                self._any = bool(self._rows.any())
+            return (rewrite if target is block else original_block)(positions, hidden_states)
+
+        if target is not block:
+            target.forward = rewrite
         block.forward = forward
-        self._detach.append(lambda: setattr(block, "forward", original))
+        self._detach.append(lambda: setattr(block, "forward", original_block))
+        if target is not block:
+            self._detach.append(lambda: setattr(target, "forward", original_target))
 
     def set(
         self,

@@ -117,6 +117,13 @@ def keep_knobs(directory: Path, knobs: dict[str, Any]) -> None:
     atomic_write_json(path, knobs)
 
 
+def fit_knobs(args: argparse.Namespace) -> dict[str, Any]:
+    """What the moments of one output directory were fit with. Site is left out when it is the
+    residual stream, so directories from before it existed still match."""
+    knobs = {"samples": args.samples, "prefix_tokens": args.prefix_tokens}
+    return knobs if args.site == "residual" else {**knobs, "site": args.site}
+
+
 def moment_path(out: Path, model: str, text: str, fold: int) -> Path:
     return out / "moments" / f"{model}__on__{text}" / f"fold_{fold}.pt"
 
@@ -139,7 +146,7 @@ def moments(args: argparse.Namespace) -> None:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     root = Path(args.pass_root)
-    keep_knobs(out, {"samples": args.samples, "prefix_tokens": args.prefix_tokens})
+    keep_knobs(out, fit_knobs(args))
     rows = {name: rows_of(root, run) for name, (run, _) in RUNS.items()}
     ids = frozen_ids(args, rows)
     items = {item.id: item for item in load_items(TASK, LIMIT, None)}
@@ -173,7 +180,7 @@ def moments(args: argparse.Namespace) -> None:
                 batches = prefix_batches(prompt["input_ids"], answers, args.prefix_tokens, args.batch, pad)
                 for input_ids, mask, weights in batches:
                     use = weights.to(device) > 0
-                    with torch.no_grad(), spectrum.residual_capture(model) as states:
+                    with torch.no_grad(), spectrum.residual_capture(model, args.site) as states:
                         # The decoder alone: the hooks need no logits.
                         model.model(input_ids=input_ids.to(device), attention_mask=mask.to(device))
                         running.update(
@@ -340,9 +347,12 @@ def ablate(args: argparse.Namespace) -> None:
     args.max_tokens, args.chunk_problems = args.max_new_tokens, 1
     check_settings(run_dir, args)
     table = steered_layers(json.loads((out / "report.json").read_text()), args.k, args.layers)
-    fit_tokens = json.loads((out / "knobs.json").read_text())["prefix_tokens"]
-    if args.prefix_tokens != fit_tokens:  # the steered window must be the fitted one
-        raise ValueError(f"moments used --prefix-tokens {fit_tokens}, not {args.prefix_tokens}")
+    fitted = json.loads((out / "knobs.json").read_text())
+    # The steered window and site must be the fitted ones.
+    if args.prefix_tokens != fitted["prefix_tokens"]:
+        raise ValueError(f"moments used --prefix-tokens {fitted['prefix_tokens']}, not {args.prefix_tokens}")
+    if args.site != fitted.get("site", "residual"):
+        raise ValueError(f"moments used --site {fitted.get('site', 'residual')}, not {args.site}")
     ids = json.loads((out / "selected.json").read_text())
     # Chunks are named by index in selected.json, so the list is part of the run.
     keep_knobs(run_dir, {"k": table, "prefix_tokens": args.prefix_tokens, "selected": ids})
@@ -382,7 +392,7 @@ def ablate(args: argparse.Namespace) -> None:
     fit, steering = None, None
     if args.kind != "continue":
         fit = (read_moments(out, source, "post"), read_moments(out, donor, "post"))
-        steering = PrefixMaps(llm, sorted(table))
+        steering = PrefixMaps(llm, sorted(table), args.site)
     held_fold, maps = None, {}
 
     # By fold, so only one fold's maps sit in GPU memory.
@@ -449,6 +459,7 @@ def main() -> None:
     run.add_argument("--problems", type=int, default=200)
     run.add_argument("--samples", type=int, default=64)
     run.add_argument("--prefix-tokens", type=int, default=100)
+    run.add_argument("--site", choices=spectrum.SITES, default="residual")
     run.add_argument("--batch", type=int, default=16)
     run.add_argument("--out", required=True)
     run.set_defaults(handler=moments)
@@ -472,6 +483,7 @@ def main() -> None:
     sampling.add_argument("--reverse", action="store_true", help="post with base's statistics")
     sampling.add_argument("--samples", type=int, default=64)
     sampling.add_argument("--prefix-tokens", type=int, default=100)
+    sampling.add_argument("--site", choices=spectrum.SITES, default="residual")
     sampling.add_argument(
         "--k", type=int, help="one k for all layers, not report.json's; the run goes to <kind>-k<k>"
     )

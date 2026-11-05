@@ -25,6 +25,15 @@ from .intervention import _block_output_tensor, _layer
 from .spectra import eigensystem, subsim
 
 KINDS = ("identity", "random", "mean", "spectrum", "reorder", "full")
+# Where a map acts: the block's output, or only the MLP's share of it (Olmo 3 adds
+# post_feedforward_layernorm(mlp(x)) to the residual stream).
+SITES = ("residual", "mlp")
+
+
+def site_module(block: Any, site: str) -> Any:
+    if site not in SITES:
+        raise ValueError(f"unknown site: {site}")
+    return block if site == "residual" else block.post_feedforward_layernorm
 
 
 def fold_of(problem: str, folds: int) -> int:
@@ -206,8 +215,9 @@ def stable_k(u_a: Tensor, u_b: Tensor, grid: tuple[int, ...], threshold: float) 
 
 
 @contextmanager
-def residual_capture(model: Any) -> Iterator[dict[int, Tensor]]:
-    """Every block's own output: hidden_capture would give the normed last state instead."""
+def residual_capture(model: Any, site: str = "residual") -> Iterator[dict[int, Tensor]]:
+    """Every block's own output (or its MLP's share): hidden_capture would give the normed last
+    state instead."""
     captured: dict[int, Tensor] = {}
     handles = []
     for layer in range(len(model.model.layers)):
@@ -215,7 +225,7 @@ def residual_capture(model: Any) -> Iterator[dict[int, Tensor]]:
         def hook(_module: Any, _inputs: Any, output: Any, layer: int = layer) -> None:
             captured[layer] = _block_output_tensor(output)
 
-        handles.append(_layer(model, layer).register_forward_hook(hook))
+        handles.append(site_module(_layer(model, layer), site).register_forward_hook(hook))
     try:
         yield captured
     finally:
@@ -251,7 +261,9 @@ __all__ = [
     "build_map",
     "fold_of",
     "off_diagonal_share",
+    "SITES",
     "residual_capture",
+    "site_module",
     "spectrum_summary",
     "stable_k",
 ]

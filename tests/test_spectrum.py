@@ -165,3 +165,20 @@ def test_residual_capture_returns_each_block_output():
         model(torch.ones(1, 3, 2))
     assert sorted(captured) == [0, 1]
     assert captured[1].shape == (1, 3, 2)
+
+
+class MLPBlock(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.post_feedforward_layernorm = nn.Identity()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.post_feedforward_layernorm(2 * x)
+
+
+def test_residual_capture_can_take_the_mlp_share():
+    model = Toy(1)
+    model.model.layers[0] = MLPBlock()
+    with spectrum.residual_capture(model, "mlp") as captured:
+        model(torch.ones(1, 3, 2))
+    assert captured[0].flatten().tolist() == [2.0] * 6

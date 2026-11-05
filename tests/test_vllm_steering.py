@@ -76,3 +76,27 @@ def test_prefix_maps_move_only_rows_in_the_prefix_and_detach():
     assert out[:, 0].tolist() == [1.0, 1.0, 0.0]
     prefix.detach()
     assert blocks[0].forward == original
+
+
+class MLPBlock:
+    """As Olmo 3: the residual plus the normed MLP output (here the input itself)."""
+
+    def __init__(self):
+        self.post_feedforward_layernorm = SimpleNamespace(forward=lambda x: x.clone())
+
+    def forward(self, positions, hidden_states):
+        return hidden_states + self.post_feedforward_layernorm.forward(hidden_states)
+
+
+def test_the_mlp_site_rewrites_only_the_mlp_share_and_detaches():
+    blocks = [MLPBlock()]
+    norm = blocks[0].post_feedforward_layernorm
+    original = norm.forward
+    prefix = vllm_steering.PrefixMaps(fake_llm(blocks), [0], "mlp")
+    empty = torch.zeros(2, 0)
+    prefix.set({0: StateMap(empty, empty, torch.ones(2))}, {0: torch.zeros(2)}, 2, 2)
+    out = blocks[0].forward(torch.tensor([1, 2, 3]), torch.ones(3, 2))
+    # Residual 1 plus the MLP's 1, and the shift only on the MLP share of the steered rows.
+    assert out[:, 0].tolist() == [3.0, 3.0, 2.0]
+    prefix.detach()
+    assert norm.forward == original
