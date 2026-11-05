@@ -1,0 +1,19 @@
+scripts/run_passk_osc.sh
+  s_d6c524389bcd9e::t_2611e7e340f11a 99-104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bc42f9d8ba9d1836bd22296628e14d6d9fceaa80",
+  "prompts": {},
+  "sessions": {
+    "s_d6c524389bcd9e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eb96a202-55bb-436e-9f9f-1e652f848997",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
