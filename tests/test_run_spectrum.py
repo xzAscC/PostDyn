@@ -59,11 +59,11 @@ def test_keep_knobs_refuses_to_resume_under_other_knobs(tmp_path):
         run_spectrum.keep_knobs(tmp_path, {"k": {0: 128}, "prefix_tokens": 100})
 
 
-def test_one_k_skips_layers_with_a_smaller_stable_k_and_keeps_the_range():
+def test_one_k_goes_to_every_layer_in_the_range():
     rows = [{"layer": layer, "k": k} for layer, k in enumerate((64, 0, 32, 16, 32))]
     assert run_spectrum.steered_layers(rows, None, None) == {0: 64, 1: 0, 2: 32, 3: 16, 4: 32}
-    assert run_spectrum.steered_layers(rows, 32, None) == {0: 32, 2: 32, 4: 32}
-    assert run_spectrum.steered_layers(rows, 32, run_spectrum.layer_range("1-3")) == {2: 32}
+    assert run_spectrum.steered_layers(rows, 128, None) == {layer: 128 for layer in range(5)}
+    assert run_spectrum.steered_layers(rows, 128, run_spectrum.layer_range("1-3")) == {1: 128, 2: 128, 3: 128}
 
 
 def test_a_map_is_fit_without_the_fold_it_is_used_on():

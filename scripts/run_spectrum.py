@@ -290,12 +290,11 @@ def layer_range(text: str) -> range:
 def steered_layers(
     report_rows: Sequence[dict[str, Any]], k: int | None, layers: Collection[int] | None
 ) -> dict[int, int]:
-    """The k of each layer to rewrite. With one k for all, a layer whose stable k is smaller is
-    left alone: its top k directions are not reliable."""
+    """The k of each layer to rewrite: report.json's stable k, or one fixed k for all."""
     return {
         row["layer"]: row["k"] if k is None else k
         for row in report_rows
-        if (layers is None or row["layer"] in layers) and (k is None or row["k"] >= k)
+        if layers is None or row["layer"] in layers
     }
 
 
@@ -332,7 +331,8 @@ def ablate(args: argparse.Namespace) -> None:
     root = Path(args.pass_root)
     # Forward: base gets post's statistics. Reverse: post gets base's, to test necessity.
     source, donor = ("post", "base") if args.reverse else ("base", "post")
-    run_dir = out / "ablate" / f"{args.kind}{'-reverse' if args.reverse else ''}"
+    fixed = f"-k{args.k}" if args.k is not None else ""
+    run_dir = out / "ablate" / f"{args.kind}{'-reverse' if args.reverse else ''}{fixed}"
     (run_dir / TASK).mkdir(parents=True, exist_ok=True)
     prompt_format = RUNS[source][1]
     args.tasks, args.limit, args.lcb_source = [TASK], LIMIT, None
@@ -473,7 +473,7 @@ def main() -> None:
     sampling.add_argument("--samples", type=int, default=64)
     sampling.add_argument("--prefix-tokens", type=int, default=100)
     sampling.add_argument(
-        "--k", type=int, help="one k for all layers, not report.json's; skips layers with a smaller one"
+        "--k", type=int, help="one k for all layers, not report.json's; the run goes to <kind>-k<k>"
     )
     sampling.add_argument("--layers", type=layer_range, help="only these layers, e.g. 21-31")
     sampling.add_argument("--max-num-seqs", type=int, default=12)
