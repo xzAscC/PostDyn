@@ -437,4 +437,64 @@ def capture_sequences_hiddens(
     return [cast(torch.Tensor, tensor) for tensor in results]
 
 
-__all__ += ["capture_sequences_hiddens"]
+def extract_token_cosines(
+    model: Any,
+    tokenizer: Any,
+    prompts: Sequence[str],
+    directions: dict[int, torch.Tensor],
+    max_length: int = 2048,
+    token_budget: int = 8192,
+    batch_size: int = 16,
+) -> dict[int, list[torch.Tensor]]:
+    """Per-token signed cosine with a fixed direction at each layer.
+
+    Returns, per layer, one float32 CPU tensor per prompt (length = its token
+    count); zero-norm tokens are NaN.
+    """
+    from .capture import hidden_capture
+
+    device = _model_device(model)
+    layers = list(directions)
+    dirs = {l: directions[l].to(device=device, dtype=torch.float32) for l in layers}
+    ids_list = [
+        list(tokenizer(p, truncation=True, max_length=max_length)["input_ids"])
+        for p in prompts
+    ]
+    pad_id = getattr(tokenizer, "pad_token_id", None) or 0
+    order = sorted(range(len(ids_list)), key=lambda i: -len(ids_list[i]))
+    results: dict[int, list[torch.Tensor | None]] = {l: [None] * len(ids_list) for l in layers}
+
+    def flush(group: list[int]) -> None:
+        width = max(len(ids_list[i]) for i in group)
+        padded = torch.full((len(group), width), pad_id, dtype=torch.long)
+        mask = torch.zeros((len(group), width), dtype=torch.long)
+        for row, index in enumerate(group):
+            ids = ids_list[index]
+            padded[row, : len(ids)] = torch.tensor(ids, dtype=torch.long)
+            mask[row, : len(ids)] = 1
+        with hidden_capture(model, layers) as store, torch.inference_mode():
+            try:
+                model(input_ids=padded.to(device), attention_mask=mask.to(device), logits_to_keep=1)
+            except TypeError:
+                model(input_ids=padded.to(device), attention_mask=mask.to(device))
+        for l in layers:
+            h = store.tensors[l].float()
+            norms = h.norm(dim=-1)
+            cos = (h @ dirs[l]) / (norms * dirs[l].norm())
+            cos = torch.where(norms > 0, cos, torch.nan).cpu()
+            for row, index in enumerate(group):
+                results[l][index] = cos[row, : len(ids_list[index])].clone()
+
+    group: list[int] = []
+    for index in order:
+        width = max([len(ids_list[i]) for i in group] + [len(ids_list[index])])
+        if group and (len(group) + 1 > batch_size or (len(group) + 1) * width > token_budget):
+            flush(group)
+            group = []
+        group.append(index)
+    if group:
+        flush(group)
+    return {l: [cast(torch.Tensor, t) for t in results[l]] for l in layers}
+
+
+__all__ += ["capture_sequences_hiddens", "extract_token_cosines"]
