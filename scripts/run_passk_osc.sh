@@ -96,8 +96,12 @@ case "$CONDITION" in
         "${CONDITION#rlzero-}" ;;
 esac
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
-python "$REPO/scripts/run_passk.py" generate --model "$MODEL" --tokenizer "$TOKENIZER" \
-    --prompt-format "$FORMAT" --lcb-source "$LCB" --out-dir "$OUT" "$@"
+# The 1-hour queues allow 1 GPU per node but 2 nodes per job, so a job on several nodes runs one
+# sampler per node; they share the chunks through claims, as separate jobs do.
+LAUNCH=()
+[ "${SLURM_NNODES:-1}" -le 1 ] || LAUNCH=(srun --ntasks-per-node=1 --kill-on-bad-exit=0)
+"${LAUNCH[@]}" python "$REPO/scripts/run_passk.py" generate --model "$MODEL" \
+    --tokenizer "$TOKENIZER" --prompt-format "$FORMAT" --lcb-source "$LCB" --out-dir "$OUT" "$@"
 if [ "${SCORE:-0}" = 1 ]; then
     python "$REPO/scripts/run_passk.py" score --out-dir "$OUT" --workers "${SLURM_CPUS_PER_TASK:-8}"
 fi
